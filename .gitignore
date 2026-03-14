@@ -39,3 +39,24 @@
 
 # debug information files
 *.dwo
+ilc_grammar_ebnf_and_antlr.md
+ilc_language_reference.md
+
+# .NET
+bin/
+obj/
+
+# CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Testing/
+
+# Project temp workspace
+tmp/
+ILC_Codex_Architecture_Spec.md
+ILC_Codex_Bytecode_Spec.md
+ILC_ILB_Container_Format_Spec.md
+ILC_Runtime_Object_Model_Spec.md
+ilc_secure_packaging_and_execution_spec.md
