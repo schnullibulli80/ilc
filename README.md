@@ -413,9 +413,9 @@ Contributions follow [docs/contributing.md](docs/contributing.md).
 
 ## License
 
-**License: TBD**
+**License: Apache 2.0**
 
-A permissive license may be a strong fit for ecosystem growth, but this should be decided intentionally once the repository is published.
+This project is licensed under the Apache License, Version 2.0. See [LICENSE.txt](LICENSE.txt).
 
 ---
 
