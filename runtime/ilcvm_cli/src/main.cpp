@@ -25,6 +25,7 @@ int main(int argc, char** argv)
 
             bool run = false;
             bool trace = false;
+            bool performance = false;
             std::vector<std::string> program_arguments;
             for (int index = 2; index < argc; ++index)
             {
@@ -56,6 +57,12 @@ int main(int argc, char** argv)
                     continue;
                 }
 
+                if (argument == "--performance")
+                {
+                    performance = true;
+                    continue;
+                }
+
                 throw std::runtime_error("unknown ilcvm runtime option");
             }
 
@@ -64,7 +71,29 @@ int main(int argc, char** argv)
                 ilcvm::StandardHostServices host_services(program_arguments);
                 ilcvm::VirtualMachine vm(heap, host_services);
                 (void)trace;
-                const auto execution_result = vm.execute(module);
+                ilcvm::VirtualMachine::ExecutionProfile execution_profile;
+                const auto execution_result = performance
+                    ? vm.execute(module, execution_profile)
+                    : vm.execute(module);
+                if (performance)
+                {
+                    std::cout << "performance.total_execution_ns=" << execution_profile.total_execution_ns << '\n';
+                    std::cout << "performance.host_import_execution_ns=" << execution_profile.host_import_execution_ns << '\n';
+                    std::cout << "performance.instructions_executed=" << execution_profile.instructions_executed << '\n';
+                    std::cout << "performance.functions_executed=" << execution_profile.functions_executed << '\n';
+                    std::cout << "performance.host_import_calls=" << execution_profile.host_import_calls << '\n';
+                    std::cout << "performance.call_count=" << execution_profile.call_count << '\n';
+                    std::cout << "performance.call_virt_count=" << execution_profile.call_virt_count << '\n';
+                    std::cout << "performance.new_obj_count=" << execution_profile.new_obj_count << '\n';
+                    std::cout << "performance.new_arr_count=" << execution_profile.new_arr_count << '\n';
+                    std::cout << "performance.ld_elem_count=" << execution_profile.ld_elem_count << '\n';
+                    std::cout << "performance.st_elem_count=" << execution_profile.st_elem_count << '\n';
+                    std::cout << "performance.ld_len_count=" << execution_profile.ld_len_count << '\n';
+                    std::cout << "performance.strings_created=" << execution_profile.strings_created << '\n';
+                    std::cout << "performance.arrays_created=" << execution_profile.arrays_created << '\n';
+                    std::cout << "performance.objects_created=" << execution_profile.objects_created << '\n';
+                    std::cout << "performance.max_call_depth=" << execution_profile.max_call_depth << '\n';
+                }
                 std::cout << "execution result: " << execution_result << '\n';
                 return 0;
             }

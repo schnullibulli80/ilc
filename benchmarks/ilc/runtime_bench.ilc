@@ -52,7 +52,69 @@ begin
     exit sum;
   end;
 
+  public static function RunArrayFill(iterations: Integer): Integer;
+  begin
+    var values: array of Integer := new Integer[iterations];
+    var index := 0;
+    while index < iterations do
+    begin
+      values[index] := index;
+      index := index + 1;
+    end;
+
+    exit values[iterations - 1];
+  end;
+
+  public static function RunArraySum(iterations: Integer): Integer;
+  begin
+    var values: array of Integer := new Integer[iterations];
+    var index := 0;
+    while index < iterations do
+    begin
+      values[index] := index;
+      index := index + 1;
+    end;
+
+    index := 0;
+    var sum := 0;
+    while index < iterations do
+    begin
+      sum := sum + values[index];
+      index := index + 1;
+    end;
+
+    exit sum;
+  end;
+
   public static function RunDispatch(iterations: Integer): Integer;
+  begin
+    var counter := new Counter(0);
+    var index := 0;
+    var sum := 0;
+    while index < iterations do
+    begin
+      sum := sum + counter.Tick(1);
+      index := index + 1;
+    end;
+
+    exit sum;
+  end;
+
+  public static function RunDispatchCall(iterations: Integer): Integer;
+  begin
+    var counter := new Counter(0);
+    var index := 0;
+    var current := 0;
+    while index < iterations do
+    begin
+      current := counter.Tick(1);
+      index := index + 1;
+    end;
+
+    exit current;
+  end;
+
+  public static function RunDispatchAccumulate(iterations: Integer): Integer;
   begin
     var counter := new Counter(0);
     var index := 0;
@@ -82,9 +144,25 @@ begin
     begin
       result := RunArray(iterations);
     end
+    else if bench = 'array_fill' then
+    begin
+      result := RunArrayFill(iterations);
+    end
+    else if bench = 'array_sum' then
+    begin
+      result := RunArraySum(iterations);
+    end
     else if bench = 'dispatch' then
     begin
       result := RunDispatch(iterations);
+    end
+    else if bench = 'dispatch_call' then
+    begin
+      result := RunDispatchCall(iterations);
+    end
+    else if bench = 'dispatch_accumulate' then
+    begin
+      result := RunDispatchAccumulate(iterations);
     end
     else
     begin

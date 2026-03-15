@@ -54,6 +54,28 @@ average_lines() {
     awk '{ sum += $1; count += 1 } END { if (count == 0) { print "0.00"; } else { printf "%.2f", sum / count; } }'
 }
 
+min_lines() {
+    awk 'NR == 1 || $1 < min { min = $1 } END { if (NR == 0) { print "0.00"; } else { printf "%.2f", min; } }'
+}
+
+max_lines() {
+    awk 'NR == 1 || $1 > max { max = $1 } END { if (NR == 0) { print "0.00"; } else { printf "%.2f", max; } }'
+}
+
+median_lines() {
+    sort -n | awk '
+        { values[count++] = $1 }
+        END {
+            if (count == 0) {
+                print "0.00";
+            } else if ((count % 2) == 1) {
+                printf "%.2f", values[int(count / 2)];
+            } else {
+                printf "%.2f", (values[count / 2 - 1] + values[count / 2]) / 2.0;
+            }
+        }'
+}
+
 extract_elapsed_ms() {
     sed -n 's/^ELAPSED_MS=//p' "$1" | tail -n 1
 }
@@ -92,7 +114,13 @@ for ((round = 1; round <= rounds; round++)); do
 done
 
 ilc_startup_avg="$(printf '%s\n' "${ilc_startup_values[@]}" | average_lines)"
+ilc_startup_median="$(printf '%s\n' "${ilc_startup_values[@]}" | median_lines)"
+ilc_startup_min="$(printf '%s\n' "${ilc_startup_values[@]}" | min_lines)"
+ilc_startup_max="$(printf '%s\n' "${ilc_startup_values[@]}" | max_lines)"
 java_startup_avg="$(printf '%s\n' "${java_startup_values[@]}" | average_lines)"
+java_startup_median="$(printf '%s\n' "${java_startup_values[@]}" | median_lines)"
+java_startup_min="$(printf '%s\n' "${java_startup_values[@]}" | min_lines)"
+java_startup_max="$(printf '%s\n' "${java_startup_values[@]}" | max_lines)"
 startup_winner="$(awk -v ilc="$ilc_startup_avg" -v java="$java_startup_avg" 'BEGIN {
     if (ilc < java) {
         print "ilcvm";
@@ -103,9 +131,14 @@ startup_winner="$(awk -v ilc="$ilc_startup_avg" -v java="$java_startup_avg" 'BEG
     }
 }')"
 printf '  ilcvm startup ms: %s\n' "$ilc_startup_avg"
+printf '    median/min/max: %s / %s / %s\n' "$ilc_startup_median" "$ilc_startup_min" "$ilc_startup_max"
 printf '  java  startup ms: %s\n' "$java_startup_avg"
+printf '    median/min/max: %s / %s / %s\n' "$java_startup_median" "$java_startup_min" "$java_startup_max"
 printf '  startup faster:   %s\n' "$startup_winner"
-printf 'startup ilcvm_ms=%s java_ms=%s faster=%s\n' "$ilc_startup_avg" "$java_startup_avg" "$startup_winner" >>"$summary_file"
+printf 'startup ilcvm_avg_ms=%s ilcvm_median_ms=%s ilcvm_min_ms=%s ilcvm_max_ms=%s java_avg_ms=%s java_median_ms=%s java_min_ms=%s java_max_ms=%s faster=%s\n' \
+    "$ilc_startup_avg" "$ilc_startup_median" "$ilc_startup_min" "$ilc_startup_max" \
+    "$java_startup_avg" "$java_startup_median" "$java_startup_min" "$java_startup_max" \
+    "$startup_winner" >>"$summary_file"
 printf '\n'
 
 run_internal_bench() {
@@ -127,8 +160,8 @@ run_internal_bench() {
 }
 
 printf 'Workload benchmarks\n'
-printf '%-12s %-12s %-12s %-12s %-12s %-12s\n' "bench" "ilcvm_ms" "java_ms" "faster" "slower" "result"
-for bench_name in loop array dispatch; do
+printf '%-12s %-12s %-12s %-12s %-12s %-12s\n' "bench" "ilcvm_avg" "java_avg" "faster" "slower" "result"
+for bench_name in loop array array_fill array_sum dispatch dispatch_call dispatch_accumulate; do
     for ((round = 1; round <= warmup; round++)); do
         run_internal_bench "ilcvm" "$bench_name" "$tmp_root/warmup-ilc-$bench_name-$round.log" \
             "$ilcvm_cli" "$bench_root/ilc/runtime_bench.ilb" --run -- "$bench_name" "$iterations" >/dev/null
@@ -155,7 +188,13 @@ for bench_name in loop array dispatch; do
     fi
 
     ilc_avg="$(printf '%s\n' "${ilc_values[@]}" | average_lines)"
+    ilc_median="$(printf '%s\n' "${ilc_values[@]}" | median_lines)"
+    ilc_min="$(printf '%s\n' "${ilc_values[@]}" | min_lines)"
+    ilc_max="$(printf '%s\n' "${ilc_values[@]}" | max_lines)"
     java_avg="$(printf '%s\n' "${java_values[@]}" | average_lines)"
+    java_median="$(printf '%s\n' "${java_values[@]}" | median_lines)"
+    java_min="$(printf '%s\n' "${java_values[@]}" | min_lines)"
+    java_max="$(printf '%s\n' "${java_values[@]}" | max_lines)"
     winner="$(awk -v ilc="$ilc_avg" -v java="$java_avg" 'BEGIN {
         if (ilc < java) {
             print "ilcvm";
@@ -172,7 +211,13 @@ for bench_name in loop array dispatch; do
         slower="ilcvm"
     fi
     printf '%-12s %-12s %-12s %-12s %-12s %-12s\n' "$bench_name" "$ilc_avg" "$java_avg" "$winner" "$slower" "$ilc_result"
-    printf '%s ilcvm_ms=%s java_ms=%s faster=%s slower=%s result=%s\n' "$bench_name" "$ilc_avg" "$java_avg" "$winner" "$slower" "$ilc_result" >>"$summary_file"
+    printf '  %s ilcvm median/min/max: %s / %s / %s\n' "$bench_name" "$ilc_median" "$ilc_min" "$ilc_max"
+    printf '  %s java  median/min/max: %s / %s / %s\n' "$bench_name" "$java_median" "$java_min" "$java_max"
+    printf '%s ilcvm_avg_ms=%s ilcvm_median_ms=%s ilcvm_min_ms=%s ilcvm_max_ms=%s java_avg_ms=%s java_median_ms=%s java_min_ms=%s java_max_ms=%s faster=%s slower=%s result=%s\n' \
+        "$bench_name" \
+        "$ilc_avg" "$ilc_median" "$ilc_min" "$ilc_max" \
+        "$java_avg" "$java_median" "$java_min" "$java_max" \
+        "$winner" "$slower" "$ilc_result" >>"$summary_file"
 done
 
 printf '\nLogs written to %s\n' "$tmp_root"

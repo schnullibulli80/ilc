@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -26,45 +28,21 @@ VirtualMachine::VirtualMachine(Heap& heap, const IHostServices& host_services) n
 
 std::int32_t VirtualMachine::execute(const Module& module) const
 {
+    return execute(module, static_cast<ExecutionProfile*>(nullptr));
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile& profile) const
+{
+    return execute(module, &profile);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* profile) const
+{
+    const auto total_start = std::chrono::steady_clock::now();
     if (module.functions.empty())
     {
         throw std::runtime_error("module contains no functions");
     }
-
-    const auto* entry_function = &module.functions.front();
-    if (module.entry_function_id != 0)
-    {
-        const auto it = std::find_if(
-            module.functions.begin(),
-            module.functions.end(),
-            [&module](const Function& candidate)
-            {
-                return candidate.function_id == module.entry_function_id;
-            });
-        if (it == module.functions.end())
-        {
-            throw std::runtime_error("module entry point does not reference a known function");
-        }
-
-        entry_function = &*it;
-    }
-
-    const auto find_function = [&module](std::uint32_t function_id) -> const Function&
-    {
-        const auto it = std::find_if(
-            module.functions.begin(),
-            module.functions.end(),
-            [function_id](const Function& candidate)
-            {
-                return candidate.function_id == function_id;
-            });
-        if (it == module.functions.end())
-        {
-            throw std::runtime_error("call target does not reference a known function");
-        }
-
-        return *it;
-    };
 
     struct ArrayObject
     {
@@ -81,6 +59,63 @@ std::int32_t VirtualMachine::execute(const Module& module) const
     std::vector<ArrayObject> arrays(1);
     std::vector<ManagedObject> objects(1);
     std::vector<std::string> strings = module.strings;
+
+    std::uint32_t max_function_id = 0;
+    for (const auto& function : module.functions)
+    {
+        max_function_id = std::max(max_function_id, function.function_id);
+    }
+
+    std::vector<const Function*> function_lookup(static_cast<std::size_t>(max_function_id) + 1, nullptr);
+    for (const auto& function : module.functions)
+    {
+        function_lookup[function.function_id] = &function;
+    }
+
+    const auto find_function = [&function_lookup](std::uint32_t function_id) -> const Function&
+    {
+        if (function_id >= function_lookup.size() || function_lookup[function_id] == nullptr)
+        {
+            throw std::runtime_error("call target does not reference a known function");
+        }
+
+        return *function_lookup[function_id];
+    };
+
+    const auto* entry_function = &module.functions.front();
+    if (module.entry_function_id != 0)
+    {
+        if (module.entry_function_id >= function_lookup.size() || function_lookup[module.entry_function_id] == nullptr)
+        {
+            throw std::runtime_error("module entry point does not reference a known function");
+        }
+
+        entry_function = function_lookup[module.entry_function_id];
+    }
+
+    std::uint32_t max_type_id = 0;
+    for (const auto& type : module.types)
+    {
+        max_type_id = std::max(max_type_id, type.type_id);
+    }
+
+    std::vector<const Type*> type_lookup(static_cast<std::size_t>(max_type_id) + 1, nullptr);
+    for (const auto& type : module.types)
+    {
+        type_lookup[type.type_id] = &type;
+    }
+
+    std::uint32_t max_field_id = 0;
+    for (const auto& field : module.fields)
+    {
+        max_field_id = std::max(max_field_id, field.field_id);
+    }
+
+    std::vector<const Field*> field_lookup(static_cast<std::size_t>(max_field_id) + 1, nullptr);
+    for (const auto& field : module.fields)
+    {
+        field_lookup[field.field_id] = &field;
+    }
 
     const auto encode_array_handle = [](std::size_t array_id) -> std::int32_t
     {
@@ -192,37 +227,23 @@ std::int32_t VirtualMachine::execute(const Module& module) const
 
         return objects[object_id];
     };
-    const auto require_type = [&module](std::uint32_t type_id) -> const Type&
+    const auto require_type = [&type_lookup](std::uint32_t type_id) -> const Type&
     {
-        const auto it = std::find_if(
-            module.types.begin(),
-            module.types.end(),
-            [type_id](const Type& candidate)
-            {
-                return candidate.type_id == type_id;
-            });
-        if (it == module.types.end())
+        if (type_id >= type_lookup.size() || type_lookup[type_id] == nullptr)
         {
             throw std::runtime_error("object allocation references an unknown type");
         }
 
-        return *it;
+        return *type_lookup[type_id];
     };
-    const auto require_field = [&module](std::uint32_t field_id) -> const Field&
+    const auto require_field = [&field_lookup](std::uint32_t field_id) -> const Field&
     {
-        const auto it = std::find_if(
-            module.fields.begin(),
-            module.fields.end(),
-            [field_id](const Field& candidate)
-            {
-                return candidate.field_id == field_id;
-            });
-        if (it == module.fields.end())
+        if (field_id >= field_lookup.size() || field_lookup[field_id] == nullptr)
         {
             throw std::runtime_error("field reference is invalid");
         }
 
-        return *it;
+        return *field_lookup[field_id];
     };
     const auto require_index = [](std::int32_t index, std::size_t length) -> std::size_t
     {
@@ -233,17 +254,15 @@ std::int32_t VirtualMachine::execute(const Module& module) const
 
         return static_cast<std::size_t>(index);
     };
-    const auto get_string_type_id = [&module]() -> std::uint32_t
+    std::uint32_t string_type_id = 0;
+    for (const auto& type : module.types)
     {
-        const auto it = std::find_if(
-            module.types.begin(),
-            module.types.end(),
-            [](const Type& candidate)
-            {
-                return candidate.name == "String";
-            });
-        return it == module.types.end() ? 0u : it->type_id;
-    };
+        if (type.name == "String")
+        {
+            string_type_id = type.type_id;
+            break;
+        }
+    }
     const auto get_runtime_type_id = [&](std::int32_t value) -> std::uint32_t
     {
         if (value == 0)
@@ -258,32 +277,52 @@ std::int32_t VirtualMachine::execute(const Module& module) const
 
         if (is_string_handle(value))
         {
-            return get_string_type_id();
+            return string_type_id;
         }
 
         return 0u;
     };
 
-    std::function<std::int32_t(const Function&, const std::vector<std::int32_t>&)> execute_function;
-    execute_function = [&](const Function& function, const std::vector<std::int32_t>& arguments) -> std::int32_t
+    std::vector<std::vector<std::int32_t>> register_pool;
+
+    std::function<std::int32_t(const Function&, const std::int32_t*, std::size_t, std::size_t)> execute_function;
+    execute_function = [&](const Function& function, const std::int32_t* arguments, std::size_t argument_count, std::size_t call_depth) -> std::int32_t
     {
-        if (arguments.size() != function.argument_count)
+        if (profile != nullptr)
+        {
+            ++profile->functions_executed;
+            profile->max_call_depth = std::max(profile->max_call_depth, static_cast<std::uint64_t>(call_depth));
+        }
+
+        if (argument_count != function.argument_count)
         {
             throw std::runtime_error("call target argument count mismatch");
         }
 
         if (function.host_import_kind != HostImportKind::none)
         {
+            const auto host_start = std::chrono::steady_clock::now();
+            if (profile != nullptr)
+            {
+                ++profile->host_import_calls;
+            }
+
             switch (function.host_import_kind)
             {
                 case HostImportKind::console_write:
-                    host_services_.console_write(require_string(arguments.at(0)));
+                    host_services_.console_write(require_string(arguments[0]));
                     return 0;
                 case HostImportKind::console_write_line:
-                    host_services_.console_write_line(require_string(arguments.at(0)));
+                    host_services_.console_write_line(require_string(arguments[0]));
                     return 0;
                 case HostImportKind::console_read_line:
                     strings.push_back(host_services_.console_read_line());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::environment_get_command_line_args:
                 {
@@ -291,77 +330,197 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                     arrays.push_back(ArrayObject {
                         .elements = std::vector<std::int32_t>(command_line_args.size(), 0)
                     });
+                    if (profile != nullptr)
+                    {
+                        ++profile->arrays_created;
+                    }
                     heap_.record_allocation(sizeof(std::int32_t) * command_line_args.size());
                     auto& array = arrays.back();
                     for (std::size_t index = 0; index < command_line_args.size(); ++index)
                     {
                         strings.push_back(command_line_args[index]);
+                        if (profile != nullptr)
+                        {
+                            ++profile->strings_created;
+                        }
                         array.elements[index] = encode_string_handle(strings.size() - 1);
                     }
 
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_array_handle(arrays.size() - 1);
                 }
                 case HostImportKind::environment_get_current_working_directory:
                     strings.push_back(host_services_.get_current_working_directory());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::environment_get_environment_variable:
-                    strings.push_back(host_services_.get_environment_variable(require_string(arguments.at(0))));
+                    strings.push_back(host_services_.get_environment_variable(require_string(arguments[0])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::environment_set_environment_variable:
-                    host_services_.set_environment_variable(require_string(arguments.at(0)), require_string(arguments.at(1)));
+                    host_services_.set_environment_variable(require_string(arguments[0]), require_string(arguments[1]));
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return 0;
                 case HostImportKind::environment_get_user_name:
                     strings.push_back(host_services_.get_user_name());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::environment_get_machine_name:
                     strings.push_back(host_services_.get_machine_name());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::environment_get_home_directory:
                     strings.push_back(host_services_.get_home_directory());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::environment_get_temp_directory:
                     strings.push_back(host_services_.get_temp_directory());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::clock_get_monotonic_milliseconds_text:
                     strings.push_back(std::to_string(host_services_.get_monotonic_timestamp_ms()));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::clock_get_wall_milliseconds_text:
                     strings.push_back(std::to_string(host_services_.get_wall_timestamp_ms()));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::file_exists:
-                    return host_services_.file_exists(require_string(arguments.at(0))) ? 1 : 0;
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return host_services_.file_exists(require_string(arguments[0])) ? 1 : 0;
                 case HostImportKind::file_read_all_text:
-                    strings.push_back(host_services_.file_read_all_text(require_string(arguments.at(0))));
+                    strings.push_back(host_services_.file_read_all_text(require_string(arguments[0])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::file_write_all_text:
-                    host_services_.file_write_all_text(require_string(arguments.at(0)), require_string(arguments.at(1)));
+                    host_services_.file_write_all_text(require_string(arguments[0]), require_string(arguments[1]));
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return 0;
                 case HostImportKind::file_append_all_text:
-                    host_services_.file_append_all_text(require_string(arguments.at(0)), require_string(arguments.at(1)));
+                    host_services_.file_append_all_text(require_string(arguments[0]), require_string(arguments[1]));
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return 0;
                 case HostImportKind::path_combine:
-                    strings.push_back(host_services_.path_combine(require_string(arguments.at(0)), require_string(arguments.at(1))));
+                    strings.push_back(host_services_.path_combine(require_string(arguments[0]), require_string(arguments[1])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::path_get_file_name:
-                    strings.push_back(host_services_.path_get_file_name(require_string(arguments.at(0))));
+                    strings.push_back(host_services_.path_get_file_name(require_string(arguments[0])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::path_get_directory_name:
-                    strings.push_back(host_services_.path_get_directory_name(require_string(arguments.at(0))));
+                    strings.push_back(host_services_.path_get_directory_name(require_string(arguments[0])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::path_get_extension:
-                    strings.push_back(host_services_.path_get_extension(require_string(arguments.at(0))));
+                    strings.push_back(host_services_.path_get_extension(require_string(arguments[0])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
                     return encode_string_handle(strings.size() - 1);
                 case HostImportKind::none:
                     break;
             }
         }
 
-        std::vector<std::int32_t> registers(function.register_count == 0 ? 1 : function.register_count, 0);
+        if (call_depth >= register_pool.size())
+        {
+            register_pool.emplace_back();
+        }
+
+        auto& registers = register_pool[call_depth];
+        const auto register_count = static_cast<std::size_t>(function.register_count == 0 ? 1 : function.register_count);
+        registers.resize(register_count);
+        std::fill(registers.begin(), registers.end(), 0);
+        auto* register_values = registers.data();
         bool has_current_exception = false;
         std::int32_t current_exception_value = 0;
-        for (std::size_t index = 0; index < arguments.size(); ++index)
+        for (std::size_t index = 0; index < argument_count; ++index)
         {
-            registers.at(index) = arguments[index];
+            registers[index] = arguments[index];
         }
 
         std::size_t ip = 0;
@@ -370,13 +529,17 @@ std::int32_t VirtualMachine::execute(const Module& module) const
             try
             {
                 const auto& instruction = function.instructions[ip];
+                if (profile != nullptr)
+                {
+                    ++profile->instructions_executed;
+                }
                 switch (instruction.opcode)
                 {
                     case OpCode::nop:
                         ++ip;
                         break;
                     case OpCode::ld_i32:
-                        registers.at(instruction.destination) = instruction.immediate;
+                        register_values[instruction.destination] = instruction.immediate;
                         ++ip;
                         break;
                     case OpCode::ld_str:
@@ -387,142 +550,142 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                             throw std::runtime_error("string constant does not reference a known string");
                         }
 
-                        registers.at(instruction.destination) = encode_string_handle(string_id);
+                        register_values[instruction.destination] = encode_string_handle(string_id);
                         ++ip;
                         break;
                     }
                     case OpCode::slice_str:
                     {
-                        const auto& text = require_string(registers.at(instruction.left));
-                        const auto start = require_index(registers.at(instruction.right), text.size());
-                        const auto end = require_index(registers.at(static_cast<std::size_t>(instruction.immediate)), text.size());
+                        const auto& text = require_string(register_values[instruction.left]);
+                        const auto start = require_index(register_values[instruction.right], text.size());
+                        const auto end = require_index(register_values[static_cast<std::size_t>(instruction.immediate)], text.size());
                         if (end < start)
                         {
                             throw std::runtime_error("string slice range is invalid");
                         }
 
                         strings.push_back(text.substr(start, end - start + 1));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::mov:
-                        registers.at(instruction.destination) = registers.at(instruction.left);
+                        register_values[instruction.destination] = register_values[instruction.left];
                         ++ip;
                         break;
                     case OpCode::add_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) + registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] + register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::shl_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) << registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] << register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::shr_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) >> registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] >> register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::and_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) & registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] & register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::or_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) | registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] | register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::not_i32:
-                        registers.at(instruction.destination) = ~registers.at(instruction.left);
+                        register_values[instruction.destination] = ~register_values[instruction.left];
                         ++ip;
                         break;
                     case OpCode::sub_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) - registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] - register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::mul_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) * registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] * register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::div_i32:
-                        if (registers.at(instruction.right) == 0)
+                        if (register_values[instruction.right] == 0)
                         {
                             throw std::runtime_error("division by zero");
                         }
 
-                        registers.at(instruction.destination) = registers.at(instruction.left) / registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] / register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::mod_i32:
-                        if (registers.at(instruction.right) == 0)
+                        if (register_values[instruction.right] == 0)
                         {
                             throw std::runtime_error("division by zero");
                         }
 
-                        registers.at(instruction.destination) = registers.at(instruction.left) % registers.at(instruction.right);
+                        register_values[instruction.destination] = register_values[instruction.left] % register_values[instruction.right];
                         ++ip;
                         break;
                     case OpCode::cmp_eq_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) == registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] == register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_ne_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) != registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] != register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_lt_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) < registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] < register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_le_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) <= registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] <= register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_gt_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) > registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] > register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_ge_i32:
-                        registers.at(instruction.destination) = registers.at(instruction.left) >= registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] >= register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_eq_str:
-                        registers.at(instruction.destination) = compare_strings(registers.at(instruction.left), registers.at(instruction.right)) ? 1 : 0;
+                        register_values[instruction.destination] = compare_strings(register_values[instruction.left], register_values[instruction.right]) ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_ne_str:
-                        registers.at(instruction.destination) = compare_strings(registers.at(instruction.left), registers.at(instruction.right)) ? 0 : 1;
+                        register_values[instruction.destination] = compare_strings(register_values[instruction.left], register_values[instruction.right]) ? 0 : 1;
                         ++ip;
                         break;
                     case OpCode::cmp_eq_ref:
-                        registers.at(instruction.destination) = registers.at(instruction.left) == registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] == register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_ne_ref:
-                        registers.at(instruction.destination) = registers.at(instruction.left) != registers.at(instruction.right) ? 1 : 0;
+                        register_values[instruction.destination] = register_values[instruction.left] != register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::concat_str:
                     {
-                        const auto& left = require_string(registers.at(instruction.left));
-                        const auto& right = require_string(registers.at(instruction.right));
+                        const auto& left = require_string(register_values[instruction.left]);
+                        const auto& right = require_string(register_values[instruction.right]);
                         strings.push_back(left + right);
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::starts_with_str:
                     {
-                        const auto& left = require_string(registers.at(instruction.left));
-                        const auto& right = require_string(registers.at(instruction.right));
-                        registers.at(instruction.destination) =
+                        const auto& left = require_string(register_values[instruction.left]);
+                        const auto& right = require_string(register_values[instruction.right]);
+                        register_values[instruction.destination] =
                             left.size() >= right.size() && left.compare(0, right.size(), right) == 0 ? 1 : 0;
                         ++ip;
                         break;
                     }
                     case OpCode::ends_with_str:
                     {
-                        const auto& left = require_string(registers.at(instruction.left));
-                        const auto& right = require_string(registers.at(instruction.right));
-                        registers.at(instruction.destination) =
+                        const auto& left = require_string(register_values[instruction.left]);
+                        const auto& right = require_string(register_values[instruction.right]);
+                        register_values[instruction.destination] =
                             left.size() >= right.size() &&
                             left.compare(left.size() - right.size(), right.size(), right) == 0 ? 1 : 0;
                         ++ip;
@@ -530,37 +693,37 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                     }
                     case OpCode::contains_str:
                     {
-                        const auto& left = require_string(registers.at(instruction.left));
-                        const auto& right = require_string(registers.at(instruction.right));
-                        registers.at(instruction.destination) = left.find(right) != std::string::npos ? 1 : 0;
+                        const auto& left = require_string(register_values[instruction.left]);
+                        const auto& right = require_string(register_values[instruction.right]);
+                        register_values[instruction.destination] = left.find(right) != std::string::npos ? 1 : 0;
                         ++ip;
                         break;
                     }
                     case OpCode::index_of_str:
                     {
-                        const auto& left = require_string(registers.at(instruction.left));
-                        const auto& right = require_string(registers.at(instruction.right));
+                        const auto& left = require_string(register_values[instruction.left]);
+                        const auto& right = require_string(register_values[instruction.right]);
                         const auto position = left.find(right);
-                        registers.at(instruction.destination) =
+                        register_values[instruction.destination] =
                             position == std::string::npos ? -1 : static_cast<std::int32_t>(position);
                         ++ip;
                         break;
                     }
                     case OpCode::last_index_of_str:
                     {
-                        const auto& left = require_string(registers.at(instruction.left));
-                        const auto& right = require_string(registers.at(instruction.right));
+                        const auto& left = require_string(register_values[instruction.left]);
+                        const auto& right = require_string(register_values[instruction.right]);
                         const auto position = left.rfind(right);
-                        registers.at(instruction.destination) =
+                        register_values[instruction.destination] =
                             position == std::string::npos ? -1 : static_cast<std::int32_t>(position);
                         ++ip;
                         break;
                     }
                     case OpCode::replace_str:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
-                        const auto& old_value = require_string(registers.at(instruction.right));
-                        const auto& new_value = require_string(registers.at(static_cast<std::size_t>(instruction.immediate)));
+                        const auto& source = require_string(register_values[instruction.left]);
+                        const auto& old_value = require_string(register_values[instruction.right]);
+                        const auto& new_value = require_string(register_values[static_cast<std::size_t>(instruction.immediate)]);
                         std::string replaced = source;
                         if (!old_value.empty())
                         {
@@ -573,32 +736,32 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                         }
 
                         strings.push_back(std::move(replaced));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::insert_str:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
-                        const auto index = registers.at(instruction.right);
+                        const auto& source = require_string(register_values[instruction.left]);
+                        const auto index = register_values[instruction.right];
                         if (index < 0 || static_cast<std::size_t>(index) > source.size())
                         {
                             throw std::runtime_error("string insert index out of bounds");
                         }
 
-                        const auto& value = require_string(registers.at(static_cast<std::size_t>(instruction.immediate)));
+                        const auto& value = require_string(register_values[static_cast<std::size_t>(instruction.immediate)]);
                         std::string inserted = source;
                         inserted.insert(static_cast<std::size_t>(index), value);
                         strings.push_back(std::move(inserted));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::remove_str:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
-                        const auto index = registers.at(instruction.right);
-                        const auto length = registers.at(static_cast<std::size_t>(instruction.immediate));
+                        const auto& source = require_string(register_values[instruction.left]);
+                        const auto index = register_values[instruction.right];
+                        const auto length = register_values[static_cast<std::size_t>(instruction.immediate)];
                         if (index < 0 || length < 0)
                         {
                             throw std::runtime_error("string remove range is invalid");
@@ -614,13 +777,13 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                         std::string removed = source;
                         removed.erase(start, count);
                         strings.push_back(std::move(removed));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::to_upper_str:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
+                        const auto& source = require_string(register_values[instruction.left]);
                         std::string upper = source;
                         std::transform(
                             upper.begin(),
@@ -628,13 +791,13 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                             upper.begin(),
                             [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
                         strings.push_back(std::move(upper));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::to_lower_str:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
+                        const auto& source = require_string(register_values[instruction.left]);
                         std::string lower = source;
                         std::transform(
                             lower.begin(),
@@ -642,7 +805,7 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                             lower.begin(),
                             [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
                         strings.push_back(std::move(lower));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
@@ -650,7 +813,7 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                     case OpCode::trim_start_str:
                     case OpCode::trim_end_str:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
+                        const auto& source = require_string(register_values[instruction.left]);
                         std::size_t start = 0;
                         std::size_t end = source.size();
 
@@ -671,13 +834,13 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                         }
 
                         strings.push_back(source.substr(start, end - start));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
                     case OpCode::str_to_i32:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
+                        const auto& source = require_string(register_values[instruction.left]);
                         std::size_t consumed = 0;
                         const auto value = std::stoi(source, &consumed, 10);
                         if (consumed != source.size())
@@ -685,32 +848,32 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                             throw std::runtime_error("string does not contain a valid integer");
                         }
 
-                        registers.at(instruction.destination) = value;
+                        register_values[instruction.destination] = value;
                         ++ip;
                         break;
                     }
                     case OpCode::try_str_to_i32:
                     {
-                        const auto& source = require_string(registers.at(instruction.left));
+                        const auto& source = require_string(register_values[instruction.left]);
                         try
                         {
                             std::size_t consumed = 0;
                             const auto value = std::stoi(source, &consumed, 10);
                             if (consumed != source.size())
                             {
-                                registers.at(instruction.right) = 0;
-                                registers.at(instruction.destination) = 0;
+                                register_values[instruction.right] = 0;
+                                register_values[instruction.destination] = 0;
                             }
                             else
                             {
-                                registers.at(instruction.right) = value;
-                                registers.at(instruction.destination) = 1;
+                                register_values[instruction.right] = value;
+                                register_values[instruction.destination] = 1;
                             }
                         }
                         catch (const std::exception&)
                         {
-                            registers.at(instruction.right) = 0;
-                            registers.at(instruction.destination) = 0;
+                            register_values[instruction.right] = 0;
+                            register_values[instruction.destination] = 0;
                         }
 
                         ++ip;
@@ -718,218 +881,241 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                     }
                     case OpCode::i32_to_str:
                     {
-                        strings.push_back(std::to_string(registers.at(instruction.left)));
-                        registers.at(instruction.destination) = encode_string_handle(strings.size() - 1);
+                        strings.push_back(std::to_string(register_values[instruction.left]));
+                        register_values[instruction.destination] = encode_string_handle(strings.size() - 1);
                         ++ip;
                         break;
                     }
-                case OpCode::call:
-                {
-                    const auto& callee = find_function(static_cast<std::uint32_t>(instruction.immediate));
-                    std::vector<std::int32_t> call_arguments;
-                    call_arguments.reserve(instruction.right);
-                    for (std::uint16_t arg_index = 0; arg_index < instruction.right; ++arg_index)
+                    case OpCode::call:
                     {
-                        call_arguments.push_back(registers.at(instruction.left + arg_index));
-                    }
+                        if (profile != nullptr)
+                        {
+                            ++profile->call_count;
+                        }
+                        const auto& callee = find_function(static_cast<std::uint32_t>(instruction.immediate));
+                        const auto result = execute_function(
+                            callee,
+                            register_values + instruction.left,
+                            instruction.right,
+                            call_depth + 1);
+                        if (callee.returns_value)
+                        {
+                            register_values[instruction.destination] = result;
+                        }
 
-                    const auto result = execute_function(callee, call_arguments);
-                    if (callee.returns_value)
-                    {
-                        registers.at(instruction.destination) = result;
+                        ++ip;
+                        break;
                     }
+                    case OpCode::call_virt:
+                    {
+                        if (profile != nullptr)
+                        {
+                            ++profile->call_virt_count;
+                        }
+                        if (register_values[instruction.left] == 0)
+                        {
+                            throw std::runtime_error("null reference method call");
+                        }
 
-                    ++ip;
-                    break;
-                }
-                case OpCode::call_virt:
-                {
-                    if (registers.at(instruction.left) == 0)
-                    {
-                        throw std::runtime_error("null reference method call");
-                    }
+                        const auto& callee = find_function(static_cast<std::uint32_t>(instruction.immediate));
+                        const auto result = execute_function(
+                            callee,
+                            register_values + instruction.left,
+                            static_cast<std::size_t>(instruction.right) + 1,
+                            call_depth + 1);
+                        if (callee.returns_value)
+                        {
+                            register_values[instruction.destination] = result;
+                        }
 
-                    const auto& callee = find_function(static_cast<std::uint32_t>(instruction.immediate));
-                    std::vector<std::int32_t> call_arguments;
-                    call_arguments.reserve(static_cast<std::size_t>(instruction.right) + 1);
-                    call_arguments.push_back(registers.at(instruction.left));
-                    for (std::uint16_t arg_index = 0; arg_index < instruction.right; ++arg_index)
-                    {
-                        call_arguments.push_back(registers.at(instruction.left + 1 + arg_index));
+                        ++ip;
+                        break;
                     }
+                    case OpCode::new_obj:
+                    {
+                        if (profile != nullptr)
+                        {
+                            ++profile->new_obj_count;
+                            ++profile->objects_created;
+                        }
+                        const auto& type = require_type(static_cast<std::uint32_t>(instruction.immediate));
+                        objects.push_back(ManagedObject {
+                            .type_id = type.type_id,
+                            .fields = std::vector<std::int32_t>(type.instance_field_count, 0)
+                        });
+                        heap_.record_allocation(sizeof(ObjectHeader) + type.instance_field_count * sizeof(std::int32_t));
+                        register_values[instruction.destination] = encode_object_handle(objects.size() - 1);
+                        ++ip;
+                        break;
+                    }
+                    case OpCode::ld_field:
+                    {
+                        const auto& field = require_field(static_cast<std::uint32_t>(instruction.immediate));
+                        if (field.is_static)
+                        {
+                            throw std::runtime_error("ld_field cannot target a static field");
+                        }
 
-                    const auto result = execute_function(callee, call_arguments);
-                    if (callee.returns_value)
-                    {
-                        registers.at(instruction.destination) = result;
-                    }
+                        auto& object = require_object(register_values[instruction.left]);
+                        if (object.type_id != field.owner_type_id)
+                        {
+                            throw std::runtime_error("field load targets the wrong receiver type");
+                        }
 
-                    ++ip;
-                    break;
-                }
-                case OpCode::new_obj:
-                {
-                    const auto& type = require_type(static_cast<std::uint32_t>(instruction.immediate));
-                    objects.push_back(ManagedObject {
-                        .type_id = type.type_id,
-                        .fields = std::vector<std::int32_t>(type.instance_field_count, 0)
-                    });
-                    heap_.record_allocation(sizeof(ObjectHeader) + type.instance_field_count * sizeof(std::int32_t));
-                    registers.at(instruction.destination) = encode_object_handle(objects.size() - 1);
-                    ++ip;
-                    break;
-                }
-                case OpCode::ld_field:
-                {
-                    const auto& field = require_field(static_cast<std::uint32_t>(instruction.immediate));
-                    if (field.is_static)
-                    {
-                        throw std::runtime_error("ld_field cannot target a static field");
-                    }
+                        if (field.instance_slot >= object.fields.size())
+                        {
+                            throw std::runtime_error("field slot is outside the object layout");
+                        }
 
-                    auto& object = require_object(registers.at(instruction.left));
-                    if (object.type_id != field.owner_type_id)
-                    {
-                        throw std::runtime_error("field load targets the wrong receiver type");
+                        register_values[instruction.destination] = object.fields[field.instance_slot];
+                        ++ip;
+                        break;
                     }
+                    case OpCode::st_field:
+                    {
+                        const auto& field = require_field(static_cast<std::uint32_t>(instruction.immediate));
+                        if (field.is_static)
+                        {
+                            throw std::runtime_error("st_field cannot target a static field");
+                        }
 
-                    if (field.instance_slot >= object.fields.size())
-                    {
-                        throw std::runtime_error("field slot is outside the object layout");
-                    }
+                        auto& object = require_object(register_values[instruction.destination]);
+                        if (object.type_id != field.owner_type_id)
+                        {
+                            throw std::runtime_error("field store targets the wrong receiver type");
+                        }
 
-                    registers.at(instruction.destination) = object.fields[field.instance_slot];
-                    ++ip;
-                    break;
-                }
-                case OpCode::st_field:
-                {
-                    const auto& field = require_field(static_cast<std::uint32_t>(instruction.immediate));
-                    if (field.is_static)
-                    {
-                        throw std::runtime_error("st_field cannot target a static field");
-                    }
+                        if (field.instance_slot >= object.fields.size())
+                        {
+                            throw std::runtime_error("field slot is outside the object layout");
+                        }
 
-                    auto& object = require_object(registers.at(instruction.destination));
-                    if (object.type_id != field.owner_type_id)
-                    {
-                        throw std::runtime_error("field store targets the wrong receiver type");
+                        object.fields[field.instance_slot] = register_values[instruction.left];
+                        ++ip;
+                        break;
                     }
+                    case OpCode::ld_sfield:
+                    {
+                        const auto field_id = static_cast<std::size_t>(instruction.immediate);
+                        if (field_id >= static_fields.size())
+                        {
+                            throw std::runtime_error("static field does not reference a known field");
+                        }
 
-                    if (field.instance_slot >= object.fields.size())
-                    {
-                        throw std::runtime_error("field slot is outside the object layout");
+                        register_values[instruction.destination] = static_fields[field_id];
+                        ++ip;
+                        break;
                     }
+                    case OpCode::st_sfield:
+                    {
+                        const auto field_id = static_cast<std::size_t>(instruction.immediate);
+                        if (field_id >= static_fields.size())
+                        {
+                            throw std::runtime_error("static field does not reference a known field");
+                        }
 
-                    object.fields[field.instance_slot] = registers.at(instruction.left);
-                    ++ip;
-                    break;
-                }
-                case OpCode::ld_sfield:
-                {
-                    const auto field_id = static_cast<std::size_t>(instruction.immediate);
-                    if (field_id >= static_fields.size())
-                    {
-                        throw std::runtime_error("static field does not reference a known field");
+                        static_fields[field_id] = register_values[instruction.left];
+                        ++ip;
+                        break;
                     }
+                    case OpCode::new_arr:
+                    {
+                        if (profile != nullptr)
+                        {
+                            ++profile->new_arr_count;
+                            ++profile->arrays_created;
+                        }
+                        const auto length = register_values[instruction.left];
+                        if (length < 0)
+                        {
+                            throw std::runtime_error("array length cannot be negative");
+                        }
 
-                    registers.at(instruction.destination) = static_fields[field_id];
-                    ++ip;
-                    break;
-                }
-                case OpCode::st_sfield:
-                {
-                    const auto field_id = static_cast<std::size_t>(instruction.immediate);
-                    if (field_id >= static_fields.size())
-                    {
-                        throw std::runtime_error("static field does not reference a known field");
+                        arrays.push_back(ArrayObject { .elements = std::vector<std::int32_t>(static_cast<std::size_t>(length), 0) });
+                        register_values[instruction.destination] = encode_array_handle(arrays.size() - 1);
+                        ++ip;
+                        break;
                     }
+                    case OpCode::ld_elem:
+                    {
+                        if (profile != nullptr)
+                        {
+                            ++profile->ld_elem_count;
+                        }
+                        const auto source = register_values[instruction.left];
+                        const auto index_value = register_values[instruction.right];
+                        if (source == 0)
+                        {
+                            throw std::runtime_error("null reference element access");
+                        }
 
-                    static_fields[field_id] = registers.at(instruction.left);
-                    ++ip;
-                    break;
-                }
-                case OpCode::new_arr:
-                {
-                    const auto length = registers.at(instruction.left);
-                    if (length < 0)
-                    {
-                        throw std::runtime_error("array length cannot be negative");
-                    }
+                        if (is_array_handle(source))
+                        {
+                            auto& array = require_array(source);
+                            const auto index = require_index(index_value, array.elements.size());
+                            register_values[instruction.destination] = array.elements[index];
+                        }
+                        else if (is_string_handle(source))
+                        {
+                            const auto& text = require_string(source);
+                            const auto index = require_index(index_value, text.size());
+                            register_values[instruction.destination] = static_cast<std::int32_t>(static_cast<unsigned char>(text[index]));
+                        }
+                        else
+                        {
+                            throw std::runtime_error("element load requested for unsupported value kind");
+                        }
 
-                    arrays.push_back(ArrayObject { .elements = std::vector<std::int32_t>(static_cast<std::size_t>(length), 0) });
-                    registers.at(instruction.destination) = encode_array_handle(arrays.size() - 1);
-                    ++ip;
-                    break;
-                }
-                case OpCode::ld_elem:
-                {
-                    const auto source = registers.at(instruction.left);
-                    const auto index_value = registers.at(instruction.right);
-                    if (source == 0)
-                    {
-                        throw std::runtime_error("null reference element access");
+                        ++ip;
+                        break;
                     }
+                    case OpCode::st_elem:
+                    {
+                        if (profile != nullptr)
+                        {
+                            ++profile->st_elem_count;
+                        }
+                        if (register_values[instruction.destination] == 0)
+                        {
+                            throw std::runtime_error("null reference element access");
+                        }
 
-                    if (is_array_handle(source))
-                    {
-                        auto& array = require_array(source);
-                        const auto index = require_index(index_value, array.elements.size());
-                        registers.at(instruction.destination) = array.elements[index];
+                        auto& array = require_array(register_values[instruction.destination]);
+                        const auto index = require_index(register_values[instruction.left], array.elements.size());
+                        array.elements[index] = register_values[instruction.right];
+                        ++ip;
+                        break;
                     }
-                    else if (is_string_handle(source))
+                    case OpCode::ld_len:
                     {
-                        const auto& text = require_string(source);
-                        const auto index = require_index(index_value, text.size());
-                        registers.at(instruction.destination) = static_cast<std::int32_t>(static_cast<unsigned char>(text[index]));
-                    }
-                    else
-                    {
-                        throw std::runtime_error("element load requested for unsupported value kind");
-                    }
+                        if (profile != nullptr)
+                        {
+                            ++profile->ld_len_count;
+                        }
+                        const auto value = register_values[instruction.left];
+                        if (value == 0)
+                        {
+                            throw std::runtime_error("null reference length access");
+                        }
 
-                    ++ip;
-                    break;
-                }
-                case OpCode::st_elem:
-                {
-                    if (registers.at(instruction.destination) == 0)
-                    {
-                        throw std::runtime_error("null reference element access");
-                    }
+                        if (is_array_handle(value))
+                        {
+                            register_values[instruction.destination] = static_cast<std::int32_t>(require_array(value).elements.size());
+                        }
+                        else if (is_string_handle(value))
+                        {
+                            register_values[instruction.destination] = static_cast<std::int32_t>(require_string(value).size());
+                        }
+                        else
+                        {
+                            throw std::runtime_error("length requested for unsupported value kind");
+                        }
 
-                    auto& array = require_array(registers.at(instruction.destination));
-                    const auto index = require_index(registers.at(instruction.left), array.elements.size());
-                    array.elements[index] = registers.at(instruction.right);
-                    ++ip;
-                    break;
-                }
-                case OpCode::ld_len:
-                {
-                    const auto value = registers.at(instruction.left);
-                    if (value == 0)
-                    {
-                        throw std::runtime_error("null reference length access");
+                        ++ip;
+                        break;
                     }
-
-                    if (is_array_handle(value))
-                    {
-                        registers.at(instruction.destination) = static_cast<std::int32_t>(require_array(value).elements.size());
-                    }
-                    else if (is_string_handle(value))
-                    {
-                        registers.at(instruction.destination) = static_cast<std::int32_t>(require_string(value).size());
-                    }
-                    else
-                    {
-                        throw std::runtime_error("length requested for unsupported value kind");
-                    }
-
-                    ++ip;
-                    break;
-                }
                     case OpCode::throw_:
-                        throw ManagedException { registers.at(instruction.destination) };
+                        throw ManagedException { register_values[instruction.destination] };
                     case OpCode::rethrow:
                         if (!has_current_exception)
                         {
@@ -941,7 +1127,7 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                         ip = static_cast<std::size_t>(instruction.immediate);
                         break;
                     case OpCode::br_false:
-                        if (registers.at(instruction.destination) == 0)
+                        if (register_values[instruction.destination] == 0)
                         {
                             ip = static_cast<std::size_t>(instruction.immediate);
                         }
@@ -957,7 +1143,7 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                             return 0;
                         }
 
-                        return registers.at(function.argument_count);
+                        return register_values[function.argument_count];
                     default:
                         throw std::runtime_error("unsupported opcode");
                 }
@@ -986,7 +1172,7 @@ std::int32_t VirtualMachine::execute(const Module& module) const
                 current_exception_value = ex.value;
                 if (handler->target_register != 0xFFFF)
                 {
-                    registers.at(handler->target_register) = ex.value;
+                    register_values[handler->target_register] = ex.value;
                 }
 
                 ip = handler->handler_start;
@@ -998,7 +1184,14 @@ std::int32_t VirtualMachine::execute(const Module& module) const
 
     try
     {
-        return execute_function(*entry_function, {});
+        const auto result = execute_function(*entry_function, nullptr, 0, 0);
+        if (profile != nullptr)
+        {
+            profile->total_execution_ns = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - total_start).count());
+        }
+
+        return result;
     }
     catch (const ManagedException&)
     {
