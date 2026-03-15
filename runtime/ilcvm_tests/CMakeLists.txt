@@ -3,4 +3,5 @@ add_executable(ilcvm_tests
 
 target_link_libraries(ilcvm_tests
     PRIVATE
-        ilcvm_core)
+        ilcvm_core
+        ilcvm_host)

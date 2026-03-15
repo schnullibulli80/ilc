@@ -1,0 +1,9 @@
+uses Sys = System;
+
+public class Program
+begin
+  public static function Main: Integer;
+  begin
+    exit 0;
+  end;
+end;

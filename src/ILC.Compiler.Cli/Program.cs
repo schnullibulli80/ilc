@@ -6,7 +6,7 @@ using ILC.Compiler.Syntax;
 
 if (args.Length == 0)
 {
-    Console.Error.WriteLine("usage: ilc <source-file>");
+    Console.Error.WriteLine("usage: ilc <main-source-file> [additional-source-files...]");
     return 1;
 }
 
@@ -19,7 +19,33 @@ if (!File.Exists(sourcePath))
 
 var sourceText = await File.ReadAllTextAsync(sourcePath);
 var syntaxTree = SyntaxTree.Parse(sourceText);
-var bindingResult = new Binder().Bind(syntaxTree);
+
+var importedSyntaxTrees = new List<SyntaxTree>();
+if (args.Length > 1)
+{
+    var importedNamespaces = syntaxTree.Root.Uses?.Imports.Select(importSyntax => importSyntax.NamespaceName.ToDisplayString()).ToHashSet(StringComparer.Ordinal)
+        ?? [];
+    for (var index = 1; index < args.Length; index++)
+    {
+        var importedPath = args[index];
+        if (!File.Exists(importedPath))
+        {
+            Console.Error.WriteLine($"error: file not found: {importedPath}");
+            return 2;
+        }
+
+        var importedText = await File.ReadAllTextAsync(importedPath);
+        var importedTree = SyntaxTree.Parse(importedText);
+        var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
+        if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
+        {
+            importedSyntaxTrees.Add(importedTree);
+        }
+    }
+}
+
+var mergedSyntaxTree = SyntaxTree.Merge(syntaxTree, importedSyntaxTrees);
+var bindingResult = new Binder().Bind(mergedSyntaxTree);
 
 if (bindingResult.Diagnostics.Count > 0)
 {
@@ -31,7 +57,7 @@ if (bindingResult.Diagnostics.Count > 0)
 
 Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
 Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
-Console.WriteLine($"members: {syntaxTree.Root.Members.Count}");
+Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
 Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
 
 var declaredMethods = bindingResult.Compilation.Types
@@ -55,7 +81,7 @@ if (bindingResult.HasErrors)
 
 if (moduleMethods.Length > 0)
 {
-    var lowerer = new Lowerer(moduleMethods, declaredFields, bindingResult.Compilation.Types, declaredProperties);
+    var lowerer = new Lowerer(moduleMethods, declaredFields, bindingResult.Compilation.Types, declaredProperties, bindingResult.Compilation.GetAllConstants());
     var module = new BytecodeEmitter().EmitModule(moduleMethods, declaredFields, bindingResult.Compilation.Types, lowerer);
     var ilbImage = new IlbSerializer().Serialize(module, moduleMethods, declaredFields, bindingResult.Compilation.Types, bindingResult.Compilation.EntryPoint);
     var ilbPath = Path.ChangeExtension(sourcePath, ".ilb");

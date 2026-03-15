@@ -1,0 +1,157 @@
+namespace System;
+
+public class Console
+begin
+  public static extern method WriteLine(text: String);
+end;
+
+public class Environment
+begin
+  private static extern function GetCommandLineArgsCore: array of String;
+  private static extern function GetCurrentDirectoryCore: String;
+  private static extern function GetUserNameCore: String;
+  private static extern function GetMachineNameCore: String;
+  private static extern function GetHomeDirectoryCore: String;
+  private static extern function GetTempDirectoryCore: String;
+  private static extern function GetEnvironmentVariableCore(name: String): String;
+  private static extern method SetEnvironmentVariableCore(name: String; value: String);
+
+  public static property CommandLineArgs: array of String
+  begin
+    get
+    begin
+      return GetCommandLineArgsCore();
+    end;
+  end;
+
+  public static property CurrentDirectory: String
+  begin
+    get
+    begin
+      return GetCurrentDirectoryCore();
+    end;
+  end;
+
+  public static property UserName: String
+  begin
+    get
+    begin
+      return GetUserNameCore();
+    end;
+  end;
+
+  public static property MachineName: String
+  begin
+    get
+    begin
+      return GetMachineNameCore();
+    end;
+  end;
+
+  public static property HomeDirectory: String
+  begin
+    get
+    begin
+      return GetHomeDirectoryCore();
+    end;
+  end;
+
+  public static property TempDirectory: String
+  begin
+    get
+    begin
+      return GetTempDirectoryCore();
+    end;
+  end;
+
+  public static property Variables[name: String]: String
+  begin
+    get
+    begin
+      return GetEnvironmentVariableCore(name);
+    end;
+
+    set(value)
+    begin
+      SetEnvironmentVariableCore(name, value);
+    end;
+  end;
+end;
+
+public class Clock
+begin
+  private static extern function GetMonotonicMillisecondsTextCore: String;
+  private static extern function GetWallMillisecondsTextCore: String;
+
+  public static property MonotonicMillisecondsText: String
+  begin
+    get
+    begin
+      return GetMonotonicMillisecondsTextCore();
+    end;
+  end;
+
+  public static property WallMillisecondsText: String
+  begin
+    get
+    begin
+      return GetWallMillisecondsTextCore();
+    end;
+  end;
+end;
+
+public class File
+begin
+  private static extern function ExistsCore(path: String): Boolean;
+  private static extern function ReadAllTextCore(path: String): String;
+  private static extern method WriteAllTextCore(path: String; text: String);
+  private static extern method AppendAllTextCore(path: String; text: String);
+
+  public static function Exists(path: String): Boolean;
+  begin
+    return ExistsCore(path);
+  end;
+
+  public static function ReadAllText(path: String): String;
+  begin
+    return ReadAllTextCore(path);
+  end;
+
+  public static method WriteAllText(path: String; text: String);
+  begin
+    WriteAllTextCore(path, text);
+  end;
+
+  public static method AppendAllText(path: String; text: String);
+  begin
+    AppendAllTextCore(path, text);
+  end;
+end;
+
+public class Path
+begin
+  private static extern function CombineCore(left: String; right: String): String;
+  private static extern function GetFileNameCore(path: String): String;
+  private static extern function GetDirectoryNameCore(path: String): String;
+  private static extern function GetExtensionCore(path: String): String;
+
+  public static function Combine(left: String; right: String): String;
+  begin
+    return CombineCore(left, right);
+  end;
+
+  public static function GetFileName(path: String): String;
+  begin
+    return GetFileNameCore(path);
+  end;
+
+  public static function GetDirectoryName(path: String): String;
+  begin
+    return GetDirectoryNameCore(path);
+  end;
+
+  public static function GetExtension(path: String): String;
+  begin
+    return GetExtensionCore(path);
+  end;
+end;

@@ -1,0 +1,103 @@
+uses Sys = System;
+
+public class Counter
+begin
+  public var Value: Integer;
+
+  public constructor(seed: Integer);
+  begin
+    Value := seed;
+  end;
+
+  public function Tick(delta: Integer): Integer;
+  begin
+    Value := Value + delta;
+    exit Value;
+  end;
+end;
+
+public class Program
+begin
+  public static function RunLoop(iterations: Integer): Integer;
+  begin
+    var index := 0;
+    var sum := 0;
+    while index < iterations do
+    begin
+      sum := sum + index;
+      index := index + 1;
+    end;
+
+    exit sum;
+  end;
+
+  public static function RunArray(iterations: Integer): Integer;
+  begin
+    var values: array of Integer := new Integer[iterations];
+    var index := 0;
+    while index < iterations do
+    begin
+      values[index] := index;
+      index := index + 1;
+    end;
+
+    index := 0;
+    var sum := 0;
+    while index < iterations do
+    begin
+      sum := sum + values[index];
+      index := index + 1;
+    end;
+
+    exit sum;
+  end;
+
+  public static function RunDispatch(iterations: Integer): Integer;
+  begin
+    var counter := new Counter(0);
+    var index := 0;
+    var sum := 0;
+    while index < iterations do
+    begin
+      sum := sum + counter.Tick(1);
+      index := index + 1;
+    end;
+
+    exit sum;
+  end;
+
+  public static function Main: Integer;
+  begin
+    var args := Sys.Environment.CommandLineArgs;
+    var bench := args[0];
+    var iterations := Integer.Parse(args[1]);
+    var startMs := Integer.Parse(Sys.Clock.MonotonicMillisecondsText);
+    var result := 0;
+
+    if bench = 'loop' then
+    begin
+      result := RunLoop(iterations);
+    end
+    else if bench = 'array' then
+    begin
+      result := RunArray(iterations);
+    end
+    else if bench = 'dispatch' then
+    begin
+      result := RunDispatch(iterations);
+    end
+    else
+    begin
+      Sys.Console.WriteLine('ERROR=unknown benchmark ' + bench);
+      exit 1;
+    end;
+
+    var endMs := Integer.Parse(Sys.Clock.MonotonicMillisecondsText);
+    var elapsedMs := endMs - startMs;
+    Sys.Console.WriteLine('BENCH=' + bench);
+    Sys.Console.WriteLine('ITERATIONS=' + iterations.ToString());
+    Sys.Console.WriteLine('ELAPSED_MS=' + elapsedMs.ToString());
+    Sys.Console.WriteLine('RESULT=' + result.ToString());
+    exit result;
+  end;
+end;

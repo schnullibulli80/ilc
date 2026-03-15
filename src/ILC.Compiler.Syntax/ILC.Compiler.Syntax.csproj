@@ -1,2 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ILC.Compiler.Core/ILC.Compiler.Core.csproj" />
+  </ItemGroup>
 </Project>

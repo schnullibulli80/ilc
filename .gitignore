@@ -53,6 +53,9 @@ CMakeCache.txt
 cmake_install.cmake
 Testing/
 
+# ilcvm
+*.ilb
+
 # Project temp workspace
 tmp/
 ILC_Codex_Architecture_Spec.md
@@ -60,3 +63,4 @@ ILC_Codex_Bytecode_Spec.md
 ILC_ILB_Container_Format_Spec.md
 ILC_Runtime_Object_Model_Spec.md
 ilc_secure_packaging_and_execution_spec.md
+

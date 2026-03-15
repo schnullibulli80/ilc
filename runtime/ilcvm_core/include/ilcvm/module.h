@@ -7,6 +7,32 @@
 
 namespace ilcvm
 {
+enum class HostImportKind : std::uint32_t
+{
+    none = 0,
+    console_write = 1,
+    console_write_line = 2,
+    console_read_line = 3,
+    environment_get_command_line_args = 4,
+    environment_get_current_working_directory = 5,
+    environment_get_environment_variable = 6,
+    environment_set_environment_variable = 7,
+    environment_get_user_name = 8,
+    environment_get_machine_name = 9,
+    environment_get_home_directory = 10,
+    environment_get_temp_directory = 11,
+    clock_get_monotonic_milliseconds_text = 12,
+    clock_get_wall_milliseconds_text = 13,
+    file_exists = 14,
+    file_read_all_text = 15,
+    file_write_all_text = 16,
+    file_append_all_text = 17,
+    path_combine = 18,
+    path_get_file_name = 19,
+    path_get_directory_name = 20,
+    path_get_extension = 21
+};
+
 enum class OpCode : std::uint8_t
 {
     nop = 0x00,
@@ -14,15 +40,44 @@ enum class OpCode : std::uint8_t
     ld_str = 0x03,
     mov = 0x09,
     add_i32 = 0x10,
+    shl_i32 = 0x17,
+    shr_i32 = 0x54,
+    and_i32 = 0x14,
+    or_i32 = 0x15,
+    not_i32 = 0x16,
     sub_i32 = 0x11,
     mul_i32 = 0x12,
     div_i32 = 0x13,
+    mod_i32 = 0x55,
     cmp_eq_i32 = 0x18,
     cmp_ne_i32 = 0x19,
     cmp_lt_i32 = 0x1A,
     cmp_le_i32 = 0x1B,
     cmp_gt_i32 = 0x1C,
     cmp_ge_i32 = 0x1D,
+    cmp_eq_str = 0x1E,
+    cmp_ne_str = 0x1F,
+    cmp_eq_ref = 0x20,
+    cmp_ne_ref = 0x21,
+    concat_str = 0x22,
+    starts_with_str = 0x23,
+    ends_with_str = 0x24,
+    contains_str = 0x25,
+    index_of_str = 0x26,
+    last_index_of_str = 0x27,
+    replace_str = 0x28,
+    insert_str = 0x29,
+    remove_str = 0x2A,
+    to_upper_str = 0x2B,
+    to_lower_str = 0x2C,
+    trim_str = 0x2D,
+    trim_start_str = 0x2E,
+    trim_end_str = 0x2F,
+    str_to_i32 = 0x50,
+    try_str_to_i32 = 0x53,
+    i32_to_str = 0x52,
+    throw_ = 0x80,
+    rethrow = 0x81,
     call = 0x30,
     call_virt = 0x51,
     ld_field = 0x36,
@@ -34,6 +89,7 @@ enum class OpCode : std::uint8_t
     ld_elem = 0x74,
     st_elem = 0x75,
     ld_len = 0x76,
+    slice_str = 0x77,
     br = 0x31,
     br_false = 0x32,
     ret = 0x34
@@ -78,7 +134,18 @@ struct Function
     std::uint16_t register_count {};
     std::uint16_t argument_count {};
     bool returns_value {};
+    HostImportKind host_import_kind { HostImportKind::none };
     std::vector<Instruction> instructions;
+    struct ExceptionHandler
+    {
+        std::uint32_t try_start {};
+        std::uint32_t try_end {};
+        std::uint32_t handler_start {};
+        std::uint32_t handler_end {};
+        std::uint16_t target_register { 0xFFFF };
+        std::uint32_t catch_type_id {};
+    };
+    std::vector<ExceptionHandler> exception_handlers;
 };
 
 struct Type

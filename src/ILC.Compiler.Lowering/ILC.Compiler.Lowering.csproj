@@ -1,2 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ILC.Compiler.Binding/ILC.Compiler.Binding.csproj" />
+    <ProjectReference Include="../ILC.Compiler.Syntax/ILC.Compiler.Syntax.csproj" />
+  </ItemGroup>
 </Project>

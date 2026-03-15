@@ -10,15 +10,44 @@ public enum OpCode : byte
     LdStr = 0x03,
     Mov = 0x09,
     AddI32 = 0x10,
+    ShlI32 = 0x17,
+    ShrI32 = 0x54,
+    AndI32 = 0x14,
+    OrI32 = 0x15,
+    NotI32 = 0x16,
     SubI32 = 0x11,
     MulI32 = 0x12,
     DivI32 = 0x13,
+    ModI32 = 0x55,
     CmpEqI32 = 0x18,
     CmpNeI32 = 0x19,
     CmpLtI32 = 0x1A,
     CmpLeI32 = 0x1B,
     CmpGtI32 = 0x1C,
     CmpGeI32 = 0x1D,
+    CmpEqStr = 0x1E,
+    CmpNeStr = 0x1F,
+    CmpEqRef = 0x20,
+    CmpNeRef = 0x21,
+    ConcatStr = 0x22,
+    StartsWithStr = 0x23,
+    EndsWithStr = 0x24,
+    ContainsStr = 0x25,
+    IndexOfStr = 0x26,
+    LastIndexOfStr = 0x27,
+    ReplaceStr = 0x28,
+    InsertStr = 0x29,
+    RemoveStr = 0x2A,
+    ToUpperStr = 0x2B,
+    ToLowerStr = 0x2C,
+    TrimStr = 0x2D,
+    TrimStartStr = 0x2E,
+    TrimEndStr = 0x2F,
+    StrToI32 = 0x50,
+    TryStrToI32 = 0x53,
+    I32ToStr = 0x52,
+    Throw = 0x80,
+    Rethrow = 0x81,
     NewObj = 0x60,
     NewArr = 0x61,
     LdField = 0x36,
@@ -28,6 +57,7 @@ public enum OpCode : byte
     LdElem = 0x74,
     StElem = 0x75,
     LdLen = 0x76,
+    SliceStr = 0x77,
     Call = 0x30,
     CallVirt = 0x51,
     Br = 0x31,
@@ -44,18 +74,24 @@ public sealed record Instruction(
 
 public sealed record BytecodeArrayShapeInfo(ushort ArrayRegister, IReadOnlyList<ushort> ExtentRegisters);
 public sealed record BytecodeModuleArrayShapeInfo(uint FunctionId, ushort ArrayRegister, IReadOnlyList<ushort> ExtentRegisters);
+public sealed record BytecodeExceptionHandlerInfo(ushort TryStart, ushort TryEnd, ushort HandlerStart, ushort HandlerEnd, ushort TargetRegister, uint CatchTypeId);
+public sealed record BytecodeModuleExceptionHandlerInfo(uint FunctionId, ushort TryStart, ushort TryEnd, ushort HandlerStart, ushort HandlerEnd, ushort TargetRegister, uint CatchTypeId);
 
 public sealed record BytecodeFunction(
     uint FunctionId,
     string Name,
     ushort RegisterCount,
     ushort ArgumentCount,
+    HostImportKind HostImportKind,
     IReadOnlyList<Instruction> Instructions,
-    IReadOnlyList<BytecodeArrayShapeInfo> ArrayShapes);
+    IReadOnlyList<BytecodeArrayShapeInfo> ArrayShapes,
+    IReadOnlyList<BytecodeExceptionHandlerInfo> ExceptionHandlers,
+    IReadOnlyList<string> StringLiterals);
 
 public sealed record BytecodeModule(
     IReadOnlyList<BytecodeFunction> Functions,
-    IReadOnlyList<BytecodeModuleArrayShapeInfo> ArrayShapes);
+    IReadOnlyList<BytecodeModuleArrayShapeInfo> ArrayShapes,
+    IReadOnlyList<BytecodeModuleExceptionHandlerInfo> ExceptionHandlers);
 
 public enum IlbSectionKind : uint
 {
@@ -65,6 +101,7 @@ public enum IlbSectionKind : uint
     FieldTable = 4,
     MethodTable = 5,
     CodeSection = 7,
+    ExceptionTable = 8,
     EntryPoint = 9
 }
 
@@ -129,13 +166,23 @@ public sealed class IlbSerializer
         var methodIds = methodList
             .Select((method, index) => (method, id: (uint)(index + 1)))
             .ToDictionary(pair => GetMethodKey(pair.method), pair => pair.id, StringComparer.Ordinal);
-        var codeInfo = BuildCodeSection(module.Functions);
+        var functionStringIds = new Dictionary<uint, IReadOnlyList<uint>>();
+        foreach (var function in module.Functions)
+        {
+            functionStringIds[function.FunctionId] = function.StringLiterals
+                .Select(stringTable.GetOrAdd)
+                .ToArray();
+        }
+
+        var codeInfo = BuildCodeSection(module.Functions, functionStringIds);
+        var exceptionInfo = BuildExceptionTableSection(module.Functions);
         var stringsPayload = BuildStringTableSection(stringTable);
         var blobsPayload = BuildBlobTableSection(blobTable);
         var typesPayload = BuildTypeTableSection(typeList, stringTable, typeIds, fieldList, methodList);
         var fieldsPayload = BuildFieldTableSection(fieldList, typeIds, stringTable);
-        var methodsPayload = BuildMethodTableSection(methodList, typeIds, stringTable, blobTable, codeInfo, methodIds);
+        var methodsPayload = BuildMethodTableSection(methodList, typeIds, stringTable, blobTable, codeInfo, exceptionInfo, methodIds);
         var codePayload = codeInfo.SectionBytes;
+        var exceptionPayload = exceptionInfo.SectionBytes;
         var entryPayload = BuildEntryPointSection(entryPoint, methodIds);
 
         var sections = new List<(IlbSectionKind Kind, byte[] Payload, uint Count)>
@@ -147,6 +194,11 @@ public sealed class IlbSerializer
             (IlbSectionKind.MethodTable, methodsPayload, (uint)methodList.Length),
             (IlbSectionKind.CodeSection, codePayload, (uint)module.Functions.Count)
         };
+
+        if (exceptionPayload.Length > 0)
+        {
+            sections.Add((IlbSectionKind.ExceptionTable, exceptionPayload, (uint)exceptionInfo.RowCount));
+        }
 
         if (entryPayload.Length > 0)
         {
@@ -321,6 +373,7 @@ public sealed class IlbSerializer
         IlbStringTableBuilder strings,
         IlbBlobTableBuilder blobs,
         IlbCodeSectionInfo codeInfo,
+        IlbExceptionSectionInfo exceptionInfo,
         IReadOnlyDictionary<string, uint> methodIds)
     {
         using var stream = new MemoryStream();
@@ -339,9 +392,17 @@ public sealed class IlbSerializer
             writer.Write(method.ReturnType == TypeSymbol.Void ? 0u : typeIds[method.ReturnType.Name]);
             writer.Write(function.CodeOffset);
             writer.Write(function.CodeSize);
-            writer.Write(0u);
-            writer.Write(0u);
-            writer.Write(0u);
+            if (exceptionInfo.FunctionsById.TryGetValue(function.FunctionId, out var functionExceptions))
+            {
+                writer.Write(functionExceptions.ExceptionStart);
+                writer.Write(functionExceptions.ExceptionCount);
+            }
+            else
+            {
+                writer.Write(0u);
+                writer.Write(0u);
+            }
+            writer.Write((uint)method.HostImportKind);
             writer.Write(0u);
             writer.Write(0u);
             writer.Write(0u);
@@ -365,7 +426,9 @@ public sealed class IlbSerializer
         return stream.ToArray();
     }
 
-    private static IlbCodeSectionInfo BuildCodeSection(IReadOnlyList<BytecodeFunction> functions)
+    private static IlbCodeSectionInfo BuildCodeSection(
+        IReadOnlyList<BytecodeFunction> functions,
+        IReadOnlyDictionary<uint, IReadOnlyList<uint>> functionStringIds)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
@@ -375,11 +438,20 @@ public sealed class IlbSerializer
             var offset = (uint)stream.Position;
             foreach (var instruction in function.Instructions)
             {
+                var immediate = instruction.Immediate;
+                if (instruction.OpCode == OpCode.LdStr &&
+                    instruction.Immediate > 0 &&
+                    functionStringIds.TryGetValue(function.FunctionId, out var stringIds) &&
+                    instruction.Immediate <= stringIds.Count)
+                {
+                    immediate = (int)stringIds[instruction.Immediate - 1];
+                }
+
                 writer.Write((byte)instruction.OpCode);
                 writer.Write(instruction.Destination);
                 writer.Write(instruction.Left);
                 writer.Write(instruction.Right);
-                writer.Write(instruction.Immediate);
+                writer.Write(immediate);
             }
 
             var size = (uint)stream.Position - offset;
@@ -387,6 +459,41 @@ public sealed class IlbSerializer
         }
 
         return new IlbCodeSectionInfo(stream.ToArray(), map);
+    }
+
+    private static IlbExceptionSectionInfo BuildExceptionTableSection(IReadOnlyList<BytecodeFunction> functions)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        var map = new Dictionary<uint, IlbFunctionExceptionInfo>();
+        uint nextExceptionId = 1;
+
+        foreach (var function in functions)
+        {
+            if (function.ExceptionHandlers.Count == 0)
+            {
+                continue;
+            }
+
+            var start = nextExceptionId;
+            foreach (var handler in function.ExceptionHandlers)
+            {
+                writer.Write(nextExceptionId++);
+                writer.Write((uint)handler.TryStart);
+                writer.Write((uint)handler.TryEnd);
+                writer.Write((uint)handler.HandlerStart);
+                writer.Write((uint)handler.HandlerEnd);
+                writer.Write((ushort)1);
+                writer.Write((ushort)0);
+                writer.Write(handler.CatchTypeId);
+                writer.Write(handler.TargetRegister);
+                writer.Write((ushort)0);
+            }
+
+            map[function.FunctionId] = new IlbFunctionExceptionInfo(function.FunctionId, start, (uint)function.ExceptionHandlers.Count);
+        }
+
+        return new IlbExceptionSectionInfo(stream.ToArray(), map, nextExceptionId - 1);
     }
 
     private static byte[] BuildSignatureBlob(MethodSymbol method, IReadOnlyList<TypeSymbol> types)
@@ -411,7 +518,7 @@ public sealed class IlbSerializer
     private static ushort GetTypeKind(TypeSymbol type) =>
         type.Name switch
         {
-            "Boolean" or "Char" or "Integer" or "String" => 7,
+            "Boolean" or "Char" or "Integer" or "String" or "Nil" => 7,
             _ when type.Name.Contains('[') => 6,
             _ => 1
         };
@@ -449,6 +556,11 @@ public sealed class IlbSerializer
         if (method.IsStatic)
         {
             flags |= 1u << 4;
+        }
+
+        if (method.IsExtern)
+        {
+            flags |= 1u << 16;
         }
 
         if (method.Name == "Main")
@@ -586,6 +698,8 @@ public sealed class IlbSerializer
 
     private sealed record IlbCodeFunctionInfo(uint FunctionId, uint CodeOffset, uint CodeSize, ushort RegisterCount, ushort ArgumentCount);
     private sealed record IlbCodeSectionInfo(byte[] SectionBytes, IReadOnlyDictionary<uint, IlbCodeFunctionInfo> FunctionsById);
+    private sealed record IlbFunctionExceptionInfo(uint FunctionId, uint ExceptionStart, uint ExceptionCount);
+    private sealed record IlbExceptionSectionInfo(byte[] SectionBytes, IReadOnlyDictionary<uint, IlbFunctionExceptionInfo> FunctionsById, uint RowCount);
 }
 
 public sealed class BytecodeEmitter
@@ -596,7 +710,9 @@ public sealed class BytecodeEmitter
         var labelOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
         var pendingBranches = new List<(int Index, string Label)>();
         var stringIds = new Dictionary<string, int>(StringComparer.Ordinal);
+        var stringLiterals = new List<string>();
         var arrayShapes = new List<BytecodeArrayShapeInfo>();
+        var exceptionHandlers = new List<BytecodeExceptionHandlerInfo>();
         var nextScratchRegister = function.Registers.Count;
 
         foreach (var block in function.Blocks)
@@ -612,6 +728,7 @@ public sealed class BytecodeEmitter
                             {
                                 stringId = stringIds.Count + 1;
                                 stringIds[text] = stringId;
+                                stringLiterals.Add(text);
                             }
 
                             instructions.Add(new Instruction(
@@ -641,6 +758,25 @@ public sealed class BytecodeEmitter
                     case IrOpCode.Add:
                         instructions.Add(EmitBinaryInstruction(OpCode.AddI32, instruction));
                         break;
+                    case IrOpCode.ShiftLeft:
+                        instructions.Add(EmitBinaryInstruction(OpCode.ShlI32, instruction));
+                        break;
+                    case IrOpCode.ShiftRight:
+                        instructions.Add(EmitBinaryInstruction(OpCode.ShrI32, instruction));
+                        break;
+                    case IrOpCode.BitwiseAnd:
+                        instructions.Add(EmitBinaryInstruction(OpCode.AndI32, instruction));
+                        break;
+                    case IrOpCode.BitwiseOr:
+                        instructions.Add(EmitBinaryInstruction(OpCode.OrI32, instruction));
+                        break;
+                    case IrOpCode.BitwiseNot:
+                        instructions.Add(new Instruction(
+                            OpCode.NotI32,
+                            instruction.Destination?.Index ?? 0,
+                            ((IrValue?)instruction.Operand)?.Index ?? 0,
+                            0));
+                        break;
                     case IrOpCode.Subtract:
                         instructions.Add(EmitBinaryInstruction(OpCode.SubI32, instruction));
                         break;
@@ -650,11 +786,129 @@ public sealed class BytecodeEmitter
                     case IrOpCode.Divide:
                         instructions.Add(EmitBinaryInstruction(OpCode.DivI32, instruction));
                         break;
+                    case IrOpCode.Modulo:
+                        instructions.Add(EmitBinaryInstruction(OpCode.ModI32, instruction));
+                        break;
                     case IrOpCode.CompareEqual:
                         instructions.Add(EmitBinaryInstruction(OpCode.CmpEqI32, instruction));
                         break;
                     case IrOpCode.CompareNotEqual:
                         instructions.Add(EmitBinaryInstruction(OpCode.CmpNeI32, instruction));
+                        break;
+                    case IrOpCode.CompareEqualString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.CmpEqStr, instruction));
+                        break;
+                    case IrOpCode.CompareNotEqualString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.CmpNeStr, instruction));
+                        break;
+                    case IrOpCode.CompareEqualReference:
+                        instructions.Add(EmitBinaryInstruction(OpCode.CmpEqRef, instruction));
+                        break;
+                    case IrOpCode.CompareNotEqualReference:
+                        instructions.Add(EmitBinaryInstruction(OpCode.CmpNeRef, instruction));
+                        break;
+                    case IrOpCode.ConcatString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.ConcatStr, instruction));
+                        break;
+                    case IrOpCode.ReplaceString:
+                    {
+                        var target = (IrStringReplaceTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.ReplaceStr,
+                            instruction.Destination!.Index,
+                            target.Source.Index,
+                            target.OldValue.Index,
+                            target.NewValue.Index));
+                        break;
+                    }
+                    case IrOpCode.InsertString:
+                    {
+                        var target = (IrStringInsertTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.InsertStr,
+                            instruction.Destination!.Index,
+                            target.Source.Index,
+                            target.Index.Index,
+                            target.Value.Index));
+                        break;
+                    }
+                    case IrOpCode.RemoveString:
+                    {
+                        var target = (IrStringRemoveTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.RemoveStr,
+                            instruction.Destination!.Index,
+                            target.Source.Index,
+                            target.Index.Index,
+                            target.Length.Index));
+                        break;
+                    }
+                    case IrOpCode.ToUpperString:
+                        instructions.Add(new Instruction(
+                            OpCode.ToUpperStr,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.ToLowerString:
+                        instructions.Add(new Instruction(
+                            OpCode.ToLowerStr,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.TrimString:
+                        instructions.Add(new Instruction(
+                            OpCode.TrimStr,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.TrimStartString:
+                        instructions.Add(new Instruction(
+                            OpCode.TrimStartStr,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.TrimEndString:
+                        instructions.Add(new Instruction(
+                            OpCode.TrimEndStr,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.ParseStringToInteger:
+                        instructions.Add(new Instruction(
+                            OpCode.StrToI32,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.TryParseStringToInteger:
+                    {
+                        var target = (IrStringTryParseTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.TryStrToI32,
+                            instruction.Destination!.Index,
+                            target.Source.Index,
+                            target.ParsedValue.Index));
+                        break;
+                    }
+                    case IrOpCode.ConvertIntegerToString:
+                        instructions.Add(new Instruction(
+                            OpCode.I32ToStr,
+                            instruction.Destination!.Index,
+                            ((IrValue)instruction.Operand!).Index));
+                        break;
+                    case IrOpCode.StartsWithString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.StartsWithStr, instruction));
+                        break;
+                    case IrOpCode.EndsWithString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.EndsWithStr, instruction));
+                        break;
+                    case IrOpCode.ContainsString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.ContainsStr, instruction));
+                        break;
+                    case IrOpCode.IndexOfString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.IndexOfStr, instruction));
+                        break;
+                    case IrOpCode.LastIndexOfString:
+                        instructions.Add(EmitBinaryInstruction(OpCode.LastIndexOfStr, instruction));
                         break;
                     case IrOpCode.CompareLess:
                         instructions.Add(EmitBinaryInstruction(OpCode.CmpLtI32, instruction));
@@ -772,6 +1026,31 @@ public sealed class BytecodeEmitter
                             lengthTarget.Array.Index,
                             0));
                         break;
+                    case IrOpCode.SliceString:
+                        var stringSliceTarget = (IrStringSliceTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.SliceStr,
+                            instruction.Destination?.Index ?? 0,
+                            stringSliceTarget.Source.Index,
+                            stringSliceTarget.Start.Index,
+                            stringSliceTarget.End.Index));
+                        break;
+                    case IrOpCode.Throw:
+                        instructions.Add(new Instruction(
+                            OpCode.Throw,
+                            instruction.Destination?.Index ?? 0,
+                            0,
+                            0,
+                            0));
+                        break;
+                    case IrOpCode.Rethrow:
+                        instructions.Add(new Instruction(
+                            OpCode.Rethrow,
+                            0,
+                            0,
+                            0,
+                            0));
+                        break;
                     case IrOpCode.Branch:
                         pendingBranches.Add((instructions.Count, (string)instruction.Operand!));
                         instructions.Add(new Instruction(OpCode.Br));
@@ -804,13 +1083,39 @@ public sealed class BytecodeEmitter
             instructions[pendingBranch.Index] = instructions[pendingBranch.Index] with { Immediate = targetOffset };
         }
 
+        foreach (var handler in function.ExceptionHandlers)
+        {
+            if (!labelOffsets.TryGetValue(handler.TryStartLabel, out var tryStart) ||
+                !labelOffsets.TryGetValue(handler.TryEndLabel, out var tryEnd) ||
+                !labelOffsets.TryGetValue(handler.HandlerStartLabel, out var handlerStart) ||
+                !labelOffsets.TryGetValue(handler.HandlerEndLabel, out var handlerEnd))
+            {
+                throw new InvalidOperationException("Unknown exception handler label.");
+            }
+
+            var catchTypeId = handler.CatchTypeName is null
+                ? 0u
+                : unchecked((uint)ResolveTypeId(handler.CatchTypeName));
+
+            exceptionHandlers.Add(new BytecodeExceptionHandlerInfo(
+                (ushort)tryStart,
+                (ushort)tryEnd,
+                (ushort)handlerStart,
+                (ushort)handlerEnd,
+                handler.TargetRegister,
+                catchTypeId));
+        }
+
         return new BytecodeFunction(
             functionId,
             function.Name,
             (ushort)nextScratchRegister,
             (ushort)(method.Parameters.Count + (method.DeclaringTypeName is not null && !method.IsStatic ? 1 : 0)),
+            method.HostImportKind,
             instructions,
-            arrayShapes);
+            arrayShapes,
+            exceptionHandlers,
+            stringLiterals);
     }
 
     private static ushort EmitPackedArguments(List<Instruction> instructions, IReadOnlyList<IrValue> arguments, ref int nextScratchRegister)
@@ -902,8 +1207,18 @@ public sealed class BytecodeEmitter
         var moduleShapes = functions
             .SelectMany(function => function.ArrayShapes.Select(shape => new BytecodeModuleArrayShapeInfo(function.FunctionId, shape.ArrayRegister, shape.ExtentRegisters)))
             .ToArray();
+        var moduleExceptionHandlers = functions
+            .SelectMany(function => function.ExceptionHandlers.Select(handler => new BytecodeModuleExceptionHandlerInfo(
+                function.FunctionId,
+                handler.TryStart,
+                handler.TryEnd,
+                handler.HandlerStart,
+                handler.HandlerEnd,
+                handler.TargetRegister,
+                handler.CatchTypeId)))
+            .ToArray();
 
-        return new BytecodeModule(functions, moduleShapes);
+        return new BytecodeModule(functions, moduleShapes, moduleExceptionHandlers);
     }
 
     private static TypeSymbol[] CollectReferencedTypes(IEnumerable<MethodSymbol> methods, IEnumerable<FieldSymbol> fields, IEnumerable<TypeSymbol> declaredTypes)

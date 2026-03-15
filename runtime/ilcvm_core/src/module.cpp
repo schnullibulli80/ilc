@@ -99,8 +99,10 @@ Function decode_function(
     std::uint16_t register_count,
     std::uint16_t argument_count,
     bool returns_value,
+    HostImportKind host_import_kind,
     std::uint32_t code_offset,
     std::uint32_t code_size,
+    std::vector<Function::ExceptionHandler> exception_handlers,
     const std::vector<std::uint8_t>& code_bytes)
 {
     if (code_size % k_instruction_size != 0)
@@ -114,6 +116,8 @@ Function decode_function(
     function.register_count = register_count;
     function.argument_count = argument_count;
     function.returns_value = returns_value;
+    function.host_import_kind = host_import_kind;
+    function.exception_handlers = std::move(exception_handlers);
 
     std::size_t cursor = code_offset;
     const auto end = static_cast<std::size_t>(code_offset + code_size);
@@ -270,6 +274,43 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
     std::vector<std::uint8_t> code_bytes(
         bytes.begin() + code_section.offset,
         bytes.begin() + code_section.offset + code_section.size);
+    std::vector<Function::ExceptionHandler> exception_rows(1);
+
+    if (const auto* exception_table = find_section(module.sections, SectionKind::exception_table))
+    {
+        validate_section_bounds(bytes, *exception_table);
+        const auto exception_row_size = static_cast<std::size_t>(32);
+        if (exception_table->size % exception_row_size != 0)
+        {
+            throw std::runtime_error("invalid exception table size");
+        }
+
+        std::size_t exception_cursor = exception_table->offset;
+        for (std::uint32_t index = 1; index <= exception_table->element_count; ++index)
+        {
+            const auto try_start = read_u32(bytes, exception_cursor + 4);
+            const auto try_end = read_u32(bytes, exception_cursor + 8);
+            const auto handler_start = read_u32(bytes, exception_cursor + 12);
+            const auto handler_end = read_u32(bytes, exception_cursor + 16);
+            const auto handler_kind = read_u16(bytes, exception_cursor + 20);
+            const auto catch_type_id = read_u32(bytes, exception_cursor + 24);
+            const auto target_register = read_u16(bytes, exception_cursor + 28);
+            if (handler_kind != 1)
+            {
+                throw std::runtime_error("unsupported exception handler kind");
+            }
+
+            exception_rows.push_back(Function::ExceptionHandler {
+                .try_start = try_start,
+                .try_end = try_end,
+                .handler_start = handler_start,
+                .handler_end = handler_end,
+                .target_register = target_register,
+                .catch_type_id = catch_type_id
+            });
+            exception_cursor += exception_row_size;
+        }
+    }
 
     std::size_t cursor = method_table.offset;
     for (std::uint32_t method_index = 1; method_index <= method_table.element_count; ++method_index)
@@ -281,6 +322,9 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
         const auto return_type_id = read_u32(bytes, cursor + 22);
         const auto code_offset = read_u32(bytes, cursor + 26);
         const auto code_size = read_u32(bytes, cursor + 30);
+        const auto exception_start = read_u32(bytes, cursor + 34);
+        const auto exception_count = read_u32(bytes, cursor + 38);
+        const auto host_import_kind = read_u32(bytes, cursor + 42);
         const auto name = name_string_id < strings.size() ? strings[name_string_id] : std::string();
         const auto argument_count = static_cast<std::uint16_t>(
             parameter_count + ((method_flags & (1u << 4)) == 0 ? 1 : 0));
@@ -290,14 +334,30 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
             throw std::runtime_error("method body exceeds code section bounds");
         }
 
+        std::vector<Function::ExceptionHandler> function_exceptions;
+        if (exception_count > 0)
+        {
+            if (exception_start == 0 || static_cast<std::size_t>(exception_start + exception_count - 1) >= exception_rows.size())
+            {
+                throw std::runtime_error("method exception range is invalid");
+            }
+
+            for (std::uint32_t row_index = exception_start; row_index < exception_start + exception_count; ++row_index)
+            {
+                function_exceptions.push_back(exception_rows[row_index]);
+            }
+        }
+
         module.functions.push_back(decode_function(
             method_index,
             name,
             register_count,
             argument_count,
             return_type_id != 0,
+            static_cast<HostImportKind>(host_import_kind),
             code_offset,
             code_size,
+            std::move(function_exceptions),
             code_bytes));
         cursor += method_row_size;
     }

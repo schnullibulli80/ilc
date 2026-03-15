@@ -4,5 +4,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/ILC.Compiler.Core/ILC.Compiler.Core.csproj" />
+    <ProjectReference Include="../../src/ILC.Compiler.Syntax/ILC.Compiler.Syntax.csproj" />
+    <ProjectReference Include="../../src/ILC.Compiler.Binding/ILC.Compiler.Binding.csproj" />
+    <ProjectReference Include="../../src/ILC.Compiler.Lowering/ILC.Compiler.Lowering.csproj" />
+    <ProjectReference Include="../../src/ILC.Compiler.Bytecode/ILC.Compiler.Bytecode.csproj" />
   </ItemGroup>
 </Project>
