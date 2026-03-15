@@ -17,6 +17,16 @@ public:
     {
         std::uint64_t total_execution_ns {};
         std::uint64_t host_import_execution_ns {};
+        std::uint64_t call_execution_ns {};
+        std::uint64_t call_virt_execution_ns {};
+        std::uint64_t array_execution_ns {};
+        std::uint64_t ld_elem_execution_ns {};
+        std::uint64_t st_elem_execution_ns {};
+        std::uint64_t ld_len_execution_ns {};
+        std::uint64_t new_arr_execution_ns {};
+        std::uint64_t mov_execution_ns {};
+        std::uint64_t compare_execution_ns {};
+        std::uint64_t branch_execution_ns {};
         std::uint64_t instructions_executed {};
         std::uint64_t functions_executed {};
         std::uint64_t host_import_calls {};
@@ -27,9 +37,15 @@ public:
         std::uint64_t ld_elem_count {};
         std::uint64_t st_elem_count {};
         std::uint64_t ld_len_count {};
+        std::uint64_t mov_count {};
+        std::uint64_t compare_count {};
+        std::uint64_t branch_count {};
         std::uint64_t strings_created {};
         std::uint64_t arrays_created {};
         std::uint64_t objects_created {};
+        std::uint64_t leaf_fastpath_calls {};
+        std::uint64_t leaf_fastpath_execution_ns {};
+        std::uint64_t specialized_leaf_fastpath_calls {};
         std::uint64_t max_call_depth {};
     };
 

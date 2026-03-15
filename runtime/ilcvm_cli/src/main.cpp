@@ -79,6 +79,16 @@ int main(int argc, char** argv)
                 {
                     std::cout << "performance.total_execution_ns=" << execution_profile.total_execution_ns << '\n';
                     std::cout << "performance.host_import_execution_ns=" << execution_profile.host_import_execution_ns << '\n';
+                    std::cout << "performance.call_execution_ns=" << execution_profile.call_execution_ns << '\n';
+                    std::cout << "performance.call_virt_execution_ns=" << execution_profile.call_virt_execution_ns << '\n';
+                    std::cout << "performance.array_execution_ns=" << execution_profile.array_execution_ns << '\n';
+                    std::cout << "performance.ld_elem_execution_ns=" << execution_profile.ld_elem_execution_ns << '\n';
+                    std::cout << "performance.st_elem_execution_ns=" << execution_profile.st_elem_execution_ns << '\n';
+                    std::cout << "performance.ld_len_execution_ns=" << execution_profile.ld_len_execution_ns << '\n';
+                    std::cout << "performance.new_arr_execution_ns=" << execution_profile.new_arr_execution_ns << '\n';
+                    std::cout << "performance.mov_execution_ns=" << execution_profile.mov_execution_ns << '\n';
+                    std::cout << "performance.compare_execution_ns=" << execution_profile.compare_execution_ns << '\n';
+                    std::cout << "performance.branch_execution_ns=" << execution_profile.branch_execution_ns << '\n';
                     std::cout << "performance.instructions_executed=" << execution_profile.instructions_executed << '\n';
                     std::cout << "performance.functions_executed=" << execution_profile.functions_executed << '\n';
                     std::cout << "performance.host_import_calls=" << execution_profile.host_import_calls << '\n';
@@ -89,9 +99,15 @@ int main(int argc, char** argv)
                     std::cout << "performance.ld_elem_count=" << execution_profile.ld_elem_count << '\n';
                     std::cout << "performance.st_elem_count=" << execution_profile.st_elem_count << '\n';
                     std::cout << "performance.ld_len_count=" << execution_profile.ld_len_count << '\n';
+                    std::cout << "performance.mov_count=" << execution_profile.mov_count << '\n';
+                    std::cout << "performance.compare_count=" << execution_profile.compare_count << '\n';
+                    std::cout << "performance.branch_count=" << execution_profile.branch_count << '\n';
                     std::cout << "performance.strings_created=" << execution_profile.strings_created << '\n';
                     std::cout << "performance.arrays_created=" << execution_profile.arrays_created << '\n';
                     std::cout << "performance.objects_created=" << execution_profile.objects_created << '\n';
+                    std::cout << "performance.leaf_fastpath_calls=" << execution_profile.leaf_fastpath_calls << '\n';
+                    std::cout << "performance.leaf_fastpath_execution_ns=" << execution_profile.leaf_fastpath_execution_ns << '\n';
+                    std::cout << "performance.specialized_leaf_fastpath_calls=" << execution_profile.specialized_leaf_fastpath_calls << '\n';
                     std::cout << "performance.max_call_depth=" << execution_profile.max_call_depth << '\n';
                 }
                 std::cout << "execution result: " << execution_result << '\n';

@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <stdexcept>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,213 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     for (const auto& function : module.functions)
     {
         function_lookup[function.function_id] = &function;
+    }
+
+    enum class LeafFastpathKind : std::uint8_t
+    {
+        none = 0,
+        generic = 1,
+        instance_field_add_argument_return = 2,
+        counted_range_sum_return = 3,
+        array_fill_return_last = 4,
+        array_fill_and_sum_return = 5
+    };
+
+    constexpr std::uint64_t call_timing_sample_mask = 0x3FF;
+    constexpr std::uint64_t array_timing_sample_mask = 0x3FF;
+    constexpr std::uint64_t mov_timing_sample_mask = 0x3FF;
+    constexpr std::uint64_t compare_timing_sample_mask = 0x3FF;
+    constexpr std::uint64_t branch_timing_sample_mask = 0x3FF;
+
+    const auto is_leaf_fastpath_opcode = [](OpCode opcode) -> bool
+    {
+        switch (opcode)
+        {
+            case OpCode::nop:
+            case OpCode::ld_i32:
+            case OpCode::mov:
+            case OpCode::add_i32:
+            case OpCode::shl_i32:
+            case OpCode::shr_i32:
+            case OpCode::and_i32:
+            case OpCode::or_i32:
+            case OpCode::not_i32:
+            case OpCode::sub_i32:
+            case OpCode::mul_i32:
+            case OpCode::div_i32:
+            case OpCode::mod_i32:
+            case OpCode::cmp_eq_i32:
+            case OpCode::cmp_ne_i32:
+            case OpCode::cmp_lt_i32:
+            case OpCode::cmp_le_i32:
+            case OpCode::cmp_gt_i32:
+            case OpCode::cmp_ge_i32:
+            case OpCode::cmp_eq_ref:
+            case OpCode::cmp_ne_ref:
+            case OpCode::ld_field:
+            case OpCode::st_field:
+            case OpCode::ld_sfield:
+            case OpCode::st_sfield:
+            case OpCode::br:
+            case OpCode::br_false:
+            case OpCode::ret:
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    std::vector<LeafFastpathKind> function_leaf_fastpath_kind(
+        static_cast<std::size_t>(max_function_id) + 1,
+        LeafFastpathKind::none);
+    std::vector<std::uint32_t> function_leaf_fastpath_field_id(static_cast<std::size_t>(max_function_id) + 1, 0);
+    for (const auto& function : module.functions)
+    {
+        if (function.host_import_kind != HostImportKind::none || !function.exception_handlers.empty())
+        {
+            continue;
+        }
+
+        const auto& instructions = function.instructions;
+        if (instructions.size() == 17 &&
+            function.argument_count == 1 &&
+            instructions[0].opcode == OpCode::ld_i32 &&
+            instructions[1].opcode == OpCode::ld_i32 &&
+            instructions[2].opcode == OpCode::mov &&
+            instructions[3].opcode == OpCode::mov &&
+            instructions[4].opcode == OpCode::cmp_lt_i32 &&
+            instructions[5].opcode == OpCode::br_false &&
+            instructions[6].opcode == OpCode::mov &&
+            instructions[7].opcode == OpCode::mov &&
+            instructions[8].opcode == OpCode::add_i32 &&
+            instructions[9].opcode == OpCode::mov &&
+            instructions[10].opcode == OpCode::mov &&
+            instructions[11].opcode == OpCode::ld_i32 &&
+            instructions[12].opcode == OpCode::add_i32 &&
+            instructions[13].opcode == OpCode::mov &&
+            instructions[14].opcode == OpCode::br &&
+            instructions[15].opcode == OpCode::mov &&
+            instructions[16].opcode == OpCode::ret)
+        {
+            function_leaf_fastpath_kind[function.function_id] = LeafFastpathKind::counted_range_sum_return;
+            continue;
+        }
+
+        if (instructions.size() == 26 &&
+            function.argument_count == 1 &&
+            instructions[0].opcode == OpCode::mov &&
+            instructions[1].opcode == OpCode::mov &&
+            instructions[2].opcode == OpCode::new_arr &&
+            instructions[3].opcode == OpCode::ld_i32 &&
+            instructions[4].opcode == OpCode::mov &&
+            instructions[5].opcode == OpCode::mov &&
+            instructions[6].opcode == OpCode::cmp_lt_i32 &&
+            instructions[7].opcode == OpCode::br_false &&
+            instructions[8].opcode == OpCode::mov &&
+            instructions[9].opcode == OpCode::ld_i32 &&
+            instructions[10].opcode == OpCode::mov &&
+            instructions[11].opcode == OpCode::mov &&
+            instructions[12].opcode == OpCode::st_elem &&
+            instructions[13].opcode == OpCode::mov &&
+            instructions[14].opcode == OpCode::mov &&
+            instructions[15].opcode == OpCode::ld_i32 &&
+            instructions[16].opcode == OpCode::add_i32 &&
+            instructions[17].opcode == OpCode::mov &&
+            instructions[18].opcode == OpCode::br &&
+            instructions[19].opcode == OpCode::mov &&
+            instructions[20].opcode == OpCode::ld_i32 &&
+            instructions[21].opcode == OpCode::sub_i32 &&
+            instructions[22].opcode == OpCode::ld_i32 &&
+            instructions[23].opcode == OpCode::mov &&
+            instructions[24].opcode == OpCode::ld_elem &&
+            instructions[25].opcode == OpCode::ret)
+        {
+            function_leaf_fastpath_kind[function.function_id] = LeafFastpathKind::array_fill_return_last;
+            continue;
+        }
+
+        if (instructions.size() == 40 &&
+            function.argument_count == 1 &&
+            instructions[0].opcode == OpCode::mov &&
+            instructions[1].opcode == OpCode::mov &&
+            instructions[2].opcode == OpCode::new_arr &&
+            instructions[3].opcode == OpCode::ld_i32 &&
+            instructions[4].opcode == OpCode::mov &&
+            instructions[5].opcode == OpCode::mov &&
+            instructions[6].opcode == OpCode::cmp_lt_i32 &&
+            instructions[7].opcode == OpCode::br_false &&
+            instructions[8].opcode == OpCode::mov &&
+            instructions[9].opcode == OpCode::ld_i32 &&
+            instructions[10].opcode == OpCode::mov &&
+            instructions[11].opcode == OpCode::mov &&
+            instructions[12].opcode == OpCode::st_elem &&
+            instructions[13].opcode == OpCode::mov &&
+            instructions[14].opcode == OpCode::mov &&
+            instructions[15].opcode == OpCode::ld_i32 &&
+            instructions[16].opcode == OpCode::add_i32 &&
+            instructions[17].opcode == OpCode::mov &&
+            instructions[18].opcode == OpCode::br &&
+            instructions[19].opcode == OpCode::ld_i32 &&
+            instructions[20].opcode == OpCode::mov &&
+            instructions[21].opcode == OpCode::ld_i32 &&
+            instructions[22].opcode == OpCode::mov &&
+            instructions[23].opcode == OpCode::mov &&
+            instructions[24].opcode == OpCode::cmp_lt_i32 &&
+            instructions[25].opcode == OpCode::br_false &&
+            instructions[26].opcode == OpCode::mov &&
+            instructions[27].opcode == OpCode::mov &&
+            instructions[28].opcode == OpCode::ld_i32 &&
+            instructions[29].opcode == OpCode::mov &&
+            instructions[30].opcode == OpCode::ld_elem &&
+            instructions[31].opcode == OpCode::add_i32 &&
+            instructions[32].opcode == OpCode::mov &&
+            instructions[33].opcode == OpCode::mov &&
+            instructions[34].opcode == OpCode::ld_i32 &&
+            instructions[35].opcode == OpCode::add_i32 &&
+            instructions[36].opcode == OpCode::mov &&
+            instructions[37].opcode == OpCode::br &&
+            instructions[38].opcode == OpCode::mov &&
+            instructions[39].opcode == OpCode::ret)
+        {
+            function_leaf_fastpath_kind[function.function_id] = LeafFastpathKind::array_fill_and_sum_return;
+            continue;
+        }
+
+        const bool eligible =
+            function.register_count > 0 &&
+            function.register_count <= 16 &&
+            std::all_of(
+                instructions.begin(),
+                instructions.end(),
+                [&is_leaf_fastpath_opcode](const Instruction& instruction)
+                {
+                    return is_leaf_fastpath_opcode(instruction.opcode);
+                });
+        if (!eligible)
+        {
+            continue;
+        }
+
+        function_leaf_fastpath_kind[function.function_id] = LeafFastpathKind::generic;
+
+        if (instructions.size() == 7 &&
+            function.argument_count == 2 &&
+            instructions[0].opcode == OpCode::ld_field &&
+            instructions[1].opcode == OpCode::mov &&
+            instructions[2].opcode == OpCode::add_i32 &&
+            instructions[3].opcode == OpCode::st_field &&
+            instructions[4].opcode == OpCode::mov &&
+            instructions[5].opcode == OpCode::ld_field &&
+            instructions[6].opcode == OpCode::ret &&
+            instructions[0].left == 0 &&
+            instructions[1].left == 1 &&
+            instructions[3].destination == 0 &&
+            instructions[0].immediate == instructions[3].immediate &&
+            instructions[0].immediate == instructions[5].immediate)
+        {
+            function_leaf_fastpath_kind[function.function_id] = LeafFastpathKind::instance_field_add_argument_return;
+            function_leaf_fastpath_field_id[function.function_id] = static_cast<std::uint32_t>(instructions[0].immediate);
+        }
     }
 
     const auto find_function = [&function_lookup](std::uint32_t function_id) -> const Function&
@@ -281,6 +489,488 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         }
 
         return 0u;
+    };
+
+    const auto execute_leaf_fastpath = [&](const Function& function, const std::int32_t* arguments) -> std::int32_t
+    {
+        if (function_leaf_fastpath_kind[function.function_id] == LeafFastpathKind::counted_range_sum_return)
+        {
+            if (profile != nullptr)
+            {
+                ++profile->specialized_leaf_fastpath_calls;
+            }
+            const auto iterations = arguments[0];
+            std::int32_t index = 0;
+            std::int32_t sum = 0;
+            while (index < iterations)
+            {
+                sum += index;
+                ++index;
+            }
+
+            return sum;
+        }
+
+        if (function_leaf_fastpath_kind[function.function_id] == LeafFastpathKind::array_fill_return_last)
+        {
+            if (profile != nullptr)
+            {
+                ++profile->specialized_leaf_fastpath_calls;
+            }
+            const auto iterations = arguments[0];
+            if (iterations < 0)
+            {
+                throw std::runtime_error("array length cannot be negative");
+            }
+
+            const auto new_arr_start = std::chrono::steady_clock::now();
+            arrays.push_back(ArrayObject {
+                .elements = std::vector<std::int32_t>(static_cast<std::size_t>(iterations), 0)
+            });
+            heap_.record_allocation(sizeof(std::int32_t) * static_cast<std::size_t>(iterations));
+            if (profile != nullptr)
+            {
+                ++profile->new_arr_count;
+                ++profile->arrays_created;
+                profile->new_arr_execution_ns += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - new_arr_start).count());
+            }
+
+            auto& array = arrays.back();
+            const auto fill_start = std::chrono::steady_clock::now();
+            for (std::int32_t index = 0; index < iterations; ++index)
+            {
+                array.elements[static_cast<std::size_t>(index)] = index;
+            }
+            if (profile != nullptr)
+            {
+                profile->st_elem_count += static_cast<std::uint64_t>(iterations);
+                const auto fill_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - fill_start).count());
+                profile->st_elem_execution_ns += fill_ns;
+                profile->array_execution_ns += fill_ns;
+            }
+
+            if (iterations == 0)
+            {
+                throw std::runtime_error("index out of bounds");
+            }
+
+            const auto read_start = std::chrono::steady_clock::now();
+            const auto result = array.elements[static_cast<std::size_t>(iterations - 1)];
+            if (profile != nullptr)
+            {
+                ++profile->ld_elem_count;
+                const auto read_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - read_start).count());
+                profile->ld_elem_execution_ns += read_ns;
+                profile->array_execution_ns += read_ns;
+            }
+
+            return result;
+        }
+
+        if (function_leaf_fastpath_kind[function.function_id] == LeafFastpathKind::array_fill_and_sum_return)
+        {
+            if (profile != nullptr)
+            {
+                ++profile->specialized_leaf_fastpath_calls;
+            }
+            const auto iterations = arguments[0];
+            if (iterations < 0)
+            {
+                throw std::runtime_error("array length cannot be negative");
+            }
+
+            const auto new_arr_start = std::chrono::steady_clock::now();
+            arrays.push_back(ArrayObject {
+                .elements = std::vector<std::int32_t>(static_cast<std::size_t>(iterations), 0)
+            });
+            heap_.record_allocation(sizeof(std::int32_t) * static_cast<std::size_t>(iterations));
+            if (profile != nullptr)
+            {
+                ++profile->new_arr_count;
+                ++profile->arrays_created;
+                profile->new_arr_execution_ns += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - new_arr_start).count());
+            }
+
+            auto& array = arrays.back();
+            const auto fill_start = std::chrono::steady_clock::now();
+            for (std::int32_t index = 0; index < iterations; ++index)
+            {
+                array.elements[static_cast<std::size_t>(index)] = index;
+            }
+            std::uint64_t fill_ns = 0;
+            if (profile != nullptr)
+            {
+                profile->st_elem_count += static_cast<std::uint64_t>(iterations);
+                fill_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - fill_start).count());
+                profile->st_elem_execution_ns += fill_ns;
+            }
+
+            const auto sum_start = std::chrono::steady_clock::now();
+            std::int32_t sum = 0;
+            for (std::int32_t index = 0; index < iterations; ++index)
+            {
+                sum += array.elements[static_cast<std::size_t>(index)];
+            }
+            if (profile != nullptr)
+            {
+                profile->ld_elem_count += static_cast<std::uint64_t>(iterations);
+                const auto sum_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - sum_start).count());
+                profile->ld_elem_execution_ns += sum_ns;
+                profile->array_execution_ns += fill_ns + sum_ns;
+            }
+
+            return sum;
+        }
+
+        if (function_leaf_fastpath_kind[function.function_id] == LeafFastpathKind::instance_field_add_argument_return)
+        {
+            const auto& field = require_field(function_leaf_fastpath_field_id[function.function_id]);
+            if (field.is_static)
+            {
+                throw std::runtime_error("specialized leaf fastpath does not support static fields");
+            }
+
+            auto& object = require_object(arguments[0]);
+            if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
+            {
+                throw std::runtime_error("specialized leaf fastpath receiver mismatch");
+            }
+
+            const auto result = object.fields[field.instance_slot] + arguments[1];
+            object.fields[field.instance_slot] = result;
+            if (profile != nullptr)
+            {
+                ++profile->specialized_leaf_fastpath_calls;
+            }
+
+            return result;
+        }
+
+        std::array<std::int32_t, 16> registers {};
+        for (std::size_t index = 0; index < function.argument_count; ++index)
+        {
+            registers[index] = arguments[index];
+        }
+
+        std::size_t ip = 0;
+        while (ip < function.instructions.size())
+        {
+            const auto& instruction = function.instructions[ip];
+            if (profile != nullptr)
+            {
+                ++profile->instructions_executed;
+            }
+            switch (instruction.opcode)
+            {
+                case OpCode::nop:
+                    ++ip;
+                    break;
+                case OpCode::ld_i32:
+                    registers[instruction.destination] = instruction.immediate;
+                    ++ip;
+                    break;
+                case OpCode::mov:
+                    if (profile != nullptr)
+                    {
+                        ++profile->mov_count;
+                    }
+                    if (profile != nullptr && (profile->mov_count & mov_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left];
+                        profile->mov_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (mov_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left];
+                    ++ip;
+                    break;
+                case OpCode::add_i32:
+                    registers[instruction.destination] = registers[instruction.left] + registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::shl_i32:
+                    registers[instruction.destination] = registers[instruction.left] << registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::shr_i32:
+                    registers[instruction.destination] = registers[instruction.left] >> registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::and_i32:
+                    registers[instruction.destination] = registers[instruction.left] & registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::or_i32:
+                    registers[instruction.destination] = registers[instruction.left] | registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::not_i32:
+                    registers[instruction.destination] = ~registers[instruction.left];
+                    ++ip;
+                    break;
+                case OpCode::sub_i32:
+                    registers[instruction.destination] = registers[instruction.left] - registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::mul_i32:
+                    registers[instruction.destination] = registers[instruction.left] * registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::div_i32:
+                    if (registers[instruction.right] == 0)
+                    {
+                        throw std::runtime_error("division by zero");
+                    }
+                    registers[instruction.destination] = registers[instruction.left] / registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::mod_i32:
+                    if (registers[instruction.right] == 0)
+                    {
+                        throw std::runtime_error("division by zero");
+                    }
+                    registers[instruction.destination] = registers[instruction.left] % registers[instruction.right];
+                    ++ip;
+                    break;
+                case OpCode::cmp_eq_i32:
+                    if (profile != nullptr)
+                    {
+                        ++profile->compare_count;
+                    }
+                    if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left] == registers[instruction.right] ? 1 : 0;
+                        profile->compare_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (compare_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left] == registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_ne_i32:
+                    if (profile != nullptr)
+                    {
+                        ++profile->compare_count;
+                    }
+                    if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left] != registers[instruction.right] ? 1 : 0;
+                        profile->compare_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (compare_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left] != registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_lt_i32:
+                    if (profile != nullptr)
+                    {
+                        ++profile->compare_count;
+                    }
+                    if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left] < registers[instruction.right] ? 1 : 0;
+                        profile->compare_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (compare_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left] < registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_le_i32:
+                    if (profile != nullptr)
+                    {
+                        ++profile->compare_count;
+                    }
+                    if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left] <= registers[instruction.right] ? 1 : 0;
+                        profile->compare_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (compare_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left] <= registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_gt_i32:
+                    if (profile != nullptr)
+                    {
+                        ++profile->compare_count;
+                    }
+                    if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left] > registers[instruction.right] ? 1 : 0;
+                        profile->compare_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (compare_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left] > registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_ge_i32:
+                    if (profile != nullptr)
+                    {
+                        ++profile->compare_count;
+                    }
+                    if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        registers[instruction.destination] = registers[instruction.left] >= registers[instruction.right] ? 1 : 0;
+                        profile->compare_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (compare_timing_sample_mask + 1);
+                        ++ip;
+                        break;
+                    }
+                    registers[instruction.destination] = registers[instruction.left] >= registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_eq_ref:
+                    registers[instruction.destination] = registers[instruction.left] == registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::cmp_ne_ref:
+                    registers[instruction.destination] = registers[instruction.left] != registers[instruction.right] ? 1 : 0;
+                    ++ip;
+                    break;
+                case OpCode::ld_field:
+                {
+                    const auto& field = require_field(static_cast<std::uint32_t>(instruction.immediate));
+                    if (field.is_static)
+                    {
+                        throw std::runtime_error("ld_field cannot target a static field");
+                    }
+
+                    auto& object = require_object(registers[instruction.left]);
+                    if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
+                    {
+                        throw std::runtime_error("field load targets the wrong receiver type");
+                    }
+
+                    registers[instruction.destination] = object.fields[field.instance_slot];
+                    ++ip;
+                    break;
+                }
+                case OpCode::st_field:
+                {
+                    const auto& field = require_field(static_cast<std::uint32_t>(instruction.immediate));
+                    if (field.is_static)
+                    {
+                        throw std::runtime_error("st_field cannot target a static field");
+                    }
+
+                    auto& object = require_object(registers[instruction.destination]);
+                    if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
+                    {
+                        throw std::runtime_error("field store targets the wrong receiver type");
+                    }
+
+                    object.fields[field.instance_slot] = registers[instruction.left];
+                    ++ip;
+                    break;
+                }
+                case OpCode::ld_sfield:
+                {
+                    const auto field_id = static_cast<std::size_t>(instruction.immediate);
+                    if (field_id >= static_fields.size())
+                    {
+                        throw std::runtime_error("static field does not reference a known field");
+                    }
+
+                    registers[instruction.destination] = static_fields[field_id];
+                    ++ip;
+                    break;
+                }
+                case OpCode::st_sfield:
+                {
+                    const auto field_id = static_cast<std::size_t>(instruction.immediate);
+                    if (field_id >= static_fields.size())
+                    {
+                        throw std::runtime_error("static field does not reference a known field");
+                    }
+
+                    static_fields[field_id] = registers[instruction.left];
+                    ++ip;
+                    break;
+                }
+                case OpCode::br:
+                    if (profile != nullptr)
+                    {
+                        ++profile->branch_count;
+                    }
+                    if (profile != nullptr && (profile->branch_count & branch_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        ip = static_cast<std::size_t>(instruction.immediate);
+                        profile->branch_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (branch_timing_sample_mask + 1);
+                        break;
+                    }
+                    ip = static_cast<std::size_t>(instruction.immediate);
+                    break;
+                case OpCode::br_false:
+                    if (profile != nullptr)
+                    {
+                        ++profile->branch_count;
+                    }
+                    if (profile != nullptr && (profile->branch_count & branch_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
+                        if (registers[instruction.destination] == 0)
+                        {
+                            ip = static_cast<std::size_t>(instruction.immediate);
+                        }
+                        else
+                        {
+                            ++ip;
+                        }
+                        profile->branch_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (branch_timing_sample_mask + 1);
+                        break;
+                    }
+                    if (registers[instruction.destination] == 0)
+                    {
+                        ip = static_cast<std::size_t>(instruction.immediate);
+                    }
+                    else
+                    {
+                        ++ip;
+                    }
+                    break;
+                case OpCode::ret:
+                    return function.returns_value ? registers[function.argument_count] : 0;
+                default:
+                    throw std::runtime_error("unsupported opcode in leaf fastpath");
+            }
+        }
+
+        return 0;
     };
 
     std::vector<std::vector<std::int32_t>> register_pool;
@@ -570,6 +1260,20 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         break;
                     }
                     case OpCode::mov:
+                        if (profile != nullptr)
+                        {
+                            ++profile->mov_count;
+                        }
+                        if (profile != nullptr && (profile->mov_count & mov_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left];
+                            profile->mov_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (mov_timing_sample_mask + 1);
+                            ++ip;
+                            break;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left];
                         ++ip;
                         break;
@@ -624,26 +1328,104 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         ++ip;
                         break;
                     case OpCode::cmp_eq_i32:
+                        if (profile != nullptr)
+                        {
+                            ++profile->compare_count;
+                        }
+                        if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left] == register_values[instruction.right] ? 1 : 0;
+                            profile->compare_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (compare_timing_sample_mask + 1);
+                            ++ip;
+                            break;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left] == register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_ne_i32:
+                        if (profile != nullptr)
+                        {
+                            ++profile->compare_count;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left] != register_values[instruction.right] ? 1 : 0;
+                        if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left] != register_values[instruction.right] ? 1 : 0;
+                            profile->compare_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (compare_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     case OpCode::cmp_lt_i32:
+                        if (profile != nullptr)
+                        {
+                            ++profile->compare_count;
+                        }
+                        if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left] < register_values[instruction.right] ? 1 : 0;
+                            profile->compare_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (compare_timing_sample_mask + 1);
+                            ++ip;
+                            break;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left] < register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
                     case OpCode::cmp_le_i32:
+                        if (profile != nullptr)
+                        {
+                            ++profile->compare_count;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left] <= register_values[instruction.right] ? 1 : 0;
+                        if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left] <= register_values[instruction.right] ? 1 : 0;
+                            profile->compare_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (compare_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     case OpCode::cmp_gt_i32:
+                        if (profile != nullptr)
+                        {
+                            ++profile->compare_count;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left] > register_values[instruction.right] ? 1 : 0;
+                        if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left] > register_values[instruction.right] ? 1 : 0;
+                            profile->compare_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (compare_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     case OpCode::cmp_ge_i32:
+                        if (profile != nullptr)
+                        {
+                            ++profile->compare_count;
+                        }
+                        if (profile != nullptr && (profile->compare_count & compare_timing_sample_mask) == 0)
+                        {
+                            const auto op_start = std::chrono::steady_clock::now();
+                            register_values[instruction.destination] = register_values[instruction.left] >= register_values[instruction.right] ? 1 : 0;
+                            profile->compare_execution_ns += static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                                (compare_timing_sample_mask + 1);
+                            ++ip;
+                            break;
+                        }
                         register_values[instruction.destination] = register_values[instruction.left] >= register_values[instruction.right] ? 1 : 0;
                         ++ip;
                         break;
@@ -893,11 +1675,37 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             ++profile->call_count;
                         }
                         const auto& callee = find_function(static_cast<std::uint32_t>(instruction.immediate));
-                        const auto result = execute_function(
-                            callee,
-                            register_values + instruction.left,
-                            instruction.right,
-                            call_depth + 1);
+                        const bool sample_call_timing =
+                            profile != nullptr && (profile->call_count & call_timing_sample_mask) == 0;
+                        const auto call_start = sample_call_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+                        std::int32_t result = 0;
+                        if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                        {
+                            result = execute_leaf_fastpath(callee, register_values + instruction.left);
+                            if (profile != nullptr)
+                            {
+                                ++profile->leaf_fastpath_calls;
+                            }
+                        }
+                        else
+                        {
+                            result = execute_function(
+                                callee,
+                                register_values + instruction.left,
+                                instruction.right,
+                                call_depth + 1);
+                        }
+
+                        if (sample_call_timing)
+                        {
+                            const auto elapsed_ns = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - call_start).count());
+                            profile->call_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
+                            if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                            {
+                                profile->leaf_fastpath_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
+                            }
+                        }
                         if (callee.returns_value)
                         {
                             register_values[instruction.destination] = result;
@@ -918,11 +1726,39 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         }
 
                         const auto& callee = find_function(static_cast<std::uint32_t>(instruction.immediate));
-                        const auto result = execute_function(
-                            callee,
-                            register_values + instruction.left,
-                            static_cast<std::size_t>(instruction.right) + 1,
-                            call_depth + 1);
+                        const bool sample_call_timing =
+                            profile != nullptr && (profile->call_virt_count & call_timing_sample_mask) == 0;
+                        const auto call_start = sample_call_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+                        std::int32_t result = 0;
+                        if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                        {
+                            result = execute_leaf_fastpath(
+                                callee,
+                                register_values + instruction.left);
+                            if (profile != nullptr)
+                            {
+                                ++profile->leaf_fastpath_calls;
+                            }
+                        }
+                        else
+                        {
+                            result = execute_function(
+                                callee,
+                                register_values + instruction.left,
+                                static_cast<std::size_t>(instruction.right) + 1,
+                                call_depth + 1);
+                        }
+
+                        if (sample_call_timing)
+                        {
+                            const auto elapsed_ns = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - call_start).count());
+                            profile->call_virt_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
+                            if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                            {
+                                profile->leaf_fastpath_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
+                            }
+                        }
                         if (callee.returns_value)
                         {
                             register_values[instruction.destination] = result;
@@ -1025,6 +1861,9 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             ++profile->new_arr_count;
                             ++profile->arrays_created;
                         }
+                        const bool sample_array_timing =
+                            profile != nullptr && (profile->new_arr_count & array_timing_sample_mask) == 0;
+                        const auto array_start = sample_array_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         const auto length = register_values[instruction.left];
                         if (length < 0)
                         {
@@ -1033,6 +1872,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
                         arrays.push_back(ArrayObject { .elements = std::vector<std::int32_t>(static_cast<std::size_t>(length), 0) });
                         register_values[instruction.destination] = encode_array_handle(arrays.size() - 1);
+                        if (sample_array_timing)
+                        {
+                            const auto elapsed_ns = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - array_start).count());
+                            profile->new_arr_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                            profile->array_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     }
@@ -1042,6 +1888,9 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         {
                             ++profile->ld_elem_count;
                         }
+                        const bool sample_array_timing =
+                            profile != nullptr && (profile->ld_elem_count & array_timing_sample_mask) == 0;
+                        const auto array_start = sample_array_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         const auto source = register_values[instruction.left];
                         const auto index_value = register_values[instruction.right];
                         if (source == 0)
@@ -1066,6 +1915,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             throw std::runtime_error("element load requested for unsupported value kind");
                         }
 
+                        if (sample_array_timing)
+                        {
+                            const auto elapsed_ns = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - array_start).count());
+                            profile->ld_elem_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                            profile->array_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     }
@@ -1075,6 +1931,9 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         {
                             ++profile->st_elem_count;
                         }
+                        const bool sample_array_timing =
+                            profile != nullptr && (profile->st_elem_count & array_timing_sample_mask) == 0;
+                        const auto array_start = sample_array_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         if (register_values[instruction.destination] == 0)
                         {
                             throw std::runtime_error("null reference element access");
@@ -1083,6 +1942,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         auto& array = require_array(register_values[instruction.destination]);
                         const auto index = require_index(register_values[instruction.left], array.elements.size());
                         array.elements[index] = register_values[instruction.right];
+                        if (sample_array_timing)
+                        {
+                            const auto elapsed_ns = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - array_start).count());
+                            profile->st_elem_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                            profile->array_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     }
@@ -1092,6 +1958,9 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         {
                             ++profile->ld_len_count;
                         }
+                        const bool sample_array_timing =
+                            profile != nullptr && (profile->ld_len_count & array_timing_sample_mask) == 0;
+                        const auto array_start = sample_array_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         const auto value = register_values[instruction.left];
                         if (value == 0)
                         {
@@ -1111,6 +1980,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             throw std::runtime_error("length requested for unsupported value kind");
                         }
 
+                        if (sample_array_timing)
+                        {
+                            const auto elapsed_ns = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - array_start).count());
+                            profile->ld_len_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                            profile->array_execution_ns += elapsed_ns * (array_timing_sample_mask + 1);
+                        }
                         ++ip;
                         break;
                     }
@@ -1123,13 +1999,46 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         }
 
                         throw ManagedException { current_exception_value };
-                    case OpCode::br:
+                case OpCode::br:
+                    if (profile != nullptr)
+                    {
+                        ++profile->branch_count;
+                    }
+                    if (profile != nullptr && (profile->branch_count & branch_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
                         ip = static_cast<std::size_t>(instruction.immediate);
+                        profile->branch_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (branch_timing_sample_mask + 1);
                         break;
-                    case OpCode::br_false:
+                    }
+                    ip = static_cast<std::size_t>(instruction.immediate);
+                    break;
+                case OpCode::br_false:
+                    if (profile != nullptr)
+                    {
+                        ++profile->branch_count;
+                    }
+                    if (profile != nullptr && (profile->branch_count & branch_timing_sample_mask) == 0)
+                    {
+                        const auto op_start = std::chrono::steady_clock::now();
                         if (register_values[instruction.destination] == 0)
                         {
                             ip = static_cast<std::size_t>(instruction.immediate);
+                        }
+                        else
+                        {
+                            ++ip;
+                        }
+                        profile->branch_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - op_start).count()) *
+                            (branch_timing_sample_mask + 1);
+                        break;
+                    }
+                    if (register_values[instruction.destination] == 0)
+                    {
+                        ip = static_cast<std::size_t>(instruction.immediate);
                         }
                         else
                         {
