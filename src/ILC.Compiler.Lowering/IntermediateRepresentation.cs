@@ -347,6 +347,12 @@ public sealed class Lowerer
             case DecStatementSyntax decStatement:
                 LowerIncDecStatement(decStatement.Target, SyntaxKind.MinusAssignToken, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return false;
+            case IncludeStatementSyntax includeStatement:
+                LowerIncludeExcludeStatement(includeStatement.Target, includeStatement.Value, true, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                return false;
+            case ExcludeStatementSyntax excludeStatement:
+                LowerIncludeExcludeStatement(excludeStatement.Target, excludeStatement.Value, false, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                return false;
             case IfStatementSyntax ifStatement:
                 return LowerIfStatement(ifStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
             case WhileStatementSyntax whileStatement:
@@ -581,7 +587,9 @@ public sealed class Lowerer
                 currentMethod);
             var itemType = collectionTypeForDeclaration == TypeSymbol.String
                 ? TypeSymbol.Char
-                : SemanticFacts.GetElementType(collectionTypeForDeclaration) ?? throw new InvalidOperationException($"Expression '{SemanticFacts.GetExpressionDisplayName(foreachStatement.Collection)}' is not enumerable.");
+                : SemanticFacts.GetElementType(collectionTypeForDeclaration)
+                    ?? SemanticFacts.GetSetElementType(collectionTypeForDeclaration)
+                    ?? throw new InvalidOperationException($"Expression '{SemanticFacts.GetExpressionDisplayName(foreachStatement.Collection)}' is not enumerable.");
             itemRegister = new IrValue($"r{registers.Count}", itemType, (ushort)registers.Count);
             registers.Add(itemRegister);
             registerByName[foreachStatement.Identifier.Text] = itemRegister;
@@ -599,6 +607,31 @@ public sealed class Lowerer
             currentMethod);
         var collectionRegister = AllocateTemp(collectionType, registers);
         LowerExpressionInto(foreachStatement.Collection, collectionRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        if (SemanticFacts.IsSetType(collectionType))
+        {
+            LowerForeachSetStatement(
+                foreachStatement,
+                itemRegister,
+                collectionRegister,
+                registerByName,
+                localTypes,
+                arrayShapesByName,
+                registers,
+                instructions,
+                returnRegister,
+                exceptionHandlers,
+                inExceptionHandler,
+                currentMethod);
+
+            if (createdItemRegister)
+            {
+                registerByName.Remove(foreachStatement.Identifier.Text);
+                localTypes.Remove(foreachStatement.Identifier.Text);
+            }
+
+            return;
+        }
 
         var indexRegister = AllocateTemp(TypeSymbol.Integer, registers);
         instructions.Add(new IrInstruction(IrOpCode.LoadConstant, indexRegister, 0));
@@ -634,6 +667,72 @@ public sealed class Lowerer
         }
     }
 
+    private void LowerForeachSetStatement(
+        ForeachStatementSyntax foreachStatement,
+        IrValue itemRegister,
+        IrValue collectionRegister,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, TypeSymbol> localTypes,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        IrValue? returnRegister,
+        List<IrExceptionHandler> exceptionHandlers,
+        bool inExceptionHandler,
+        MethodSymbol? currentMethod)
+    {
+        var indexRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, indexRegister, 0));
+
+        var limitRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, limitRegister, 32));
+
+        var oneRegister = AllocateTemp(collectionRegister.Type, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, oneRegister, 1));
+
+        var zeroRegister = AllocateTemp(collectionRegister.Type, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, zeroRegister, 0));
+
+        var loopLabel = AllocateLabel("foreach_set");
+        var skipBodyLabel = AllocateLabel("foreach_set_skip");
+        var endLabel = AllocateLabel("endforeach_set");
+        var continueLabel = AllocateLabel("foreach_set_continue");
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, loopLabel));
+
+        var rangeConditionRegister = AllocateTemp(TypeSymbol.Boolean, registers);
+        instructions.Add(new IrInstruction(IrOpCode.CompareLess, rangeConditionRegister, (indexRegister, limitRegister)));
+        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, rangeConditionRegister, endLabel));
+
+        var maskRegister = AllocateTemp(collectionRegister.Type, registers);
+        instructions.Add(new IrInstruction(IrOpCode.ShiftLeft, maskRegister, (oneRegister, indexRegister)));
+
+        var andRegister = AllocateTemp(collectionRegister.Type, registers);
+        instructions.Add(new IrInstruction(IrOpCode.BitwiseAnd, andRegister, (collectionRegister, maskRegister)));
+
+        var containsRegister = AllocateTemp(TypeSymbol.Boolean, registers);
+        instructions.Add(new IrInstruction(IrOpCode.CompareNotEqual, containsRegister, (andRegister, zeroRegister)));
+        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, containsRegister, skipBodyLabel));
+
+        instructions.Add(new IrInstruction(IrOpCode.Copy, itemRegister, indexRegister));
+        _loopLabels.Push((endLabel, continueLabel));
+        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        _loopLabels.Pop();
+
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
+        var stepRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, stepRegister, 1));
+        instructions.Add(new IrInstruction(IrOpCode.Add, indexRegister, (indexRegister, stepRegister)));
+        instructions.Add(new IrInstruction(IrOpCode.Branch, null, loopLabel));
+
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, skipBodyLabel));
+        var skipStepRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, skipStepRegister, 1));
+        instructions.Add(new IrInstruction(IrOpCode.Add, indexRegister, (indexRegister, skipStepRegister)));
+        instructions.Add(new IrInstruction(IrOpCode.Branch, null, loopLabel));
+
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
+    }
+
     private bool LowerCaseStatement(
         CaseStatementSyntax caseStatement,
         Dictionary<string, IrValue> registerByName,
@@ -662,14 +761,32 @@ public sealed class Lowerer
         var clauseLabels = caseStatement.Clauses
             .Select(_ => AllocateLabel("case_clause"))
             .ToArray();
+        var nextTestLabels = caseStatement.Clauses
+            .Select(_ => AllocateLabel("case_next"))
+            .ToArray();
 
         for (var clauseIndex = 0; clauseIndex < caseStatement.Clauses.Count; clauseIndex++)
         {
             var clause = caseStatement.Clauses[clauseIndex];
+            var clauseLabel = clauseLabels[clauseIndex];
+            var nextLabel = nextTestLabels[clauseIndex];
+            var candidateLabel = AllocateLabel("case_candidate");
             foreach (var label in clause.Labels)
             {
-                LowerCaseLabelMatch(label, expressionType, caseRegister, clauseLabels[clauseIndex], registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+                LowerCaseLabelMatch(label, expressionType, caseRegister, candidateLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
             }
+
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, nextLabel));
+            instructions.Add(new IrInstruction(IrOpCode.Label, null, candidateLabel));
+            if (clause.Guard is not null)
+            {
+                var guardRegister = AllocateTemp(TypeSymbol.Boolean, registers);
+                LowerExpressionInto(clause.Guard, guardRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, guardRegister, nextLabel));
+            }
+
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, clauseLabel));
+            instructions.Add(new IrInstruction(IrOpCode.Label, null, nextLabel));
         }
 
         instructions.Add(new IrInstruction(IrOpCode.Branch, null, elseLabel));
@@ -1218,6 +1335,46 @@ public sealed class Lowerer
             currentMethod);
     }
 
+    private void LowerIncludeExcludeStatement(
+        ExpressionSyntax target,
+        ExpressionSyntax value,
+        bool isInclude,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var localTypes = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        var targetType = SemanticFacts.InferExpressionType(target, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+        var elementType = SemanticFacts.GetSetElementType(targetType) ?? TypeSymbol.Integer;
+        var currentValueRegister = AllocateTemp(targetType, registers);
+        LowerExpressionInto(target, currentValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        var elementRegister = AllocateTemp(elementType, registers);
+        LowerExpressionInto(value, elementRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        var oneRegister = AllocateTemp(targetType, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, oneRegister, 1));
+
+        var maskRegister = AllocateTemp(targetType, registers);
+        instructions.Add(new IrInstruction(IrOpCode.ShiftLeft, maskRegister, (oneRegister, elementRegister)));
+
+        var resultRegister = AllocateTemp(targetType, registers);
+        if (isInclude)
+        {
+            instructions.Add(new IrInstruction(IrOpCode.BitwiseOr, resultRegister, (currentValueRegister, maskRegister)));
+        }
+        else
+        {
+            var notMaskRegister = AllocateTemp(targetType, registers);
+            instructions.Add(new IrInstruction(IrOpCode.BitwiseNot, notMaskRegister, maskRegister));
+            instructions.Add(new IrInstruction(IrOpCode.BitwiseAnd, resultRegister, (currentValueRegister, notMaskRegister)));
+        }
+
+        StoreValueIntoTarget(target, resultRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+    }
+
     private void LowerReturnExpression(
         ExpressionSyntax expression,
         Dictionary<string, IrValue> registerByName,
@@ -1743,7 +1900,7 @@ public sealed class Lowerer
                 return;
             case BinaryExpressionSyntax binary:
                 var localTypes = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
-                if (binary.OperatorToken.Kind == SyntaxKind.InKeyword)
+                if (binary.OperatorToken.Kind is SyntaxKind.InKeyword or SyntaxKind.NotInKeyword)
                 {
                     LowerSetMembershipInto(binary, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                     return;
@@ -1815,14 +1972,14 @@ public sealed class Lowerer
                     return;
                 }
 
-                var argumentTemps = new List<IrValue>();
-                foreach (var argument in call.Arguments)
-                {
-                    var argumentType = SemanticFacts.InferExpressionType(argument.Expression, new Dictionary<string, TypeSymbol>(), _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
-                    var temp = AllocateTemp(argumentType, registers);
-                    argumentTemps.Add(temp);
-                    LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                }
+                var argumentTemps = LowerCallArguments(
+                    call,
+                    invocation.Method,
+                    registerByName,
+                    arrayShapesByName,
+                    registers,
+                    instructions,
+                    currentMethod);
 
                 if (TryLowerStringIntrinsicCall(invocation, call.Target, argumentTemps, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
                 {
@@ -1842,6 +1999,109 @@ public sealed class Lowerer
             default:
                 throw new InvalidOperationException($"Cannot lower expression kind '{expression.Kind}'.");
         }
+    }
+
+    private List<IrValue> LowerCallArguments(
+        CallExpressionSyntax call,
+        MethodSymbol method,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var argumentTemps = new List<IrValue>();
+        var localTypes = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        var hasParams = method.Parameters.Count > 0 && method.Parameters[^1].PassingKind == ParameterPassingKind.Params;
+        var fixedParameterCount = hasParams ? method.Parameters.Count - 1 : method.Parameters.Count;
+
+        for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
+        {
+            if (hasParams && argumentIndex >= fixedParameterCount)
+            {
+                break;
+            }
+
+            var argument = call.Arguments[argumentIndex];
+            var argumentType = SemanticFacts.InferExpressionType(argument.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            var temp = AllocateTemp(argumentType, registers);
+            argumentTemps.Add(temp);
+            LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        if (!hasParams)
+        {
+            return argumentTemps;
+        }
+
+        var paramsParameter = method.Parameters[^1];
+        var packedParamsRegister = LowerParamsArgumentArray(
+            call,
+            paramsParameter,
+            fixedParameterCount,
+            registerByName,
+            arrayShapesByName,
+            registers,
+            instructions,
+            currentMethod);
+        argumentTemps.Add(packedParamsRegister);
+        return argumentTemps;
+    }
+
+    private IrValue LowerParamsArgumentArray(
+        CallExpressionSyntax call,
+        ParameterSymbol paramsParameter,
+        int fixedParameterCount,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var explicitArrayArgument = call.Arguments.Count == fixedParameterCount + 1
+            ? call.Arguments[fixedParameterCount].Expression
+            : null;
+        if (explicitArrayArgument is not null)
+        {
+            var explicitArrayType = SemanticFacts.InferExpressionType(
+                explicitArrayArgument,
+                registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                _knownMethods,
+                _knownFields,
+                _knownConstants,
+                _knownProperties,
+                currentMethod);
+            if (explicitArrayType == paramsParameter.Type)
+            {
+                var explicitArrayRegister = AllocateTemp(paramsParameter.Type, registers);
+                LowerExpressionInto(explicitArrayArgument, explicitArrayRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                return explicitArrayRegister;
+            }
+        }
+
+        var paramsValues = call.Arguments.Skip(fixedParameterCount).ToArray();
+        var paramsArrayRegister = AllocateTemp(paramsParameter.Type, registers);
+        var paramsLengthRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, paramsLengthRegister, paramsValues.Length));
+
+        var elementType = SemanticFacts.GetElementType(paramsParameter.Type)
+            ?? throw new InvalidOperationException($"Params parameter '{paramsParameter.Name}' must be an array type.");
+        instructions.Add(new IrInstruction(
+            IrOpCode.NewArray,
+            paramsArrayRegister,
+            new IrNewArrayTarget(elementType.Name, paramsLengthRegister, new IrArrayShape([paramsLengthRegister]))));
+
+        for (var elementIndex = 0; elementIndex < paramsValues.Length; elementIndex++)
+        {
+            var indexRegister = AllocateTemp(TypeSymbol.Integer, registers);
+            instructions.Add(new IrInstruction(IrOpCode.LoadConstant, indexRegister, elementIndex));
+
+            var valueRegister = AllocateTemp(elementType, registers);
+            LowerExpressionInto(paramsValues[elementIndex].Expression, valueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            instructions.Add(new IrInstruction(IrOpCode.StoreElement, valueRegister, new IrArrayTarget(paramsArrayRegister, indexRegister)));
+        }
+
+        return paramsArrayRegister;
     }
 
     private void LowerNameReferenceInto(
@@ -2159,7 +2419,7 @@ public sealed class Lowerer
         {
             SyntaxKind.TrueKeyword => 1,
             SyntaxKind.FalseKeyword => 0,
-            _ => literal.LiteralToken.Value ?? 0
+            _ => SemanticFacts.GetLiteralValue(literal.LiteralToken) ?? 0
         };
 
     private int GetSetLiteralValue(
@@ -2214,15 +2474,17 @@ public sealed class Lowerer
         var setElementType = SemanticFacts.GetSetElementType(rightType)
             ?? throw new InvalidOperationException($"Cannot lower 'in' on non-set expression '{SemanticFacts.GetExpressionDisplayName(binary.Right)}'.");
 
-        var elementMask = SemanticFacts.GetConstantValue(binary.Left, localTypes, _knownFields, _knownConstants, _knownProperties, currentMethod) is int elementValue
-            ? 1 << elementValue
-            : throw new InvalidOperationException($"Cannot lower non-constant set membership operand '{SemanticFacts.GetExpressionDisplayName(binary.Left)}'.");
-
         var setRegister = AllocateTemp(rightType, registers);
         LowerExpressionInto(binary.Right, setRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
 
+        var elementRegister = AllocateTemp(setElementType, registers);
+        LowerExpressionInto(binary.Left, elementRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        var oneRegister = AllocateTemp(SemanticFacts.CreateSetType(setElementType), registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, oneRegister, 1));
+
         var maskRegister = AllocateTemp(SemanticFacts.CreateSetType(setElementType), registers);
-        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, maskRegister, elementMask));
+        instructions.Add(new IrInstruction(IrOpCode.ShiftLeft, maskRegister, (oneRegister, elementRegister)));
 
         var andRegister = AllocateTemp(SemanticFacts.CreateSetType(setElementType), registers);
         instructions.Add(new IrInstruction(IrOpCode.BitwiseAnd, andRegister, (setRegister, maskRegister)));
@@ -2230,7 +2492,14 @@ public sealed class Lowerer
         var zeroRegister = AllocateTemp(SemanticFacts.CreateSetType(setElementType), registers);
         instructions.Add(new IrInstruction(IrOpCode.LoadConstant, zeroRegister, 0));
 
-        instructions.Add(new IrInstruction(IrOpCode.CompareNotEqual, destination, (andRegister, zeroRegister)));
+        if (binary.OperatorToken.Kind == SyntaxKind.NotInKeyword)
+        {
+            instructions.Add(new IrInstruction(IrOpCode.CompareEqual, destination, (andRegister, zeroRegister)));
+        }
+        else
+        {
+            instructions.Add(new IrInstruction(IrOpCode.CompareNotEqual, destination, (andRegister, zeroRegister)));
+        }
     }
 
     private void LowerMatchExpressionInto(
@@ -3105,15 +3374,9 @@ public sealed class Lowerer
     private TypeSymbol ResolveTypeTestTarget(QualifiedNameSyntax typeName)
     {
         var displayName = typeName.ToDisplayString();
-        return displayName switch
-        {
-            "Object" => TypeSymbol.Object,
-            "Boolean" => TypeSymbol.Boolean,
-            "Char" => TypeSymbol.Char,
-            "String" => TypeSymbol.String,
-            "Integer" => TypeSymbol.Integer,
-            _ => SemanticFacts.ResolveTypeReference(displayName, _knownTypes) ?? new TypeSymbol(displayName, true)
-        };
+        return SemanticFacts.TryResolveBuiltInType(displayName)
+            ?? SemanticFacts.ResolveTypeReference(displayName, _knownTypes)
+            ?? new TypeSymbol(displayName, true);
     }
 
     private string AllocateLabel(string prefix) => $"{prefix}_{++_labelCounter}";
@@ -3454,6 +3717,16 @@ public sealed class Lowerer
             {
                 Target = RewriteWithExpression(decStatement.Target, receiver, registerByName, localTypes, currentMethod)
             },
+            IncludeStatementSyntax includeStatement => includeStatement with
+            {
+                Target = RewriteWithExpression(includeStatement.Target, receiver, registerByName, localTypes, currentMethod),
+                Value = RewriteWithExpression(includeStatement.Value, receiver, registerByName, localTypes, currentMethod)
+            },
+            ExcludeStatementSyntax excludeStatement => excludeStatement with
+            {
+                Target = RewriteWithExpression(excludeStatement.Target, receiver, registerByName, localTypes, currentMethod),
+                Value = RewriteWithExpression(excludeStatement.Value, receiver, registerByName, localTypes, currentMethod)
+            },
             ReturnStatementSyntax returnStatement when returnStatement.Expression is not null => returnStatement with
             {
                 Expression = RewriteWithExpression(returnStatement.Expression, receiver, registerByName, localTypes, currentMethod)
@@ -3505,6 +3778,9 @@ public sealed class Lowerer
                         Labels = clause.Labels
                             .Select(label => RewriteWithExpression(label, receiver, registerByName, localTypes, currentMethod))
                             .ToArray(),
+                        Guard = clause.Guard is null
+                            ? null
+                            : RewriteWithExpression(clause.Guard, receiver, registerByName, localTypes, currentMethod),
                         Body = RewriteWithStatement(clause.Body, receiver, registerByName, localTypes, currentMethod)
                     })
                     .ToArray(),

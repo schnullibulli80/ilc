@@ -64,3 +64,5 @@ ILC_ILB_Container_Format_Spec.md
 ILC_Runtime_Object_Model_Spec.md
 ilc_secure_packaging_and_execution_spec.md
 
+ilc_numeric_and_cryptographic_integer_spec.md
+ilc_uint128_implementation_plan.md

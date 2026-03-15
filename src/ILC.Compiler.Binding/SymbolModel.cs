@@ -12,8 +12,43 @@ public record TypeSymbol(string Name, bool IsReferenceType) : Symbol(Name)
     public static readonly TypeSymbol Boolean = new("Boolean", false);
     public static readonly TypeSymbol Char = new("Char", false);
     public static readonly TypeSymbol Integer = new("Integer", false);
+    public static readonly TypeSymbol UInt128 = new("UInt128", false);
+    public static readonly TypeSymbol UInt256 = new("UInt256", false);
+    public static readonly TypeSymbol UInt512 = new("UInt512", false);
+    public static readonly TypeSymbol UInt1024 = new("UInt1024", false);
+    public static readonly TypeSymbol UInt2048 = new("UInt2048", false);
     public static readonly TypeSymbol String = new("String", true);
     public static readonly TypeSymbol Nil = new("Nil", true);
+
+    public static IReadOnlyList<TypeSymbol> BuiltInTypes { get; } =
+    [
+        Object,
+        Void,
+        Boolean,
+        Char,
+        Integer,
+        UInt128,
+        UInt256,
+        UInt512,
+        UInt1024,
+        UInt2048,
+        String,
+        Nil
+    ];
+
+    public static IReadOnlyList<TypeSymbol> BuiltInScalarTypes { get; } =
+    [
+        Boolean,
+        Char,
+        Integer,
+        UInt128,
+        UInt256,
+        UInt512,
+        UInt1024,
+        UInt2048,
+        String,
+        Nil
+    ];
 }
 
 public enum ParameterPassingKind
@@ -333,7 +368,7 @@ public sealed class Binder
 
         var symbol = new CompilationUnitSymbol(
             syntaxTree.Root.Namespace?.Name.ToDisplayString(),
-            [TypeSymbol.Boolean, TypeSymbol.Char, TypeSymbol.Integer, TypeSymbol.String, TypeSymbol.Nil, .. declaredTypes],
+            [.. TypeSymbol.BuiltInScalarTypes, .. declaredTypes],
             methods,
             topLevelConstants,
             globals,
@@ -665,6 +700,12 @@ public sealed class Binder
                 case DecStatementSyntax decStatement:
                     ValidateIncDecStatement(decStatement.Keyword, decStatement.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
+                case IncludeStatementSyntax includeStatement:
+                    ValidateIncludeExcludeStatement(includeStatement.Keyword, includeStatement.Target, includeStatement.Value, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    break;
+                case ExcludeStatementSyntax excludeStatement:
+                    ValidateIncludeExcludeStatement(excludeStatement.Keyword, excludeStatement.Target, excludeStatement.Value, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    break;
                 case RaiseStatementSyntax raiseStatement when raiseStatement.Expression is not null:
                     ValidateExpression(raiseStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
@@ -786,6 +827,10 @@ public sealed class Binder
                     {
                         elementType = SemanticFacts.GetElementType(collectionType);
                     }
+                    else if (SemanticFacts.IsSetType(collectionType))
+                    {
+                        elementType = SemanticFacts.GetSetElementType(collectionType);
+                    }
 
                     if (elementType is null)
                     {
@@ -855,6 +900,20 @@ public sealed class Binder
                         {
                             ValidateExpression(label, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                             ValidateCaseLabel(label, caseExpressionType, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        }
+
+                        if (clause.Guard is not null)
+                        {
+                            ValidateExpression(clause.Guard, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                            var guardType = SemanticFacts.InferExpressionType(clause.Guard, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                            if (guardType != TypeSymbol.Boolean)
+                            {
+                                diagnostics.Report(
+                                    "ILC2192",
+                                    "Case clause guard must be Boolean.",
+                                    DiagnosticSeverity.Error,
+                                    GetExpressionDiagnosticSpan(clause.Guard, knownTypes));
+                            }
                         }
 
                         ValidateStatements([clause.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
@@ -1064,6 +1123,16 @@ public sealed class Binder
             {
                 Target = RewriteWithExpression(decStatement.Target, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
             },
+            IncludeStatementSyntax includeStatement => includeStatement with
+            {
+                Target = RewriteWithExpression(includeStatement.Target, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                Value = RewriteWithExpression(includeStatement.Value, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+            },
+            ExcludeStatementSyntax excludeStatement => excludeStatement with
+            {
+                Target = RewriteWithExpression(excludeStatement.Target, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                Value = RewriteWithExpression(excludeStatement.Value, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+            },
             RaiseStatementSyntax raiseStatement when raiseStatement.Expression is not null => raiseStatement with
             {
                 Expression = RewriteWithExpression(raiseStatement.Expression, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
@@ -1111,6 +1180,9 @@ public sealed class Binder
                         Labels = clause.Labels
                             .Select(label => RewriteWithExpression(label, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod))
                             .ToArray(),
+                        Guard = clause.Guard is null
+                            ? null
+                            : RewriteWithExpression(clause.Guard, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
                         Body = RewriteWithStatement(clause.Body, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
                     })
                     .ToArray(),
@@ -1466,7 +1538,7 @@ public sealed class Binder
             case BinaryExpressionSyntax binary:
                 ValidateExpression(binary.Left, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 ValidateExpression(binary.Right, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                if (binary.OperatorToken.Kind == SyntaxKind.InKeyword)
+                if (binary.OperatorToken.Kind is SyntaxKind.InKeyword or SyntaxKind.NotInKeyword)
                 {
                     ValidateSetMembership(binary, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 }
@@ -2030,16 +2102,6 @@ public sealed class Binder
                 $"Right-hand side of 'in' must be a set type, but got '{rightType.Name}'.",
                 DiagnosticSeverity.Error,
                 GetExpressionDiagnosticSpan(binary.Right, knownTypes));
-            return;
-        }
-
-        if (!SemanticFacts.IsConstantExpression(binary.Left, locals, knownFields, knownConstants, knownProperties, currentMethod))
-        {
-            diagnostics.Report(
-                "ILC2156",
-                "Left-hand side of 'in' must be a literal or constant enum value in the current bootstrap compiler.",
-                DiagnosticSeverity.Error,
-                GetExpressionDiagnosticSpan(binary.Left, knownTypes));
             return;
         }
 
@@ -2615,6 +2677,46 @@ public sealed class Binder
         }
     }
 
+    private static void ValidateIncludeExcludeStatement(
+        SyntaxToken keyword,
+        ExpressionSyntax target,
+        ExpressionSyntax value,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        ValidateAssignmentTarget(target, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+        ValidateExpression(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+        ValidateExpression(value, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+
+        var targetType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var elementType = SemanticFacts.GetSetElementType(targetType);
+        if (elementType is null)
+        {
+            diagnostics.Report(
+                "ILC2190",
+                $"Target of '{keyword.Text}' must be a set type, but got '{targetType.Name}'.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(target, knownTypes));
+            return;
+        }
+
+        var valueType = SemanticFacts.InferExpressionType(value, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        if (valueType != elementType)
+        {
+            diagnostics.Report(
+                "ILC2191",
+                $"Value of '{keyword.Text}' must be of enum type '{elementType.Name}', but got '{valueType.Name}'.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(value, knownTypes));
+        }
+    }
+
     private static void ValidateArrayAccess(
         QualifiedNameSyntax target,
         IReadOnlyList<ExpressionSyntax> indexExpressions,
@@ -2865,7 +2967,7 @@ public sealed class Binder
                 var instanceMethod = knownMethods.FirstOrDefault(method =>
                     method.DeclaringTypeName == receiverType.Name &&
                     method.Name == target.MemberName.Text &&
-                    method.Parameters.Count == argumentCount &&
+                    SemanticFacts.SupportsArgumentCount(method, argumentCount) &&
                     !method.IsStatic);
                 if (instanceMethod is not null)
                 {
@@ -3049,14 +3151,8 @@ public sealed class Binder
             return resolvedType;
         }
 
-        return typeName.ToDisplayString() switch
-        {
-            "Boolean" => TypeSymbol.Boolean,
-            "Char" => TypeSymbol.Char,
-            "String" => TypeSymbol.String,
-            "Integer" => TypeSymbol.Integer,
-            _ => new TypeSymbol(typeName.ToDisplayString(), true)
-        };
+        return SemanticFacts.TryResolveBuiltInType(typeName.ToDisplayString())
+            ?? new TypeSymbol(typeName.ToDisplayString(), true);
     }
 
     private static TypeSymbol ResolveDeclaredType(string typeName, IEnumerable<TypeSymbol> knownTypes, bool isReferenceType) =>
@@ -3134,7 +3230,9 @@ public sealed class Binder
         var nextValue = 0;
         foreach (var member in enumDeclaration.Members)
         {
-            var value = member.ValueToken?.Value is int explicitValue ? explicitValue : nextValue;
+            var value = member.ValueToken is not null && SemanticFacts.TryGetInt32LiteralValue(member.ValueToken, out var explicitValue)
+                ? explicitValue
+                : nextValue;
             constants.Add(new ConstantSymbol(
                 member.Identifier.Text,
                 enumType,
@@ -3165,7 +3263,7 @@ public sealed class Binder
         {
             LiteralExpressionSyntax literal when literal.LiteralToken.Kind == SyntaxKind.TrueKeyword => 1,
             LiteralExpressionSyntax literal when literal.LiteralToken.Kind == SyntaxKind.FalseKeyword => 0,
-            LiteralExpressionSyntax literal => literal.LiteralToken.Value ?? 0,
+            LiteralExpressionSyntax literal => SemanticFacts.GetLiteralValue(literal.LiteralToken) ?? 0,
             _ => null
         };
 
@@ -3572,7 +3670,7 @@ public static class SemanticFacts
                     ? TypeSymbol.Boolean
                     : TypeSymbol.Integer
                 : TypeSymbol.Integer,
-            BinaryExpressionSyntax binary => binary.OperatorToken.Kind == SyntaxKind.InKeyword
+            BinaryExpressionSyntax binary => binary.OperatorToken.Kind is SyntaxKind.InKeyword or SyntaxKind.NotInKeyword
                 ? TypeSymbol.Boolean
                 : IsComparisonOperator(binary.OperatorToken.Kind)
                     ? TypeSymbol.Boolean
@@ -3678,16 +3776,13 @@ public static class SemanticFacts
             return TypeSymbol.Char;
         }
 
-        return IsArrayType(arrayType)
-            ? GetArrayElementTypeName(arrayType.Name) switch
-            {
-                "Boolean" => TypeSymbol.Boolean,
-                "Char" => TypeSymbol.Char,
-                "String" => TypeSymbol.String,
-                "Integer" => TypeSymbol.Integer,
-                var other => new TypeSymbol(other, true)
-            }
-            : TypeSymbol.Integer;
+        if (!IsArrayType(arrayType))
+        {
+            return TypeSymbol.Integer;
+        }
+
+        var elementTypeName = GetArrayElementTypeName(arrayType.Name);
+        return TryResolveBuiltInType(elementTypeName) ?? new TypeSymbol(elementTypeName, true);
     }
 
     private static TypeSymbol GetIndexedElementType(
@@ -3723,16 +3818,13 @@ public static class SemanticFacts
             return TypeSymbol.Char;
         }
 
-        return IsArrayType(targetType)
-            ? GetArrayElementTypeName(targetType.Name) switch
-            {
-                "Boolean" => TypeSymbol.Boolean,
-                "Char" => TypeSymbol.Char,
-                "String" => TypeSymbol.String,
-                "Integer" => TypeSymbol.Integer,
-                var other => new TypeSymbol(other, true)
-            }
-            : TypeSymbol.Integer;
+        if (!IsArrayType(targetType))
+        {
+            return TypeSymbol.Integer;
+        }
+
+        var elementTypeName = GetArrayElementTypeName(targetType.Name);
+        return TryResolveBuiltInType(elementTypeName) ?? new TypeSymbol(elementTypeName, true);
     }
 
     public static InvocationResolution? ResolveInvocation(
@@ -3872,7 +3964,7 @@ public static class SemanticFacts
             var staticMethod = knownMethods.FirstOrDefault(candidate =>
                 candidate.DeclaringTypeName == targetType.Name &&
                 candidate.Name == memberAccess.MemberName.Text &&
-                candidate.Parameters.Count == argumentCount &&
+                SupportsArgumentCount(candidate, argumentCount) &&
                 candidate.IsStatic);
             if (staticMethod is not null)
             {
@@ -3891,7 +3983,7 @@ public static class SemanticFacts
         var method = knownMethods.FirstOrDefault(candidate =>
             candidate.DeclaringTypeName == receiverType.Name &&
             candidate.Name == memberAccess.MemberName.Text &&
-            candidate.Parameters.Count == argumentCount);
+            SupportsArgumentCount(candidate, argumentCount));
         if (method is null || (!ignoreAccess && method.IsStatic))
         {
             return null;
@@ -4073,8 +4165,31 @@ public static class SemanticFacts
             type != TypeSymbol.Void &&
             type != TypeSymbol.Boolean &&
             type != TypeSymbol.Char &&
-            type != TypeSymbol.Integer;
+            !IsBuiltInIntegerType(type);
     }
+
+    public static bool IsBuiltInType(TypeSymbol type) =>
+        TypeSymbol.BuiltInTypes.Any(candidate => candidate == type);
+
+    public static bool IsBuiltInIntegerType(TypeSymbol type) =>
+        type == TypeSymbol.Integer ||
+        type == TypeSymbol.UInt128 ||
+        type == TypeSymbol.UInt256 ||
+        type == TypeSymbol.UInt512 ||
+        type == TypeSymbol.UInt1024 ||
+        type == TypeSymbol.UInt2048;
+
+    public static int? GetIntegerBitWidth(TypeSymbol type) =>
+        type.Name switch
+        {
+            "Integer" => 32,
+            "UInt128" => 128,
+            "UInt256" => 256,
+            "UInt512" => 512,
+            "UInt1024" => 1024,
+            "UInt2048" => 2048,
+            _ => null
+        };
 
     public static TypeSymbol? GetElementType(TypeSymbol type)
     {
@@ -4088,15 +4203,8 @@ public static class SemanticFacts
             return null;
         }
 
-        return GetArrayElementTypeName(type.Name) switch
-        {
-            "Void" => TypeSymbol.Void,
-            "Boolean" => TypeSymbol.Boolean,
-            "Char" => TypeSymbol.Char,
-            "Integer" => TypeSymbol.Integer,
-            "String" => TypeSymbol.String,
-            _ => new TypeSymbol(GetArrayElementTypeName(type.Name), true)
-        };
+        var elementTypeName = GetArrayElementTypeName(type.Name);
+        return TryResolveBuiltInType(elementTypeName) ?? new TypeSymbol(elementTypeName, true);
     }
 
     public static int GetArrayRank(TypeSymbol type)
@@ -4282,7 +4390,7 @@ public static class SemanticFacts
             var instanceMethod = knownMethods.FirstOrDefault(method =>
                 method.DeclaringTypeName == valueReceiverType.Name &&
                 method.Name == target.Parts[^1].Text &&
-                method.Parameters.Count == argumentCount &&
+                SupportsArgumentCount(method, argumentCount) &&
                 !method.IsStatic);
             if (instanceMethod is not null)
             {
@@ -4371,7 +4479,7 @@ public static class SemanticFacts
             var method = knownMethods.FirstOrDefault(candidate =>
                 candidate.DeclaringTypeName == valueReceiverType.Name &&
                 candidate.Name == target.Parts[^1].Text &&
-                candidate.Parameters.Count == argumentCount);
+                SupportsArgumentCount(candidate, argumentCount));
             if (method is not null)
             {
                 return new InvocationResolution(method, valueReceiverType, !method.IsStatic);
@@ -4401,9 +4509,20 @@ public static class SemanticFacts
         return knownMethods
             .Where(method =>
                 method.Name == qualifiedTarget.MethodName &&
-                method.Parameters.Count == argumentCount &&
+                SupportsArgumentCount(method, argumentCount) &&
                 (qualifiedTarget.DeclaringTypeName is null || method.DeclaringTypeName == qualifiedTarget.DeclaringTypeName))
             .ToArray();
+    }
+
+    public static bool SupportsArgumentCount(MethodSymbol method, int argumentCount)
+    {
+        if (method.Parameters.Count > 0 &&
+            method.Parameters[^1].PassingKind == ParameterPassingKind.Params)
+        {
+            return argumentCount >= method.Parameters.Count - 1;
+        }
+
+        return method.Parameters.Count == argumentCount;
     }
 
     public static NameResolution ResolveName(
@@ -4560,7 +4679,7 @@ public static class SemanticFacts
 
         if (binary.OperatorToken.Kind is SyntaxKind.ShlKeyword or SyntaxKind.ShrKeyword)
         {
-            return TypeSymbol.Integer;
+            return IsBuiltInIntegerType(leftType) ? leftType : TypeSymbol.Integer;
         }
 
         if (IsSetType(leftType) && IsSetType(rightType))
@@ -4609,17 +4728,17 @@ public static class SemanticFacts
             ? displayName[(displayName.LastIndexOf('.') + 1)..]
             : displayName;
 
-        return typeName switch
-        {
-            "Object" => TypeSymbol.Object,
-            "Void" => TypeSymbol.Void,
-            "Boolean" => TypeSymbol.Boolean,
-            "Char" => TypeSymbol.Char,
-            "Integer" => TypeSymbol.Integer,
-            "String" => TypeSymbol.String,
-            "Nil" => TypeSymbol.Nil,
-            _ => knownTypes.FirstOrDefault(type => type.Name == typeName)
-        };
+        return TryResolveBuiltInType(typeName)
+            ?? knownTypes.FirstOrDefault(type => type.Name == typeName);
+    }
+
+    public static TypeSymbol? TryResolveBuiltInType(string displayName)
+    {
+        var typeName = displayName.Contains('.')
+            ? displayName[(displayName.LastIndexOf('.') + 1)..]
+            : displayName;
+
+        return TypeSymbol.BuiltInTypes.FirstOrDefault(type => type.Name == typeName);
     }
 
     public static bool IsCompatibleReferenceType(TypeSymbol sourceType, TypeSymbol targetType) =>
@@ -4854,6 +4973,31 @@ public static class SemanticFacts
         expression is NameExpressionSyntax name && ResolveConstantReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod) is not null ||
         expression is MemberAccessExpressionSyntax member && ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod).Constant is not null;
 
+    public static bool TryGetInt32LiteralValue(SyntaxToken token, out int value)
+    {
+        switch (token.Value)
+        {
+            case int parsedInt:
+                value = parsedInt;
+                return true;
+            case NumericLiteralValue numericLiteral when numericLiteral.Int32Value is int literalInt:
+                value = literalInt;
+                return true;
+            default:
+                value = 0;
+                return false;
+        }
+    }
+
+    public static object? GetLiteralValue(SyntaxToken token) =>
+        token.Kind switch
+        {
+            SyntaxKind.TrueKeyword => 1,
+            SyntaxKind.FalseKeyword => 0,
+            SyntaxKind.NumberToken when token.Value is NumericLiteralValue numericLiteral => numericLiteral.Int32Value,
+            _ => token.Value
+        };
+
     public static object? GetConstantValue(
         ExpressionSyntax expression,
         IReadOnlyDictionary<string, TypeSymbol> locals,
@@ -4863,7 +5007,7 @@ public static class SemanticFacts
         MethodSymbol? currentMethod) =>
         expression switch
         {
-            LiteralExpressionSyntax literal => literal.LiteralToken.Value ?? (literal.LiteralToken.Kind == SyntaxKind.TrueKeyword ? 1 : literal.LiteralToken.Kind == SyntaxKind.FalseKeyword ? 0 : 0),
+            LiteralExpressionSyntax literal => GetLiteralValue(literal.LiteralToken) ?? 0,
             NameExpressionSyntax name => ResolveConstantReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod)?.Value,
             MemberAccessExpressionSyntax member => ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod).Constant?.Value,
             ParenthesizedExpressionSyntax parenthesized => GetConstantValue(parenthesized.Expression, locals, knownFields, knownConstants, knownProperties, currentMethod),

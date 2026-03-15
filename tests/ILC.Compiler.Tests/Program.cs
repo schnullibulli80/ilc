@@ -361,6 +361,7 @@ begin
     begin
       current := current + 1;
     end;
+    Program.Collect(1, 2, 3);
     var formattedValue := parsedTextValue.ToString();
     current := current + formattedValue.Length;
     if formattedValue = '15' then
@@ -497,6 +498,13 @@ begin
         current := current + 1000;
     end;
 
+    case mode of
+      Mode.Busy when Mode.Done in activeModes:
+        current := current + 2;
+    else
+      current := current + 1000;
+    end;
+
     match mode with
       Mode.Idle => current := current + 1000;
       Mode.Busy or Mode.Done => current := current + 2;
@@ -625,12 +633,42 @@ begin
     begin
       current := current + 1;
     end;
+    if mode in activeModes then
+    begin
+      current := current + 2;
+    end;
+    if mode not in activeModes then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
     activeModes xor= [Mode.Done];
     if Mode.Done in activeModes then
     begin
       current := current + 100;
     end
     else
+    begin
+      current := current + 1;
+    end;
+    include(activeModes, Mode.Busy);
+    if Mode.Busy in activeModes then
+    begin
+      current := current + 1;
+    end;
+    exclude(activeModes, Mode.Busy);
+    if Mode.Busy in activeModes then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    for each var listedMode in extraModes do
     begin
       current := current + 1;
     end;
@@ -1025,6 +1063,68 @@ var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilatio
             !mainBytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.LdLen))
         {
             failures.Add("Bytecode emission should lower array allocation, element access and length operations.");
+        }
+        else
+        {
+            var collectFunction = mainModule.Functions.FirstOrDefault(function => function.Name == "Collect");
+            var collectCallEntry = collectFunction is null
+                ? default
+                : mainBytecode.Instructions
+                    .Select((instruction, index) => (instruction, index))
+                    .FirstOrDefault(pair =>
+                        pair.instruction.OpCode == OpCode.Call &&
+                        pair.instruction.Immediate == (int)collectFunction.FunctionId);
+            if (collectFunction is null)
+            {
+                failures.Add("Module emission should retain the Collect function for params verification.");
+            }
+            else if (collectCallEntry.instruction is null || collectCallEntry.instruction.OpCode != OpCode.Call)
+            {
+                failures.Add("Bytecode emission should retain a direct call to Collect for params verification.");
+            }
+            else
+            {
+                var collectCallIndex = collectCallEntry.index;
+                var collectCall = collectCallEntry.instruction;
+                if (collectCall.Right != 1)
+                {
+                    failures.Add("Params calls should pass exactly one packed array argument to Collect.");
+                }
+
+                var paramsArrayAllocation = mainBytecode.Instructions
+                    .Take(collectCallIndex)
+                    .Select((instruction, index) => (instruction, index))
+                    .LastOrDefault(pair => pair.instruction.OpCode == OpCode.NewArr);
+                if (paramsArrayAllocation.instruction is null || paramsArrayAllocation.instruction.OpCode != OpCode.NewArr)
+                {
+                    failures.Add("Params calls should allocate a synthetic array before calling Collect.");
+                }
+                else
+                {
+                    var paramsArrayRegister = paramsArrayAllocation.instruction.Destination;
+                    var paramsStores = mainBytecode.Instructions
+                        .Skip(paramsArrayAllocation.index + 1)
+                        .Take(collectCallIndex - paramsArrayAllocation.index - 1)
+                        .Count(instruction =>
+                            instruction.OpCode == OpCode.StElem &&
+                            instruction.Destination == paramsArrayRegister);
+                    if (paramsStores != 3)
+                    {
+                        failures.Add("Params calls should pack each trailing argument into the synthetic Collect array.");
+                    }
+
+                    if (!mainBytecode.Instructions
+                            .Skip(paramsArrayAllocation.index + 1)
+                            .Take(collectCallIndex - paramsArrayAllocation.index - 1)
+                            .Any(instruction =>
+                                instruction.OpCode == OpCode.Mov &&
+                                instruction.Destination == collectCall.Left &&
+                                instruction.Left == paramsArrayRegister))
+                    {
+                        failures.Add("Params calls should stage the packed array into the Collect call frame.");
+                    }
+                }
+            }
         }
 
         if (!mainBytecode.ArrayShapes.Any(shape => shape.ExtentRegisters.Count > 1))
@@ -1803,6 +1903,11 @@ begin
       'aa'..'ac':
         scalar := scalar + 4;
     end;
+
+    case Mode.Busy of
+      Mode.Busy when 1:
+        scalar := scalar + 5;
+    end;
   end;
 end;
 """);
@@ -1826,6 +1931,11 @@ if (!invalidCaseBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2147"
 if (!invalidCaseBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2159"))
 {
     failures.Add("Binder should report unsupported string case ranges.");
+}
+
+if (!invalidCaseBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2192"))
+{
+    failures.Add("Binder should report non-Boolean case guards.");
 }
 
 var invalidMatchTree = SyntaxTree.Parse("""
@@ -2462,6 +2572,7 @@ begin
     begin
     end;
 
+    var value := 1;
     if value in modes then
     begin
     end;
@@ -2480,9 +2591,9 @@ if (!invalidSetBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2155")
     failures.Add("Binder should report non-set right-hand operands for 'in'.");
 }
 
-if (!invalidSetBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2156"))
+if (!invalidSetBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2157"))
 {
-    failures.Add("Binder should report non-constant left-hand operands for 'in'.");
+    failures.Add("Binder should report left-hand operands of the wrong enum type for 'in'.");
 }
 
 var invalidSetBinaryTree = SyntaxTree.Parse("""
@@ -2711,6 +2822,41 @@ var invalidForStepBinding = new Binder().Bind(invalidForStepTree);
 if (!invalidForStepBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2189"))
 {
     failures.Add("Binder should report non-Integer for-loop steps.");
+}
+
+var invalidIncludeExcludeTree = SyntaxTree.Parse("""
+public enum Mode
+begin
+  Idle;
+  Busy;
+end;
+
+public enum Other
+begin
+  A;
+  B;
+end;
+
+public class Program
+begin
+  public static method Main;
+  begin
+    var number := 0;
+    var modes: set of Mode := [Mode.Busy];
+    include(number, Mode.Busy);
+    exclude(modes, Other.A);
+  end;
+end;
+""");
+var invalidIncludeExcludeBinding = new Binder().Bind(invalidIncludeExcludeTree);
+if (!invalidIncludeExcludeBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2190"))
+{
+    failures.Add("Binder should report non-set targets for 'include' and 'exclude'.");
+}
+
+if (!invalidIncludeExcludeBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2191"))
+{
+    failures.Add("Binder should report mismatched element types for 'include' and 'exclude'.");
 }
 
 

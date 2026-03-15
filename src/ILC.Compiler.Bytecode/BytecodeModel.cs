@@ -65,12 +65,21 @@ public enum OpCode : byte
     Ret = 0x34
 }
 
+public enum InstructionImmediateKind : byte
+{
+    None = 0,
+    InlineInt32 = 1,
+    StringTableIndex = 2,
+    ConstantTableIndex = 3
+}
+
 public sealed record Instruction(
     OpCode OpCode,
     ushort Destination = 0,
     ushort Left = 0,
     ushort Right = 0,
-    int Immediate = 0);
+    int Immediate = 0,
+    InstructionImmediateKind ImmediateKind = InstructionImmediateKind.None);
 
 public sealed record BytecodeArrayShapeInfo(ushort ArrayRegister, IReadOnlyList<ushort> ExtentRegisters);
 public sealed record BytecodeModuleArrayShapeInfo(uint FunctionId, ushort ArrayRegister, IReadOnlyList<ushort> ExtentRegisters);
@@ -100,6 +109,7 @@ public enum IlbSectionKind : uint
     TypeTable = 3,
     FieldTable = 4,
     MethodTable = 5,
+    ConstantTable = 6,
     CodeSection = 7,
     ExceptionTable = 8,
     EntryPoint = 9
@@ -439,7 +449,8 @@ public sealed class IlbSerializer
             foreach (var instruction in function.Instructions)
             {
                 var immediate = instruction.Immediate;
-                if (instruction.OpCode == OpCode.LdStr &&
+                if (instruction.ImmediateKind == InstructionImmediateKind.StringTableIndex &&
+                    instruction.OpCode == OpCode.LdStr &&
                     instruction.Immediate > 0 &&
                     functionStringIds.TryGetValue(function.FunctionId, out var stringIds) &&
                     instruction.Immediate <= stringIds.Count)
@@ -736,7 +747,8 @@ public sealed class BytecodeEmitter
                                 instruction.Destination?.Index ?? 0,
                                 0,
                                 0,
-                                stringId));
+                                stringId,
+                                InstructionImmediateKind.StringTableIndex));
                         }
                         else
                         {
@@ -745,7 +757,8 @@ public sealed class BytecodeEmitter
                                 instruction.Destination?.Index ?? 0,
                                 0,
                                 0,
-                                Convert.ToInt32(instruction.Operand)));
+                                Convert.ToInt32(instruction.Operand),
+                                InstructionImmediateKind.InlineInt32));
                         }
                         break;
                     case IrOpCode.Copy:

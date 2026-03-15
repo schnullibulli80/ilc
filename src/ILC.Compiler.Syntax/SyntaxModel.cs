@@ -56,6 +56,8 @@ public enum SyntaxKind
     StepKeyword,
     IncKeyword,
     DecKeyword,
+    IncludeKeyword,
+    ExcludeKeyword,
     TryKeyword,
     ExceptKeyword,
     FinallyKeyword,
@@ -77,6 +79,7 @@ public enum SyntaxKind
     AndKeyword,
     NotKeyword,
     OrKeyword,
+    NotInKeyword,
     WhenKeyword,
     ModKeyword,
     ShlKeyword,
@@ -157,6 +160,8 @@ public enum SyntaxKind
     LocalVariableDeclarationStatement,
     IncStatement,
     DecStatement,
+    IncludeStatement,
+    ExcludeStatement,
     ExpressionStatement,
     LiteralExpression,
     SetLiteralExpression,
@@ -186,6 +191,11 @@ public enum SyntaxKind
 }
 
 public abstract record SyntaxNode(SyntaxKind Kind);
+
+public sealed record NumericLiteralValue(
+    string RawText,
+    string Digits,
+    int? Int32Value);
 
 public sealed record SyntaxToken(
     SyntaxKind Kind,
@@ -426,6 +436,8 @@ public sealed record CaseStatementSyntax(
 
 public sealed record CaseClauseSyntax(
     IReadOnlyList<ExpressionSyntax> Labels,
+    SyntaxToken? WhenKeyword,
+    ExpressionSyntax? Guard,
     SyntaxToken ColonToken,
     StatementSyntax Body) : SyntaxNode(SyntaxKind.CaseClause);
 
@@ -505,6 +517,24 @@ public sealed record DecStatementSyntax(
     ExpressionSyntax Target,
     SyntaxToken CloseParenToken,
     SyntaxToken SemicolonToken) : StatementSyntax(SyntaxKind.DecStatement);
+
+public sealed record IncludeStatementSyntax(
+    SyntaxToken Keyword,
+    SyntaxToken OpenParenToken,
+    ExpressionSyntax Target,
+    SyntaxToken CommaToken,
+    ExpressionSyntax Value,
+    SyntaxToken CloseParenToken,
+    SyntaxToken SemicolonToken) : StatementSyntax(SyntaxKind.IncludeStatement);
+
+public sealed record ExcludeStatementSyntax(
+    SyntaxToken Keyword,
+    SyntaxToken OpenParenToken,
+    ExpressionSyntax Target,
+    SyntaxToken CommaToken,
+    ExpressionSyntax Value,
+    SyntaxToken CloseParenToken,
+    SyntaxToken SemicolonToken) : StatementSyntax(SyntaxKind.ExcludeStatement);
 
 public sealed record ExpressionStatementSyntax(
     ExpressionSyntax Expression,
@@ -746,7 +776,11 @@ internal sealed class Lexer
             }
 
             var text = _text[start.._position];
-            object? value = int.TryParse(text.Replace("_", string.Empty), out var parsedValue) ? parsedValue : null;
+            var digits = text.Replace("_", string.Empty);
+            object? value = new NumericLiteralValue(
+                text,
+                digits,
+                int.TryParse(digits, out var parsedValue) ? parsedValue : null);
             return new SyntaxToken(SyntaxKind.NumberToken, text, value, new TextSpan(start, text.Length));
         }
 
@@ -943,6 +977,8 @@ internal sealed class Lexer
             "step" => SyntaxKind.StepKeyword,
             "inc" => SyntaxKind.IncKeyword,
             "dec" => SyntaxKind.DecKeyword,
+            "include" => SyntaxKind.IncludeKeyword,
+            "exclude" => SyntaxKind.ExcludeKeyword,
             "try" => SyntaxKind.TryKeyword,
             "except" => SyntaxKind.ExceptKeyword,
             "finally" => SyntaxKind.FinallyKeyword,
@@ -1531,6 +1567,8 @@ internal sealed class Parser
             SyntaxKind.ContinueKeyword => ParseContinueStatement(),
             SyntaxKind.IncKeyword => ParseIncDecStatement(true),
             SyntaxKind.DecKeyword => ParseIncDecStatement(false),
+            SyntaxKind.IncludeKeyword => ParseIncludeExcludeStatement(true),
+            SyntaxKind.ExcludeKeyword => ParseIncludeExcludeStatement(false),
             SyntaxKind.RaiseKeyword or SyntaxKind.ThrowKeyword => ParseRaiseStatement(),
             SyntaxKind.TryKeyword => ParseTryStatement(),
             SyntaxKind.VarKeyword => ParseLocalVariableDeclarationStatement(),
@@ -1603,6 +1641,24 @@ internal sealed class Parser
         return isIncrement
             ? new IncStatementSyntax(keyword, openParen, target, closeParen, semicolon)
             : new DecStatementSyntax(keyword, openParen, target, closeParen, semicolon);
+    }
+
+    private StatementSyntax ParseIncludeExcludeStatement(bool isInclude, bool requireSemicolon = true)
+    {
+        var keyword = isInclude
+            ? Match(SyntaxKind.IncludeKeyword)
+            : Match(SyntaxKind.ExcludeKeyword);
+        var openParen = Match(SyntaxKind.OpenParenToken);
+        var target = ParseExpression();
+        var comma = Match(SyntaxKind.CommaToken);
+        var value = ParseExpression();
+        var closeParen = Match(SyntaxKind.CloseParenToken);
+        var semicolon = requireSemicolon
+            ? Match(SyntaxKind.SemicolonToken)
+            : new SyntaxToken(SyntaxKind.SemicolonToken, string.Empty, null, new TextSpan(Current.Span.Start, 0));
+        return isInclude
+            ? new IncludeStatementSyntax(keyword, openParen, target, comma, value, closeParen, semicolon)
+            : new ExcludeStatementSyntax(keyword, openParen, target, comma, value, closeParen, semicolon);
     }
 
     private RaiseStatementSyntax ParseRaiseStatement(bool requireSemicolon = true)
@@ -1812,9 +1868,17 @@ internal sealed class Parser
                 labels.Add(ParseCaseLabel());
             }
 
+            SyntaxToken? whenKeyword = null;
+            ExpressionSyntax? guard = null;
+            if (Current.Kind == SyntaxKind.WhenKeyword)
+            {
+                whenKeyword = Match(SyntaxKind.WhenKeyword);
+                guard = ParseExpression();
+            }
+
             var colonToken = Match(SyntaxKind.ColonToken);
             var body = ParseStatement();
-            clauses.Add(new CaseClauseSyntax(labels, colonToken, body));
+            clauses.Add(new CaseClauseSyntax(labels, whenKeyword, guard, colonToken, body));
         }
 
         if (Current.Kind == SyntaxKind.ElseKeyword)
@@ -2044,6 +2108,8 @@ internal sealed class Parser
             SyntaxKind.ContinueKeyword => ParseContinueStatement(false),
             SyntaxKind.IncKeyword => ParseIncDecStatement(true, false),
             SyntaxKind.DecKeyword => ParseIncDecStatement(false, false),
+            SyntaxKind.IncludeKeyword => ParseIncludeExcludeStatement(true, false),
+            SyntaxKind.ExcludeKeyword => ParseIncludeExcludeStatement(false, false),
             SyntaxKind.RaiseKeyword or SyntaxKind.ThrowKeyword => ParseRaiseStatement(false),
             SyntaxKind.TryKeyword => ParseTryStatement(false),
             SyntaxKind.CaseKeyword => ParseCaseStatement(false),
@@ -2069,6 +2135,8 @@ internal sealed class Parser
             SyntaxKind.ContinueKeyword => ParseContinueStatement(false),
             SyntaxKind.IncKeyword => ParseIncDecStatement(true, false),
             SyntaxKind.DecKeyword => ParseIncDecStatement(false, false),
+            SyntaxKind.IncludeKeyword => ParseIncludeExcludeStatement(true, false),
+            SyntaxKind.ExcludeKeyword => ParseIncludeExcludeStatement(false, false),
             SyntaxKind.RaiseKeyword or SyntaxKind.ThrowKeyword => ParseRaiseStatement(false),
             SyntaxKind.TryKeyword => ParseTryStatement(false),
             SyntaxKind.VarKeyword => ParseLocalVariableDeclarationStatement(false),
@@ -2125,6 +2193,7 @@ internal sealed class Parser
             or SyntaxKind.GreaterToken
             or SyntaxKind.GreaterOrEqualsToken
             or SyntaxKind.InKeyword
+            or SyntaxKind.NotKeyword
             or SyntaxKind.AsKeyword
             or SyntaxKind.IsKeyword)
         {
@@ -2141,6 +2210,20 @@ internal sealed class Parser
                 var isKeyword = NextToken();
                 var typeName = ParseTypeName();
                 left = new TypeTestExpressionSyntax(left, isKeyword, typeName);
+                continue;
+            }
+
+            if (Current.Kind == SyntaxKind.NotKeyword && Peek(1).Kind == SyntaxKind.InKeyword)
+            {
+                var notKeyword = NextToken();
+                var inKeyword = Match(SyntaxKind.InKeyword);
+                var notInOperatorToken = new SyntaxToken(
+                    SyntaxKind.NotInKeyword,
+                    "not in",
+                    null,
+                    new TextSpan(notKeyword.Span.Start, (inKeyword.Span.Start + inKeyword.Span.Length) - notKeyword.Span.Start));
+                var notInRight = ParseShiftExpression();
+                left = new BinaryExpressionSyntax(left, notInOperatorToken, notInRight);
                 continue;
             }
 
@@ -2870,6 +2953,7 @@ public sealed class SyntaxTree
                 Clauses = caseStatement.Clauses.Select(clause => clause with
                 {
                     Labels = clause.Labels.Select(label => NormalizeExpression(label, aliases)!).ToArray(),
+                    Guard = NormalizeExpression(clause.Guard, aliases),
                     Body = NormalizeStatement(clause.Body, aliases)
                 }).ToArray(),
                 ElseStatements = caseStatement.ElseStatements.Select(item => NormalizeStatement(item, aliases)).ToArray()
@@ -2897,6 +2981,16 @@ public sealed class SyntaxTree
             DecStatementSyntax decStatement => decStatement with
             {
                 Target = NormalizeExpression(decStatement.Target, aliases)!
+            },
+            IncludeStatementSyntax includeStatement => includeStatement with
+            {
+                Target = NormalizeExpression(includeStatement.Target, aliases)!,
+                Value = NormalizeExpression(includeStatement.Value, aliases)!
+            },
+            ExcludeStatementSyntax excludeStatement => excludeStatement with
+            {
+                Target = NormalizeExpression(excludeStatement.Target, aliases)!,
+                Value = NormalizeExpression(excludeStatement.Value, aliases)!
             },
             RaiseStatementSyntax raiseStatement => raiseStatement with
             {
