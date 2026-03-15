@@ -131,6 +131,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         static_cast<std::size_t>(max_function_id) + 1,
         LeafFastpathKind::none);
     std::vector<std::uint32_t> function_leaf_fastpath_field_id(static_cast<std::size_t>(max_function_id) + 1, 0);
+    std::vector<std::uint32_t> function_leaf_fastpath_owner_type_id(static_cast<std::size_t>(max_function_id) + 1, 0);
+    std::vector<std::uint32_t> function_leaf_fastpath_instance_slot(static_cast<std::size_t>(max_function_id) + 1, 0);
     for (const auto& function : module.functions)
     {
         if (function.host_import_kind != HostImportKind::none || !function.exception_handlers.empty())
@@ -323,6 +325,23 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     for (const auto& field : module.fields)
     {
         field_lookup[field.field_id] = &field;
+    }
+    for (const auto& function : module.functions)
+    {
+        if (function_leaf_fastpath_kind[function.function_id] != LeafFastpathKind::instance_field_add_argument_return)
+        {
+            continue;
+        }
+
+        const auto field_id = function_leaf_fastpath_field_id[function.function_id];
+        if (field_id >= field_lookup.size() || field_lookup[field_id] == nullptr)
+        {
+            throw std::runtime_error("field reference is invalid");
+        }
+
+        const auto& field = *field_lookup[field_id];
+        function_leaf_fastpath_owner_type_id[function.function_id] = field.owner_type_id;
+        function_leaf_fastpath_instance_slot[function.function_id] = static_cast<std::uint32_t>(field.instance_slot);
     }
 
     const auto encode_array_handle = [](std::size_t array_id) -> std::int32_t
@@ -630,20 +649,16 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         if (function_leaf_fastpath_kind[function.function_id] == LeafFastpathKind::instance_field_add_argument_return)
         {
-            const auto& field = require_field(function_leaf_fastpath_field_id[function.function_id]);
-            if (field.is_static)
-            {
-                throw std::runtime_error("specialized leaf fastpath does not support static fields");
-            }
-
             auto& object = require_object(arguments[0]);
-            if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
+            const auto owner_type_id = function_leaf_fastpath_owner_type_id[function.function_id];
+            const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[function.function_id]);
+            if (object.type_id != owner_type_id || instance_slot >= object.fields.size())
             {
                 throw std::runtime_error("specialized leaf fastpath receiver mismatch");
             }
 
-            const auto result = object.fields[field.instance_slot] + arguments[1];
-            object.fields[field.instance_slot] = result;
+            const auto result = object.fields[instance_slot] + arguments[1];
+            object.fields[instance_slot] = result;
             if (profile != nullptr)
             {
                 ++profile->specialized_leaf_fastpath_calls;
@@ -1679,7 +1694,26 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             profile != nullptr && (profile->call_count & call_timing_sample_mask) == 0;
                         const auto call_start = sample_call_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         std::int32_t result = 0;
-                        if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                        const auto leaf_fastpath_kind = function_leaf_fastpath_kind[callee.function_id];
+                        if (leaf_fastpath_kind == LeafFastpathKind::instance_field_add_argument_return)
+                        {
+                            auto& object = require_object(register_values[instruction.left]);
+                            const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[callee.function_id]);
+                            if (object.type_id != function_leaf_fastpath_owner_type_id[callee.function_id] ||
+                                instance_slot >= object.fields.size())
+                            {
+                                throw std::runtime_error("specialized leaf fastpath receiver mismatch");
+                            }
+
+                            result = object.fields[instance_slot] + register_values[static_cast<std::size_t>(instruction.left) + 1];
+                            object.fields[instance_slot] = result;
+                            if (profile != nullptr)
+                            {
+                                ++profile->leaf_fastpath_calls;
+                                ++profile->specialized_leaf_fastpath_calls;
+                            }
+                        }
+                        else if (leaf_fastpath_kind != LeafFastpathKind::none)
                         {
                             result = execute_leaf_fastpath(callee, register_values + instruction.left);
                             if (profile != nullptr)
@@ -1701,7 +1735,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             const auto elapsed_ns = static_cast<std::uint64_t>(
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - call_start).count());
                             profile->call_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
-                            if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                            if (leaf_fastpath_kind != LeafFastpathKind::none)
                             {
                                 profile->leaf_fastpath_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
                             }
@@ -1730,7 +1764,26 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             profile != nullptr && (profile->call_virt_count & call_timing_sample_mask) == 0;
                         const auto call_start = sample_call_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         std::int32_t result = 0;
-                        if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                        const auto leaf_fastpath_kind = function_leaf_fastpath_kind[callee.function_id];
+                        if (leaf_fastpath_kind == LeafFastpathKind::instance_field_add_argument_return)
+                        {
+                            auto& object = require_object(register_values[instruction.left]);
+                            const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[callee.function_id]);
+                            if (object.type_id != function_leaf_fastpath_owner_type_id[callee.function_id] ||
+                                instance_slot >= object.fields.size())
+                            {
+                                throw std::runtime_error("specialized leaf fastpath receiver mismatch");
+                            }
+
+                            result = object.fields[instance_slot] + register_values[static_cast<std::size_t>(instruction.left) + 1];
+                            object.fields[instance_slot] = result;
+                            if (profile != nullptr)
+                            {
+                                ++profile->leaf_fastpath_calls;
+                                ++profile->specialized_leaf_fastpath_calls;
+                            }
+                        }
+                        else if (leaf_fastpath_kind != LeafFastpathKind::none)
                         {
                             result = execute_leaf_fastpath(
                                 callee,
@@ -1754,7 +1807,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             const auto elapsed_ns = static_cast<std::uint64_t>(
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - call_start).count());
                             profile->call_virt_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
-                            if (function_leaf_fastpath_kind[callee.function_id] != LeafFastpathKind::none)
+                            if (leaf_fastpath_kind != LeafFastpathKind::none)
                             {
                                 profile->leaf_fastpath_execution_ns += elapsed_ns * (call_timing_sample_mask + 1);
                             }
