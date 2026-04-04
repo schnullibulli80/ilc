@@ -1,0 +1,756 @@
+namespace Demo.App;
+uses System, Demo.Core;
+const TopBonus: Integer = 2;
+public enum Mode
+begin
+  Idle;
+  Busy;
+  Done = 5;
+end;
+public record Point
+begin
+  public var X: Integer;
+  public var Y: Integer;
+end;
+var value := 42;
+Program.Add(3, 4);
+public class Program
+begin
+  public static const DefaultSeed: Integer = 1;
+  public static const CaseHit: Integer = 90;
+  public static var Accumulator: Integer;
+  public var Counter: Integer;
+  public var Items: array of Integer;
+  public var Children: array of Program;
+  public var Matrix: array[3, 3] of Integer;
+  public static property Total: Integer read Accumulator write Accumulator;
+  public property Value: Integer read Counter write Counter;
+  public property Grid: array[3, 3] of Integer read Matrix write Matrix;
+  public default property Item[index: Integer]: Integer read Items write Items;
+  public default property Child[index: Integer]: Program read Children write Children;
+  public static property AutoTotal: Integer { get; set; };
+  public property AutoValue: Integer { get; set; };
+  public static property HiddenTotal: Integer { get; private set; };
+  public static property SecretRead: Integer { private get; set; };
+  public property Created: Integer { get; init; };
+  public property Adjusted: Integer
+  begin
+    get
+    begin
+      return Counter + 10;
+    end;
+
+    set(value)
+    begin
+      Counter := value - 10;
+    end;
+  end;
+
+  public constructor(seed: Integer);
+  begin
+    Counter := seed;
+    Items := new Integer[4];
+    Children := new Program[2];
+    Created := seed + 100;
+  end;
+
+  public static function ParseSeed(text: String; out value: Integer): Boolean;
+  begin
+    value := Integer.Parse(text);
+    return true;
+  end;
+
+  public static procedure Bump(ref value: Integer);
+  begin
+    value := value + 1;
+  end;
+
+  public static procedure ReadOnly(in value: Integer);
+  begin
+    Program.Total := Program.Total + value;
+  end;
+
+  public static procedure Collect(params values: array of Integer);
+  begin
+    Program.Total := Program.Total + values.Length;
+  end;
+
+  public static function Add(left: Integer; right: Integer): Integer;
+  begin
+    if left > right then
+    begin
+      exit left - right;
+    end;
+
+    exit left + right;
+  end;
+
+  public static procedure Trace(name: String; value: Integer);
+  begin
+    System.Console.WriteLine(name + value.ToString());
+  end;
+
+  public static procedure TraceText(text: String);
+  begin
+    System.Console.WriteLine(text);
+  end;
+
+  public static method Main;
+  begin
+    Program.TraceText('SECTION static-state');
+    Program.Total := Program.Add(Program.DefaultSeed, TopBonus);
+    Program.AutoTotal := Program.Total;
+    Program.HiddenTotal := Program.AutoTotal;
+    Program.SecretRead := Program.HiddenTotal + 1;
+    Program.Trace('CHECKPOINT static-state=', Program.Total);
+
+    Program.TraceText('SECTION literals-casts-and-collections');
+    var result := Program.Total;
+    var text := 'abcd';
+    var first := text[0];
+    var textSize := text.Length;
+    var maybeProgram: Program := nil;
+    var noProgram := maybeProgram = nil;
+    var sameText := text = 'abcd';
+    var differentText := text <> 'abce';
+    var maybeText: String := nil;
+    var noText := maybeText = nil;
+    var hasMissingText := not noText;
+    var invertedZero := not 0;
+    var coalescedText := maybeText ?? 'xy';
+    var preservedText := coalescedText ?? 'zz';
+    var hasTextType := text is String;
+    var castText := text as String;
+    var castTextOk := castText <> nil;
+    var fixedValues: array[10] of Integer;
+    var matrix := new Integer[2, 2];
+    var numbers: array of Integer := new Integer[4];
+    numbers[0] := result;
+    numbers[1] := numbers[0] + 2;
+    matrix[0, 1] := numbers[1];
+    var matrixCell := matrix[0, 1];
+    var size := numbers.Length;
+
+    Program.TraceText('SECTION object-model-properties-indexers');
+    var p := new Program(5);
+    p.Increment();
+    p.Value := p.Value + 3;
+    p[0] := p.Value;
+    p.Matrix := new Integer[3, 3];
+    p.Matrix[1, 2] := matrixCell;
+    var fieldCell := p.Matrix[1, 2];
+    p.Grid := new Integer[3, 3];
+    p.Grid[1, 2] := fieldCell;
+    var propertyCell := p.Grid[1, 2];
+    var programs: array of Program := new Program[2];
+    programs[0] := p;
+    programs[1] := new Program(7);
+    var hasProgramType := programs[1] is Program;
+    var castProgram := programs[1] as Program;
+    var castProgramOk := castProgram <> nil;
+    var castMismatch := text as Program;
+    var castMismatchNil := castMismatch = nil;
+    programs[0].Value := programs[0].Value + 1;
+    programs[0].Items[0] := programs[1].Current();
+    var chainedItem := programs[0].Items[0];
+    var chainedCurrent := programs[1].Current();
+    p.Child[0] := programs[1];
+    var nestedCurrent := p.Child[0].Current();
+    Program.Trace('CHECKPOINT object-relations=', chainedCurrent + chainedItem + nestedCurrent);
+    p.AutoValue := p.Value + 2;
+    p.Adjusted := p.AutoValue + 1;
+    var indexed := p[0];
+    var current := p.Adjusted + p.Created + numbers[1] + matrixCell + fieldCell + propertyCell + chainedCurrent + chainedItem + nestedCurrent + size + textSize + indexed;
+    Program.Trace('CHECKPOINT object-model=', current);
+
+    Program.TraceText('SECTION comparisons-and-type-tests');
+    if sameText then
+    begin
+      current := current + 1;
+    end;
+
+    if differentText then
+    begin
+      current := current + 1;
+    end;
+
+    if noProgram then
+    begin
+      current := current + 1;
+    end;
+
+    if hasProgramType then
+    begin
+      current := current + 1;
+    end;
+
+    if noText then
+    begin
+      current := current + 1;
+    end;
+
+    if hasTextType then
+    begin
+      current := current + 1;
+    end;
+
+    if castTextOk then
+    begin
+      current := current + 1;
+    end;
+
+    if castProgramOk then
+    begin
+      current := current + 1;
+    end;
+
+    if castMismatchNil then
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT type-tests=', current);
+
+    Program.TraceText('SECTION exceptions');
+    try
+      raise 7;
+    except
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT exceptions-basic=', current);
+
+    try
+      raise new Program(6);
+    except
+      on ex: Program do
+        current := current + ex.Current();
+      current := current + 2;
+    end;
+    Program.Trace('CHECKPOINT exceptions-typed=', current);
+
+    try
+      current := current + 1;
+    finally
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT exceptions-finally=', current);
+
+    try
+      raise new Program(3);
+    except
+      on ex: Program do
+        current := current + ex.Current();
+    finally
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT exceptions=', current);
+
+    Program.TraceText('SECTION loops-and-slices');
+    var index := 0;
+    for var ascending := 0 to 2 do
+    begin
+      current := current + ascending;
+    end;
+
+    for var descending := 2 downto 0 do
+    begin
+      current := current + descending;
+    end;
+
+    for var steppedUp := 0 to 4 step 2 do
+    begin
+      current := current + steppedUp;
+    end;
+
+    for var steppedDown := 4 downto 0 step 2 do
+    begin
+      current := current + steppedDown;
+    end;
+
+    for each var item in numbers do
+    begin
+      current := current + item;
+    end;
+
+    var numberSlice := numbers[0..1];
+    current := current + numberSlice.Length + numberSlice[0];
+    Program.Trace('CHECKPOINT numeric-slice=', current);
+
+    var textSlice := text[1..2];
+    current := current + textSlice.Length;
+    if textSlice = 'bc' then
+    begin
+      current := current + 1;
+    end;
+
+    var joinedText := textSlice + 'd';
+    current := current + joinedText.Length;
+    if joinedText = 'bcd' then
+    begin
+      current := current + 1;
+    end;
+
+    if joinedText.StartsWith('bc') then
+    begin
+      current := current + 1;
+    end;
+
+    if joinedText.EndsWith('cd') then
+    begin
+      current := current + 1;
+    end;
+
+    if joinedText.Contains('c') then
+    begin
+      current := current + 1;
+    end;
+
+    current := current + joinedText.IndexOf('c');
+    current := current + joinedText.LastIndexOf('d');
+    var middleText := joinedText.Substring(1, 2);
+    current := current + middleText.Length;
+    if middleText = 'cd' then
+    begin
+      current := current + 1;
+    end;
+    var replacedText := joinedText.Replace('z', 'x');
+    current := current + replacedText.Length;
+    if replacedText.EndsWith('x') then
+    begin
+      current := current + 1;
+    end;
+    var insertedText := joinedText.Insert(1, 'x');
+    current := current + insertedText.Length;
+    if insertedText = 'bxcd' then
+    begin
+      current := current + 1;
+    end;
+    var removedText := insertedText.Remove(1, 1);
+    current := current + removedText.Length;
+    if removedText = 'bcd' then
+    begin
+      current := current + 1;
+    end;
+    var upperText := removedText.ToUpper();
+    current := current + upperText.Length;
+    if upperText = 'BCD' then
+    begin
+      current := current + 1;
+    end;
+    var lowerText := upperText.ToLower();
+    current := current + lowerText.Length;
+    if lowerText = 'bcd' then
+    begin
+      current := current + 1;
+    end;
+    var paddedText := '  bcd  ';
+    var trimmedText := paddedText.Trim();
+    current := current + trimmedText.Length;
+    if trimmedText = 'bcd' then
+    begin
+      current := current + 1;
+    end;
+    var trimStartText := paddedText.TrimStart();
+    current := current + trimStartText.Length;
+    if trimStartText = 'bcd  ' then
+    begin
+      current := current + 1;
+    end;
+    var trimEndText := paddedText.TrimEnd();
+    current := current + trimEndText.Length;
+    if trimEndText = '  bcd' then
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT strings-text-ops=', current);
+
+    var parsedTextValue := Integer.Parse('15');
+    current := current + parsedTextValue;
+    var tryParsedValue: Integer := 99;
+    if Integer.TryParse('18', tryParsedValue) then
+    begin
+      current := current + tryParsedValue;
+    end;
+    if Integer.TryParse('oops', tryParsedValue) then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    if tryParsedValue = 0 then
+    begin
+      current := current + 1;
+    end;
+    Program.Collect(1, 2, 3);
+    var formattedValue := parsedTextValue.ToString();
+    current := current + formattedValue.Length;
+    if formattedValue = '15' then
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT strings-parse-format=', current);
+
+    if hasMissingText then
+    begin
+      current += 100;
+    end
+    else
+    begin
+      current += 1;
+    end;
+    if invertedZero <> 0 then
+    begin
+      current += 1;
+    end;
+    var shiftedLeft := 3 shl 2;
+    var shiftedRight := 16 shr 2;
+    current += shiftedLeft;
+    current += shiftedRight;
+    current shl= 1;
+    current shr= 1;
+    var moduloValue := 17 mod 5;
+    current += moduloValue;
+    current mod= 7;
+    var quotientValue := 17 div 5;
+    current += quotientValue;
+    var quotientAccumulator := 20;
+    quotientAccumulator div= 3;
+    current += quotientAccumulator;
+    Program.Trace('CHECKPOINT arithmetic-bitwise=', current);
+
+    current += coalescedText.Length;
+    if coalescedText = 'xy' then
+    begin
+      current += 1;
+    end;
+    current += preservedText.Length;
+    if preservedText = 'xy' then
+    begin
+      current += 1;
+    end;
+    current += 1;
+    current *= 2;
+    current -= 3;
+    current /= 3;
+    textSlice += 'd';
+    current += textSlice.Length;
+    maybeText ??= 'xy';
+    current += maybeText.Length;
+    if maybeText = 'xy' then
+    begin
+      current += 1;
+    end;
+    maybeText ??= 'zz';
+    if maybeText = 'xy' then
+    begin
+      current += 1;
+    end;
+    Program.Trace('CHECKPOINT coalescing=', current);
+    Program.Trace('CHECKPOINT strings=', current);
+
+    foreach var ch in text do
+    begin
+      current := current + 1;
+    end;
+
+    for index := 0 to 4 do
+    begin
+      if index = 3 then
+      begin
+        break;
+      end;
+
+      current := current + index;
+    end;
+
+    for index := 0 to 3 do
+    begin
+      if index = 1 then
+      begin
+        continue;
+      end;
+
+      current := current + 1;
+    end;
+
+    repeat
+      result := result + 1;
+      if result = 2 then
+      begin
+        continue;
+      end;
+
+      if result = 4 then
+      begin
+        break;
+      end;
+
+      current := current + 1;
+    until result > 10;
+    Program.Trace('CHECKPOINT control-flow=', current);
+
+    Program.TraceText('SECTION case-match-and-sets');
+    case current of
+      88:
+        current := current + 2;
+      89, Program.CaseHit:
+        current := current + 3;
+    else
+      current := current + 9;
+    end;
+
+    case 2 of
+      1..3:
+        current := current + 1;
+    end;
+
+    case text of
+      'abcd':
+        current := current + 1;
+    else
+      current := current + 7;
+    end;
+    Program.Trace('CHECKPOINT case-basic=', current);
+
+    var mode: Mode := Mode.Busy;
+    var activeModes: set of Mode := [Mode.Busy, Mode.Done];
+    var extraModes: set of Mode := [Mode.Idle..Mode.Busy, Mode.Done];
+    var combinedModes := activeModes + extraModes;
+    var commonModes := combinedModes * [Mode.Done];
+    var reducedModes := combinedModes - [Mode.Busy];
+    case mode of
+      Mode.Idle:
+        current := current + 1000;
+      Mode.Busy:
+        current := current + 3;
+      Mode.Done:
+        current := current + 1000;
+    end;
+
+    case mode of
+      Mode.Busy when Mode.Done in activeModes:
+        current := current + 2;
+    else
+      current := current + 1000;
+    end;
+
+    match mode with
+      Mode.Idle => current := current + 1000;
+      Mode.Busy or Mode.Done => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var modeText := match mode with
+      Mode.Busy => 'busy'
+      Mode.Done => 'done'
+      _ => 'idle'
+    end;
+    current := current + modeText.Length;
+    Program.Trace('CHECKPOINT match-enum=', current);
+
+    match castText with
+      String s when s.Length = 4 => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var matchedText := match castText with
+      String s when s.Length = 4 => s
+      _ => 'bad'
+    end;
+    current := current + matchedText.Length;
+
+    var objectText := match castText with
+      Object any => 'obj'
+      _ => 'bad'
+    end;
+    current := current + objectText.Length;
+
+    match 5 with
+      < 0 => current := current + 1000;
+      >= 5 => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var sizedText := match 5 with
+      >= 5 => 'high'
+      _ => 'low'
+    end;
+    current := current + sizedText.Length;
+
+    match 7 with
+      >= 5 and <= 10 => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var boundedText := match 7 with
+      >= 5 and < 10 => 'mid'
+      _ => 'low'
+    end;
+    current := current + boundedText.Length;
+
+    match 12 with
+      < 0 or >= 10 => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var edgeText := match 12 with
+      < 0 or >= 10 => 'edge'
+      _ => 'inner'
+    end;
+    current := current + edgeText.Length;
+    var negativeSeed := -1;
+    current := current + (negativeSeed + 2);
+    inc(current);
+    dec(current);
+    inc(p.Value);
+    dec(Program.Total);
+
+    match 12 with
+      not < 0 or 7 => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var mixedText := match 12 with
+      not < 0 or 7 => 'mix'
+      _ => 'bad'
+    end;
+    current := current + mixedText.Length;
+
+    match 5 with
+      not < 0 => current := current + 2;
+    else
+      current := current + 1000;
+    end match;
+
+    var notText := match 1 with
+      not < 0 => 'x'
+      _ => 'ok'
+    end;
+    current := current + notText.Length;
+    Program.Trace('CHECKPOINT match-patterns=', current);
+
+    if Mode.Busy in activeModes then
+    begin
+      current := current + 3;
+    end;
+
+    if Mode.Busy in combinedModes then
+    begin
+      current := current + 1;
+    end;
+
+    if Mode.Done in commonModes then
+    begin
+      current := current + 1;
+    end;
+
+    if Mode.Idle in reducedModes then
+    begin
+      current := current + 1;
+    end;
+    activeModes or= [Mode.Idle];
+    if Mode.Idle in activeModes then
+    begin
+      current := current + 1;
+    end;
+    activeModes and= [Mode.Done];
+    if Mode.Done in activeModes then
+    begin
+      current := current + 1;
+    end;
+    if mode in activeModes then
+    begin
+      current := current + 2;
+    end;
+    if mode not in activeModes then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    activeModes xor= [Mode.Done];
+    if Mode.Done in activeModes then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    include(activeModes, Mode.Busy);
+    if Mode.Busy in activeModes then
+    begin
+      current := current + 1;
+    end;
+    exclude(activeModes, Mode.Busy);
+    if Mode.Busy in activeModes then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    for each var listedMode in extraModes do
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT match-sets=', current);
+
+    Program.TraceText('SECTION records-with-and-compound-assignment');
+    var point := new Point();
+    point.X := 1;
+    point.Y := 2;
+    var point2 := new Point();
+    current := current + point.X + point.Y;
+    with point2 do
+    begin
+      X := 1;
+      Y := 2;
+      current := current + X + Y;
+    end;
+    if point = point2 then
+    begin
+      current := current + 1;
+    end;
+
+    var compoundProgram := new Program(5);
+    compoundProgram.Value += 2;
+    compoundProgram.Counter += 3;
+    Program.Total += 4;
+    current := current + compoundProgram.Value + compoundProgram.Counter;
+    Program.Trace('CHECKPOINT records-and-compound=', current);
+
+    while result > 0 do
+    begin
+      result := result - 1;
+    end;
+
+    Program.TraceText('SECTION final-state');
+    Program.Trace('CHECKPOINT final-before-store=', current);
+    Program.Total := result + current + Program.AutoTotal + Program.SecretRead;
+    Program.Trace('SMOKE_RESULT=', Program.Total);
+    return;
+  end;
+
+  public method Increment;
+  begin
+    Counter := Counter + 1;
+    self.Counter := Counter + 1;
+    return;
+  end;
+
+  public function Current: Integer;
+  begin
+    return self.Value;
+  end;
+end;

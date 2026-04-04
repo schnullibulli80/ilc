@@ -1,0 +1,305 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ILC",
+  "scopeName": "source.ilc",
+  "fileTypes": [
+    "ilc"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    },
+    {
+      "include": "#attributes"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.ilc",
+          "begin": "//",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.ilc",
+          "begin": "\\(\\*",
+          "end": "\\*\\)"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.ilc",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.ilc",
+              "match": "\\\\(\\\\|[ntrfvab'\"0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.ilc",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.ilc",
+              "match": "\\\\(\\\\|[ntrfvab'\"0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.raw.ilc",
+          "begin": "'''",
+          "end": "'''"
+        },
+        {
+          "name": "string.interpolated.ilc",
+          "begin": "\\$['\"]",
+          "end": "['\"]",
+          "patterns": [
+            {
+              "name": "constant.character.escape.ilc",
+              "match": "\\\\(\\\\|[ntrfvab'\"0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.ilc",
+          "match": "\\$[0-9a-fA-F]+(_[0-9a-fA-F]+)*"
+        },
+        {
+          "name": "constant.numeric.binary.ilc",
+          "match": "%[01]+(_[01]+)*"
+        },
+        {
+          "name": "constant.numeric.octal.ilc",
+          "match": "&[0-7]+(_[0-7]+)*"
+        },
+        {
+          "name": "constant.numeric.float.ilc",
+          "match": "\\b[0-9]+(_[0-9]+)*\\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?"
+        },
+        {
+          "name": "constant.numeric.integer.ilc",
+          "match": "\\b[0-9]+(_[0-9]+)*"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.namespace.ilc",
+          "match": "\\b(namespace|uses)\\b"
+        },
+        {
+          "name": "keyword.visibility.ilc",
+          "match": "\\b(public|private|protected|internal)\\b"
+        },
+        {
+          "name": "keyword.modifier.ilc",
+          "match": "\\b(static|abstract|virtual|override|sealed|partial|extern|unsafe|async|readonly|const|volatile|extension|iterator)\\b"
+        },
+        {
+          "name": "keyword.type.ilc",
+          "match": "\\b(type|class|struct|record|interface|enum|delegate)\\b"
+        },
+        {
+          "name": "keyword.member.ilc",
+          "match": "\\b(method|function|procedure|constructor|destructor|property|default|event|operator|implicit|explicit)\\b"
+        },
+        {
+          "name": "keyword.declaration.ilc",
+          "match": "\\b(var|begin|end)\\b"
+        },
+        {
+          "name": "keyword.control.ilc",
+          "match": "\\b(if|then|else|case|of|match|with|when|while|do|repeat|until|for|foreach|each|to|downto|in)\\b"
+        },
+        {
+          "name": "keyword.exception.ilc",
+          "match": "\\b(try|except|on|finally|using|lock|checked|unchecked|raise|throw)\\b"
+        },
+        {
+          "name": "keyword.jump.ilc",
+          "match": "\\b(return|break|continue)\\b"
+        },
+        {
+          "name": "keyword.property.ilc",
+          "match": "\\b(get|set|init|add|remove|read|write)\\b"
+        },
+        {
+          "name": "keyword.parameter.ilc",
+          "match": "\\b(ref|out|params)\\b"
+        },
+        {
+          "name": "keyword.type-check.ilc",
+          "match": "\\b(is|where|notnull|unmanaged|new|typeof|nameof)\\b"
+        },
+        {
+          "name": "keyword.operator.ilc",
+          "match": "\\b(and|or|xor|not|div|mod|shl|shr|array|yield|await)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.ilc",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.ilc",
+          "match": "\\b(nil)\\b"
+        },
+        {
+          "name": "constant.language.this.ilc",
+          "match": "\\b(self|this|base|inherited)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.ilc",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?=\\s*[({\\[]|\\s+[a-z_])"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.ilc",
+          "match": "((:=)|(:=)|(\\??=)|([+\\-*/<>]+=)|((?:and|or|xor|shl|shr)=))"
+        },
+        {
+          "name": "keyword.operator.arrow.ilc",
+          "match": "(=>)"
+        },
+        {
+          "name": "keyword.operator.range.ilc",
+          "match": "(\\.\\.)"
+        },
+        {
+          "name": "keyword.operator.comparison.ilc",
+          "match": "(==|(<>)|(<)|(>)|(<=)|(>=))"
+        },
+        {
+          "name": "keyword.operator.arithmetic.ilc",
+          "match": "([+\\-*/%])"
+        },
+        {
+          "name": "keyword.operator.coalesce.ilc",
+          "match": "(\\?\\?=|\\?\\?)"
+        },
+        {
+          "name": "keyword.operator.nullforgiving.ilc",
+          "match": "(!)"
+        },
+        {
+          "name": "keyword.operator.member-access.ilc",
+          "match": "(\\?\\.)|(\\?\\[)"
+        },
+        {
+          "name": "keyword.operator.increment-decrement.ilc",
+          "match": "(\\+\\+)|(--)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.parenthesis.open.ilc",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.parenthesis.close.ilc",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.bracket.square.open.ilc",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.bracket.square.close.ilc",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.bracket.curly.open.ilc",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.bracket.curly.close.ilc",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.separator.comma.ilc",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.semicolon.ilc",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.separator.colon.ilc",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.accessor.dot.ilc",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.operator.question.ilc",
+          "match": "\\?"
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "name": "meta.attribute.ilc",
+          "begin": "\\[",
+          "end": "\\]",
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "name": "storage.modifier.ilc",
+              "match": "[A-Za-z_][A-Za-z0-9_]*"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

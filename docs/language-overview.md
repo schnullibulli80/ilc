@@ -242,8 +242,8 @@ All of these are reachable via normal `uses` imports and normal ILC syntax.
 Keep these in mind when evaluating language scope:
 
 - No generic declarations are currently accepted by the parser.
-- No inheritance/implements clauses are currently part of declarations.
-- No interface member system is implemented.
+- Interface declarations and class interface lists are available, but interface
+  dispatch is not yet described as a separate runtime feature.
 - `and`/`or` are not full logical infix operators yet; only their compound
   assignment forms are part of assignment lowering.
 - The full operator/feature catalog in the product vision is broader than the

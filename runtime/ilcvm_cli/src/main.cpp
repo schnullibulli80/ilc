@@ -16,16 +16,10 @@ int main(int argc, char** argv)
 
         if (argc > 1)
         {
-            const auto module = ilcvm::load_module_from_ilb_file(argv[1]);
-            std::cout << "loaded ilb module: functions=" << module.functions.size()
-                      << " types=" << module.types.size()
-                      << " fields=" << module.fields.size()
-                      << " sections=" << module.sections.size()
-                      << " entry=" << module.entry_function_id << '\n';
-
             bool run = false;
             bool trace = false;
             bool performance = false;
+            bool debug = false;
             std::vector<std::string> program_arguments;
             for (int index = 2; index < argc; ++index)
             {
@@ -35,6 +29,12 @@ int main(int argc, char** argv)
                     if (argument == "--run")
                     {
                         run = true;
+                        continue;
+                    }
+
+                    if (argument == "--debug")
+                    {
+                        debug = true;
                         continue;
                     }
 
@@ -64,6 +64,16 @@ int main(int argc, char** argv)
                 }
 
                 throw std::runtime_error("unknown ilcvm runtime option");
+            }
+
+            const auto module = ilcvm::load_module_from_ilb_file(argv[1]);
+            if (debug)
+            {
+                std::cout << "loaded ilb module: functions=" << module.functions.size()
+                          << " types=" << module.types.size()
+                          << " fields=" << module.fields.size()
+                          << " sections=" << module.sections.size()
+                          << " entry=" << module.entry_function_id << '\n';
             }
 
             if (run)

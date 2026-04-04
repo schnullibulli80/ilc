@@ -1,0 +1,54 @@
+{
+  "name": "ilc",
+  "displayName": "ILC",
+  "description": "Full language support for ILC (Integrated Language Compiler) including syntax highlighting, IntelliSense, debugging, and more",
+  "version": "0.1.0",
+  "publisher": "schnullibulli80",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/schnullibulli80/ilc"
+  },
+  "engines": {
+    "vscode": "^1.63.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ilc",
+        "aliases": [
+          "ILC",
+          "ilc"
+        ],
+        "extensions": [
+          ".ilc"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ilc",
+        "scopeName": "source.ilc",
+        "path": "./syntaxes/ilc.tmLanguage.json"
+      }
+    ]
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:ilc"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.63.0",
+    "@types/node": "^16.0.0",
+    "typescript": "^4.4.0"
+  }
+}

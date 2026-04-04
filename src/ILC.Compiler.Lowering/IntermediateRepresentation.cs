@@ -1450,226 +1450,41 @@ public sealed class Lowerer
             case NameExpressionSyntax name when ResolveConstant(name, registerByName, currentMethod) is { } constant:
                 instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, constant.Value ?? 0));
                 return;
-            case ArrayLengthExpressionSyntax lengthExpression:
-                var arrayRegisterForLength = AllocateTemp(
-                    SemanticFacts.InferExpressionType(
-                        new NameExpressionSyntax(lengthExpression.Target),
-                        registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                        _knownMethods,
-                        _knownFields,
-                        _knownConstants,
-                        _knownProperties,
-                        currentMethod),
-                    registers);
-                LowerNameReferenceInto(lengthExpression.Target, arrayRegisterForLength, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                instructions.Add(new IrInstruction(IrOpCode.LoadLength, destination, new IrArrayTarget(arrayRegisterForLength)));
+            case ArrayLengthExpressionSyntax lengthExpression when ResolveBoundLengthRead(lengthExpression, registerByName, currentMethod) is { } boundLengthRead:
+                LowerBoundLengthReadInto(boundLengthRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
             case ElementAccessExpressionSyntax elementAccess:
-                if (ResolveIndexerProperty(new NameExpressionSyntax(elementAccess.Target), registerByName, currentMethod) is { GetterMethod: not null } methodIndexer)
+                if (ResolveBoundSliceRead(new NameExpressionSyntax(elementAccess.Target), elementAccess.IndexExpressions, registerByName, currentMethod) is { } boundSliceRead)
                 {
-                    var indexArgumentRegister = AllocateTemp(methodIndexer.IndexParameter?.Type ?? TypeSymbol.Integer, registers);
-                    LowerExpressionInto(elementAccess.IndexExpressions[0], indexArgumentRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    instructions.Add(new IrInstruction(
-                        methodIndexer.GetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                        destination,
-                        new IrCallTarget(
-                            methodIndexer.GetterMethod,
-                            $"{elementAccess.Target.ToDisplayString()}[{methodIndexer.IndexParameter?.Name ?? "index"}]",
-                            [indexArgumentRegister],
-                            ResolvePropertyReceiver(new NameExpressionSyntax(elementAccess.Target), registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                            !methodIndexer.GetterMethod.IsStatic)));
+                    LowerBoundSliceReadInto(boundSliceRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                     return;
                 }
-
-                var arrayType = SemanticFacts.InferExpressionType(
-                    new NameExpressionSyntax(elementAccess.Target),
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod);
-                if (SemanticFacts.IsSliceAccess(elementAccess.IndexExpressions))
+                if (ResolveBoundElementRead(new NameExpressionSyntax(elementAccess.Target), elementAccess.IndexExpressions, registerByName, currentMethod) is { } boundElementRead)
                 {
-                    LowerArraySliceInto(
-                        destination,
-                        elementAccess.Target,
-                        elementAccess.IndexExpressions[0],
-                        arrayType,
-                        registerByName,
-                        arrayShapesByName,
-                        registers,
-                        instructions,
-                        currentMethod);
+                    LowerBoundElementReadInto(boundElementRead, elementAccess.IndexExpressions, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                     return;
                 }
-
-                var indexRegister = LowerFlattenedElementIndex(elementAccess.Target, elementAccess.IndexExpressions, arrayType, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                if (ResolveIndexerProperty(new NameExpressionSyntax(elementAccess.Target), registerByName, currentMethod) is { } indexer && indexer.ReadField is not null)
-                {
-                    var backingArrayRegister = AllocateTemp(indexer.ReadField.Type, registers);
-                    instructions.Add(new IrInstruction(
-                        indexer.ReadField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
-                        backingArrayRegister,
-                        new IrFieldTarget(
-                            indexer.ReadField,
-                            $"{elementAccess.Target.ToDisplayString()}[{indexer.IndexParameter?.Name ?? "index"}]",
-                            ResolveIndexedReceiver(elementAccess.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
-                    instructions.Add(new IrInstruction(
-                        IrOpCode.LoadElement,
-                        destination,
-                        new IrArrayTarget(backingArrayRegister, indexRegister, TryGetTargetShape(elementAccess.Target, arrayShapesByName))));
-                    return;
-                }
-
-                var arrayRegister = AllocateTemp(
-                    SemanticFacts.InferExpressionType(
-                        new NameExpressionSyntax(elementAccess.Target),
-                        registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                        _knownMethods,
-                        _knownFields,
-                        _knownConstants,
-                        _knownProperties,
-                        currentMethod),
-                    registers);
-                LowerNameReferenceInto(elementAccess.Target, arrayRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                instructions.Add(new IrInstruction(
-                    IrOpCode.LoadElement,
-                    destination,
-                    new IrArrayTarget(arrayRegister, indexRegister, TryGetTargetShape(elementAccess.Target, arrayShapesByName))));
                 return;
             case PostfixElementAccessExpressionSyntax elementAccess:
-                if (ResolveIndexerProperty(elementAccess.Target, registerByName, currentMethod) is { GetterMethod: not null } postfixMethodIndexer)
+                if (ResolveBoundSliceRead(elementAccess.Target, elementAccess.IndexExpressions, registerByName, currentMethod) is { } boundPostfixSliceRead)
                 {
-                    var postfixIndexArgumentRegister = AllocateTemp(postfixMethodIndexer.IndexParameter?.Type ?? TypeSymbol.Integer, registers);
-                    LowerExpressionInto(elementAccess.IndexExpressions[0], postfixIndexArgumentRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    instructions.Add(new IrInstruction(
-                        postfixMethodIndexer.GetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                        destination,
-                        new IrCallTarget(
-                            postfixMethodIndexer.GetterMethod,
-                            $"{GetExpressionDisplayName(elementAccess.Target)}[{postfixMethodIndexer.IndexParameter?.Name ?? "index"}]",
-                            [postfixIndexArgumentRegister],
-                            ResolvePropertyReceiver(elementAccess.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                            !postfixMethodIndexer.GetterMethod.IsStatic)));
+                    LowerBoundSliceReadInto(boundPostfixSliceRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                     return;
                 }
-
-                var postfixArrayType = SemanticFacts.InferExpressionType(
-                    elementAccess.Target,
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod);
-                if (SemanticFacts.IsSliceAccess(elementAccess.IndexExpressions))
+                if (ResolveBoundElementRead(elementAccess.Target, elementAccess.IndexExpressions, registerByName, currentMethod) is { } boundPostfixElementRead)
                 {
-                    LowerArraySliceInto(
-                        destination,
-                        elementAccess.Target,
-                        elementAccess.IndexExpressions[0],
-                        postfixArrayType,
-                        registerByName,
-                        arrayShapesByName,
-                        registers,
-                        instructions,
-                        currentMethod);
+                    LowerBoundElementReadInto(boundPostfixElementRead, elementAccess.IndexExpressions, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                     return;
                 }
-
-                var postfixIndexRegister = LowerFlattenedElementIndex(
-                    elementAccess.Target,
-                    elementAccess.IndexExpressions,
-                    postfixArrayType,
-                    registerByName,
-                    arrayShapesByName,
-                    registers,
-                    instructions,
-                    currentMethod);
-                if (ResolveIndexerProperty(elementAccess.Target, registerByName, currentMethod) is { } postfixIndexer && postfixIndexer.ReadField is not null)
-                {
-                    var postfixBackingArrayRegister = AllocateTemp(postfixIndexer.ReadField.Type, registers);
-                    instructions.Add(new IrInstruction(
-                        postfixIndexer.ReadField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
-                        postfixBackingArrayRegister,
-                        new IrFieldTarget(
-                            postfixIndexer.ReadField,
-                            $"{GetExpressionDisplayName(elementAccess.Target)}[{postfixIndexer.IndexParameter?.Name ?? "index"}]",
-                            ResolvePropertyReceiver(elementAccess.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
-                    instructions.Add(new IrInstruction(
-                        IrOpCode.LoadElement,
-                        destination,
-                        new IrArrayTarget(postfixBackingArrayRegister, postfixIndexRegister)));
-                    return;
-                }
-
-                var postfixArrayRegister = ResolveReceiverExpression(elementAccess.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                instructions.Add(new IrInstruction(
-                    IrOpCode.LoadElement,
-                    destination,
-                    new IrArrayTarget(postfixArrayRegister!, postfixIndexRegister)));
                 return;
-            case MemberAccessExpressionSyntax memberAccess when memberAccess.MemberName.Text == "Length":
-                var receiverRegisterForLength = ResolveReceiverExpression(memberAccess.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                instructions.Add(new IrInstruction(IrOpCode.LoadLength, destination, new IrArrayTarget(receiverRegisterForLength!)));
+            case MemberAccessExpressionSyntax memberAccess when ResolveBoundLengthRead(memberAccess, registerByName, currentMethod) is { } boundLengthRead:
+                LowerBoundLengthReadInto(boundLengthRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
-            case MemberAccessExpressionSyntax memberAccess when ResolveProperty(memberAccess, registerByName, currentMethod) is { GetterMethod: not null } memberProperty:
-                instructions.Add(new IrInstruction(
-                    memberProperty.GetterMethod!.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                    destination,
-                    new IrCallTarget(
-                        memberProperty.GetterMethod,
-                        GetExpressionDisplayName(memberAccess),
-                        [],
-                        ResolvePropertyReceiver(memberAccess, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        !memberProperty.GetterMethod.IsStatic)));
+            case MemberAccessExpressionSyntax memberAccess when ResolveBoundRead(memberAccess, registerByName, currentMethod) is { } boundRead:
+                LowerBoundReadInto(boundRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
-            case MemberAccessExpressionSyntax memberAccess when SemanticFacts.ResolveMemberAccess(
-                    memberAccess,
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod) is { Field: not null } memberField:
-                instructions.Add(new IrInstruction(
-                    memberField.Field!.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
-                    destination,
-                    new IrFieldTarget(
-                        memberField.Field,
-                        memberField.DisplayName,
-                        ResolveReceiverExpression(memberAccess.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
-                return;
-            case MemberAccessExpressionSyntax memberAccess when SemanticFacts.ResolveMemberAccess(
-                    memberAccess,
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod) is { Constant: not null } memberConstant:
-                instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, memberConstant.Constant!.Value ?? 0));
-                return;
-            case NameExpressionSyntax name when ResolveProperty(name, registerByName, currentMethod) is { } property && property.GetterMethod is not null:
-                instructions.Add(new IrInstruction(
-                    property.GetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                    destination,
-                    new IrCallTarget(
-                        property.GetterMethod,
-                        name.Name.ToDisplayString(),
-                        [],
-                        ResolvePropertyReceiver(name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        !property.GetterMethod.IsStatic)));
-                return;
-            case NameExpressionSyntax name when ResolveStorageField(name, registerByName, currentMethod, false) is { } field:
-                instructions.Add(new IrInstruction(
-                    field.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
-                    destination,
-                    new IrFieldTarget(
-                        field,
-                        name.Name.ToDisplayString(),
-                        ResolveFieldReceiver(name.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+            case NameExpressionSyntax name when ResolveBoundRead(name, registerByName, currentMethod) is { Kind: not BoundMemberReadKind.Local } boundRead:
+                LowerBoundReadInto(boundRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
             case NameExpressionSyntax name:
                 throw new InvalidOperationException($"Cannot lower unknown name '{name.Name.ToDisplayString()}'.");
@@ -1689,205 +1504,42 @@ public sealed class Lowerer
                 }
                 return;
             case AssignmentExpressionSyntax assignment when assignment.Target is ElementAccessExpressionSyntax elementAssignment:
-                var elementValueRegister = AllocateTemp(destination.Type, registers);
-                if (ResolveIndexerProperty(new NameExpressionSyntax(elementAssignment.Target), registerByName, currentMethod) is { SetterMethod: not null } methodWritableIndexer)
-                {
-                    var methodIndexRegister = AllocateTemp(methodWritableIndexer.IndexParameter?.Type ?? TypeSymbol.Integer, registers);
-                    LowerExpressionInto(elementAssignment.IndexExpressions[0], methodIndexRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    LowerExpressionInto(assignment.Expression, elementValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    instructions.Add(new IrInstruction(
-                        methodWritableIndexer.SetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                        destination,
-                        new IrCallTarget(
-                            methodWritableIndexer.SetterMethod,
-                            $"{elementAssignment.Target.ToDisplayString()}[{methodWritableIndexer.IndexParameter?.Name ?? "index"}]",
-                            [methodIndexRegister, elementValueRegister],
-                            ResolvePropertyReceiver(new NameExpressionSyntax(elementAssignment.Target), registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                            !methodWritableIndexer.SetterMethod.IsStatic)));
-                    if (destination.Index != elementValueRegister.Index)
-                    {
-                        instructions.Add(new IrInstruction(IrOpCode.Copy, destination, elementValueRegister));
-                    }
-
-                    return;
-                }
-
-                var targetArrayType = SemanticFacts.InferExpressionType(
-                    new NameExpressionSyntax(elementAssignment.Target),
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod);
-                var targetIndexRegister = LowerFlattenedElementIndex(elementAssignment.Target, elementAssignment.IndexExpressions, targetArrayType, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                var boundElementWrite = ResolveBoundElementWrite(new NameExpressionSyntax(elementAssignment.Target), elementAssignment.IndexExpressions, registerByName, currentMethod)
+                    ?? throw new InvalidOperationException($"Cannot lower assignment target '{elementAssignment.Target.ToDisplayString()}[...]'.");
+                var elementValueRegister = AllocateTemp(boundElementWrite.ElementType, registers);
                 LowerExpressionInto(assignment.Expression, elementValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                if (ResolveIndexerProperty(new NameExpressionSyntax(elementAssignment.Target), registerByName, currentMethod) is { } writableIndexer && writableIndexer.WriteField is not null)
-                {
-                    var backingArrayRegister = AllocateTemp(writableIndexer.WriteField.Type, registers);
-                    instructions.Add(new IrInstruction(
-                        writableIndexer.WriteField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
-                        backingArrayRegister,
-                        new IrFieldTarget(
-                            writableIndexer.WriteField,
-                            $"{elementAssignment.Target.ToDisplayString()}[{writableIndexer.IndexParameter?.Name ?? "index"}]",
-                            ResolveIndexedReceiver(elementAssignment.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
-                    instructions.Add(new IrInstruction(
-                        IrOpCode.StoreElement,
-                        elementValueRegister,
-                        new IrArrayTarget(backingArrayRegister, targetIndexRegister, TryGetTargetShape(elementAssignment.Target, arrayShapesByName))));
-                }
-                else
-                {
-                    var targetArrayRegister = AllocateTemp(
-                        SemanticFacts.InferExpressionType(
-                            new NameExpressionSyntax(elementAssignment.Target),
-                            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                            _knownMethods,
-                            _knownFields,
-                            _knownConstants,
-                            _knownProperties,
-                            currentMethod),
-                        registers);
-                    LowerNameReferenceInto(elementAssignment.Target, targetArrayRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    instructions.Add(new IrInstruction(
-                        IrOpCode.StoreElement,
-                        elementValueRegister,
-                        new IrArrayTarget(targetArrayRegister, targetIndexRegister, TryGetTargetShape(elementAssignment.Target, arrayShapesByName))));
-                }
-
+                LowerBoundElementWriteInto(boundElementWrite, elementAssignment.IndexExpressions, elementValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 if (destination.Index != elementValueRegister.Index)
                 {
                     instructions.Add(new IrInstruction(IrOpCode.Copy, destination, elementValueRegister));
                 }
                 return;
             case AssignmentExpressionSyntax assignment when assignment.Target is PostfixElementAccessExpressionSyntax elementAssignment:
-                var postfixElementValueRegister = AllocateTemp(destination.Type, registers);
-                if (ResolveIndexerProperty(elementAssignment.Target, registerByName, currentMethod) is { SetterMethod: not null } postfixMethodWritableIndexer)
-                {
-                    var postfixMethodIndexRegister = AllocateTemp(postfixMethodWritableIndexer.IndexParameter?.Type ?? TypeSymbol.Integer, registers);
-                    LowerExpressionInto(elementAssignment.IndexExpressions[0], postfixMethodIndexRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    LowerExpressionInto(assignment.Expression, postfixElementValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                    instructions.Add(new IrInstruction(
-                        postfixMethodWritableIndexer.SetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                        destination,
-                        new IrCallTarget(
-                            postfixMethodWritableIndexer.SetterMethod,
-                            $"{GetExpressionDisplayName(elementAssignment.Target)}[{postfixMethodWritableIndexer.IndexParameter?.Name ?? "index"}]",
-                            [postfixMethodIndexRegister, postfixElementValueRegister],
-                            ResolvePropertyReceiver(elementAssignment.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                            !postfixMethodWritableIndexer.SetterMethod.IsStatic)));
-                    if (destination.Index != postfixElementValueRegister.Index)
-                    {
-                        instructions.Add(new IrInstruction(IrOpCode.Copy, destination, postfixElementValueRegister));
-                    }
-
-                    return;
-                }
-
-                var postfixTargetArrayType = SemanticFacts.InferExpressionType(
-                    elementAssignment.Target,
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod);
-                var postfixTargetIndexRegister = LowerFlattenedElementIndex(
-                    elementAssignment.Target,
-                    elementAssignment.IndexExpressions,
-                    postfixTargetArrayType,
-                    registerByName,
-                    arrayShapesByName,
-                    registers,
-                    instructions,
-                    currentMethod);
+                var boundPostfixElementWrite = ResolveBoundElementWrite(elementAssignment.Target, elementAssignment.IndexExpressions, registerByName, currentMethod)
+                    ?? throw new InvalidOperationException($"Cannot lower assignment target '{GetExpressionDisplayName(elementAssignment.Target)}[...]'.");
+                var postfixElementValueRegister = AllocateTemp(boundPostfixElementWrite.ElementType, registers);
                 LowerExpressionInto(assignment.Expression, postfixElementValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                if (ResolveIndexerProperty(elementAssignment.Target, registerByName, currentMethod) is { } writablePostfixIndexer && writablePostfixIndexer.WriteField is not null)
-                {
-                    var postfixBackingArrayRegister = AllocateTemp(writablePostfixIndexer.WriteField.Type, registers);
-                    instructions.Add(new IrInstruction(
-                        writablePostfixIndexer.WriteField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
-                        postfixBackingArrayRegister,
-                        new IrFieldTarget(
-                            writablePostfixIndexer.WriteField,
-                            $"{GetExpressionDisplayName(elementAssignment.Target)}[{writablePostfixIndexer.IndexParameter?.Name ?? "index"}]",
-                            ResolvePropertyReceiver(elementAssignment.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
-                    instructions.Add(new IrInstruction(
-                        IrOpCode.StoreElement,
-                        postfixElementValueRegister,
-                        new IrArrayTarget(postfixBackingArrayRegister, postfixTargetIndexRegister)));
-                    if (destination.Index != postfixElementValueRegister.Index)
-                    {
-                        instructions.Add(new IrInstruction(IrOpCode.Copy, destination, postfixElementValueRegister));
-                    }
-
-                    return;
-                }
-
-                var postfixTargetArrayRegister = ResolveReceiverExpression(elementAssignment.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                instructions.Add(new IrInstruction(
-                    IrOpCode.StoreElement,
-                    postfixElementValueRegister,
-                    new IrArrayTarget(postfixTargetArrayRegister!, postfixTargetIndexRegister)));
+                LowerBoundElementWriteInto(boundPostfixElementWrite, elementAssignment.IndexExpressions, postfixElementValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 if (destination.Index != postfixElementValueRegister.Index)
                 {
                     instructions.Add(new IrInstruction(IrOpCode.Copy, destination, postfixElementValueRegister));
                 }
                 return;
-            case AssignmentExpressionSyntax assignment when ResolveProperty(assignment.Target, registerByName, currentMethod) is { } property && property.SetterMethod is not null:
-                var propertyValueRegister = AllocateTemp(property.Type, registers);
+            case AssignmentExpressionSyntax assignment when ResolveBoundWriteTarget(assignment.Target, registerByName, currentMethod) is { Kind: not BoundWriteTargetKind.ElementAccess } boundWriteTarget:
+                var assignmentValueRegister = AllocateTemp(boundWriteTarget.Type, registers);
                 if (assignment.Expression is NewArrayExpressionSyntax propertyArray && propertyArray.LengthExpressions.Count > 1)
                 {
-                    arrayShapesByName[GetExpressionDisplayName(assignment.Target)] = LowerNewArrayInto(propertyValueRegister, propertyArray, registerByName, registers, instructions, currentMethod);
+                    arrayShapesByName[GetExpressionDisplayName(assignment.Target)] = LowerNewArrayInto(assignmentValueRegister, propertyArray, registerByName, registers, instructions, currentMethod);
                 }
                 else
                 {
-                    LowerExpressionInto(assignment.Expression, propertyValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                    LowerExpressionInto(assignment.Expression, assignmentValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 }
 
-                instructions.Add(new IrInstruction(
-                    property.SetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                    destination,
-                    new IrCallTarget(
-                        property.SetterMethod,
-                        GetExpressionDisplayName(assignment.Target),
-                        [propertyValueRegister],
-                        ResolvePropertyReceiver(assignment.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        !property.SetterMethod.IsStatic)));
-                if (destination.Index != propertyValueRegister.Index)
+                StoreIntoBoundWriteTarget(boundWriteTarget, assignmentValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                if (destination.Index != assignmentValueRegister.Index)
                 {
-                    instructions.Add(new IrInstruction(IrOpCode.Copy, destination, propertyValueRegister));
-                }
-                return;
-            case AssignmentExpressionSyntax assignment when ResolveStorageField(assignment.Target, registerByName, currentMethod, true) is { } field:
-                var fieldValueRegister = AllocateTemp(field.Type, registers);
-                if (assignment.Expression is NewArrayExpressionSyntax fieldArray && fieldArray.LengthExpressions.Count > 1)
-                {
-                    arrayShapesByName[GetExpressionDisplayName(assignment.Target)] = LowerNewArrayInto(fieldValueRegister, fieldArray, registerByName, registers, instructions, currentMethod);
-                }
-                else
-                {
-                    LowerExpressionInto(assignment.Expression, fieldValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                }
-
-                instructions.Add(new IrInstruction(
-                    field.IsStatic ? IrOpCode.StoreStaticField : IrOpCode.StoreField,
-                    fieldValueRegister,
-                    new IrFieldTarget(
-                        field,
-                        GetExpressionDisplayName(assignment.Target),
-                        assignment.Target switch
-                        {
-                            NameExpressionSyntax assignmentTargetName => assignmentTargetName.Name.Parts.Count > 1
-                                ? ResolveMemberReceiver(assignmentTargetName.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod)
-                                : ResolveFieldReceiver(assignmentTargetName.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                            MemberAccessExpressionSyntax memberAssignment => ResolveReceiverExpression(memberAssignment.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                            _ => null
-                        })));
-                if (destination.Index != fieldValueRegister.Index)
-                {
-                    instructions.Add(new IrInstruction(IrOpCode.Copy, destination, fieldValueRegister));
+                    instructions.Add(new IrInstruction(IrOpCode.Copy, destination, assignmentValueRegister));
                 }
                 return;
             case AssignmentExpressionSyntax assignment:
@@ -1952,20 +1604,14 @@ public sealed class Lowerer
                 LowerTypeTestInto(typeTest, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
             case CallExpressionSyntax call:
-                var invocation = SemanticFacts.ResolveInvocation(
-                    call.Target,
-                    call.Arguments.Count,
-                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-                    _knownTypes,
-                    _knownMethods,
-                    _knownFields,
-                    _knownConstants,
-                    _knownProperties,
-                    currentMethod);
-                if (invocation?.Method is null)
+                var invocation = ResolveInvocationForLowering(call, registerByName, currentMethod);
+                var boundCall = ResolveBoundCall(call, registerByName, currentMethod);
+                if (boundCall?.Method is null)
                 {
-                    throw new InvalidOperationException($"Cannot lower unresolved call '{SemanticFacts.GetExpressionDisplayName(call.Target)}/{call.Arguments.Count}'.");
+                    throw new InvalidOperationException(BuildCallDiagnosticMessage(call, registerByName, currentMethod));
                 }
+
+                invocation = new InvocationResolution(boundCall.Method, boundCall.Receiver?.Type, boundCall.Kind == BoundCallKind.Virtual);
 
                 if (TryLowerTryParseIntrinsicCall(call, invocation, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
                 {
@@ -1987,17 +1633,18 @@ public sealed class Lowerer
                 }
 
                 instructions.Add(new IrInstruction(
-                    invocation.IsVirtual ? IrOpCode.CallVirtual : IrOpCode.Call,
+                    boundCall.Kind == BoundCallKind.Virtual ? IrOpCode.CallVirtual : IrOpCode.Call,
                     destination,
                     new IrCallTarget(
-                        invocation.Method,
-                        SemanticFacts.GetExpressionDisplayName(call.Target),
+                        boundCall.Method,
+                        boundCall.DisplayName,
                         argumentTemps,
-                        ResolveCallReceiver(call.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        invocation.IsVirtual)));
+                        ResolveBoundCallReceiver(boundCall, call.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                        boundCall.Kind == BoundCallKind.Virtual)));
                 return;
             default:
-                throw new InvalidOperationException($"Cannot lower expression kind '{expression.Kind}'.");
+                throw new InvalidOperationException(
+                    $"Cannot lower expression kind '{expression.Kind}' display='{GetExpressionDisplayName(expression)}' currentMethod='{(currentMethod?.DeclaringTypeName is null ? currentMethod?.Name : $"{currentMethod.DeclaringTypeName}.{currentMethod.Name}")}'.");
         }
     }
 
@@ -3121,39 +2768,9 @@ public sealed class Lowerer
             return;
         }
 
-        if (ResolveProperty(target, registerByName, currentMethod) is { } property)
+        if (ResolveBoundWriteTarget(target, registerByName, currentMethod) is { Kind: not BoundWriteTargetKind.ElementAccess } boundWriteTarget)
         {
-            if (property.SetterMethod is not null)
-            {
-                instructions.Add(new IrInstruction(
-                    property.SetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
-                    source,
-                    new IrCallTarget(
-                        property.SetterMethod,
-                        GetExpressionDisplayName(target),
-                        [source],
-                        ResolvePropertyReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        !property.SetterMethod.IsStatic)));
-                return;
-            }
-        }
-
-        if (ResolveStorageField(target, registerByName, currentMethod, true) is { } field)
-        {
-            instructions.Add(new IrInstruction(
-                field.IsStatic ? IrOpCode.StoreStaticField : IrOpCode.StoreField,
-                source,
-                new IrFieldTarget(
-                    field,
-                    GetExpressionDisplayName(target),
-                    target switch
-                    {
-                        NameExpressionSyntax assignmentTargetName => assignmentTargetName.Name.Parts.Count > 1
-                            ? ResolveMemberReceiver(assignmentTargetName.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod)
-                            : ResolveFieldReceiver(assignmentTargetName.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        MemberAccessExpressionSyntax memberAssignment => ResolveReceiverExpression(memberAssignment.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-                        _ => null
-                    })));
+            StoreIntoBoundWriteTarget(boundWriteTarget, source, registerByName, arrayShapesByName, registers, instructions, currentMethod);
             return;
         }
 
@@ -3395,10 +3012,27 @@ public sealed class Lowerer
                 _knownFields,
                 _knownConstants,
                 _knownProperties,
-                currentMethod);
+                currentMethod,
+                _knownTypes);
             if (memberResolution.Property is not null)
             {
                 return forWrite ? memberResolution.Property.WriteField : memberResolution.Property.ReadField;
+            }
+
+            if (TryFlattenMemberAccess(memberAccess) is { } qualifiedName)
+            {
+                var qualifiedProperty = SemanticFacts.ResolvePropertyReference(
+                    qualifiedName,
+                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod,
+                    _knownTypes);
+                if (qualifiedProperty is not null)
+                {
+                    return forWrite ? qualifiedProperty.WriteField : qualifiedProperty.ReadField;
+                }
             }
 
             return memberResolution.Field;
@@ -3411,19 +3045,24 @@ public sealed class Lowerer
 
         var name = nameExpression.Name;
         var locals = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
-        var property = SemanticFacts.ResolvePropertyReference(name, locals, _knownFields, _knownConstants, _knownProperties, currentMethod);
+        var property = SemanticFacts.ResolvePropertyReference(name, locals, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
         if (property is not null)
         {
             return forWrite ? property.WriteField : property.ReadField;
         }
 
         if (name.Parts.Count > 1 &&
-            SemanticFacts.TryResolveValueReceiverType(name, locals, _knownFields, _knownConstants, _knownProperties, currentMethod) is { } receiverType)
+            SemanticFacts.TryResolveValueReceiverType(name, locals, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes) is { } receiverType)
         {
-            var instanceField = _knownFields.FirstOrDefault(field =>
-                !field.IsStatic &&
-                field.DeclaringTypeName == receiverType.Name &&
-                field.Name == name.Parts[^1].Text);
+            var instanceField = _knownTypes
+                .OfType<NamedTypeSymbol>()
+                .Where(type => type.Name == receiverType.Name || type == receiverType)
+                .SelectMany(type => EnumerateTypeHierarchy(type))
+                .SelectMany(type => _knownFields.Where(field =>
+                    !field.IsStatic &&
+                    field.DeclaringTypeName == type.Name &&
+                    field.Name == name.Parts[^1].Text))
+                .FirstOrDefault();
             if (instanceField is not null)
             {
                 return instanceField;
@@ -3433,12 +3072,726 @@ public sealed class Lowerer
         return SemanticFacts.ResolveName(
             name,
             locals,
-            [],
+            _knownTypes,
             _knownMethods,
             _knownFields,
             _knownConstants,
             _knownProperties,
             currentMethod).Field;
+    }
+
+    private BoundWriteTarget? ResolveBoundWriteTarget(ExpressionSyntax target, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod) =>
+        SemanticFacts.BindWriteTarget(
+            target,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+
+    private BoundCall? ResolveBoundCall(CallExpressionSyntax call, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod)
+    {
+        var boundCall = SemanticFacts.BindCall(
+            call,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+        if (boundCall is not null)
+        {
+            return boundCall;
+        }
+
+        if (ResolveInvocationForLowering(call, registerByName, currentMethod) is { Method: not null } fallbackInvocation)
+        {
+            return new BoundCall(
+                fallbackInvocation.IsVirtual ? BoundCallKind.Virtual : BoundCallKind.Direct,
+                SemanticFacts.GetExpressionDisplayName(call.Target),
+                fallbackInvocation.Method,
+                fallbackInvocation.Method.ReturnType,
+                fallbackInvocation.ReceiverType is not null
+                    ? new BoundReceiver(BoundReceiverKind.Expression, fallbackInvocation.ReceiverType, SourceExpression: call.Target)
+                    : null,
+                SourceExpression: call);
+        }
+
+        return null;
+    }
+
+    private string BuildCallDiagnosticMessage(CallExpressionSyntax call, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod)
+    {
+        var locals = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        var displayName = SemanticFacts.GetExpressionDisplayName(call.Target);
+        var receiverType = call.Target is MemberAccessExpressionSyntax memberAccessTarget
+            ? SemanticFacts.InferExpressionType(memberAccessTarget.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod)
+            : null;
+        var directInvocation = SemanticFacts.ResolveInvocation(
+            call.Target,
+            call.Arguments.Count,
+            locals,
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+        var flattenedTarget = call.Target switch
+        {
+            NameExpressionSyntax nameExpression => nameExpression.Name,
+            MemberAccessExpressionSyntax memberAccess => TryFlattenMemberAccess(memberAccess),
+            _ => null
+        };
+        var flattenedInvocation = flattenedTarget is null
+            ? null
+            : SemanticFacts.ResolveInvocation(
+                flattenedTarget,
+                call.Arguments.Count,
+                locals,
+                _knownTypes,
+                _knownMethods,
+                _knownFields,
+                _knownConstants,
+                _knownProperties,
+                currentMethod);
+
+        var candidateSummary = receiverType is null
+            ? "<none>"
+            : string.Join(
+                ", ",
+                _knownMethods
+                    .Where(method => method.DeclaringTypeName == receiverType.Name)
+                    .Select(method => $"{method.DeclaringTypeName}.{method.Name}/{method.Parameters.Count}[static={method.IsStatic},virtual={method.IsVirtual},override={method.IsOverride}]"));
+
+        var localSummary = string.Join(
+            ", ",
+            locals.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}:{pair.Value.Name}"));
+
+        return
+            $"Cannot lower unresolved call '{displayName}/{call.Arguments.Count}'. " +
+            $"currentMethod={(currentMethod?.DeclaringTypeName is null ? currentMethod?.Name : $"{currentMethod.DeclaringTypeName}.{currentMethod.Name}") ?? "<null>"}, " +
+            $"targetKind={call.Target.Kind}, " +
+            $"receiverType={(receiverType?.Name ?? "<null>")}, " +
+            $"directInvocation={(directInvocation?.Method is null ? "<null>" : $"{directInvocation.Method.DeclaringTypeName}.{directInvocation.Method.Name}")}, " +
+            $"flattenedTarget={(flattenedTarget?.ToDisplayString() ?? "<null>")}, " +
+            $"flattenedInvocation={(flattenedInvocation?.Method is null ? "<null>" : $"{flattenedInvocation.Method.DeclaringTypeName}.{flattenedInvocation.Method.Name}")}, " +
+            $"receiverCandidates=[{candidateSummary}], " +
+            $"locals=[{localSummary}]";
+    }
+
+    private void StoreIntoBoundWriteTarget(
+        BoundWriteTarget target,
+        IrValue source,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        switch (target.Kind)
+        {
+            case BoundWriteTargetKind.Local:
+                if (!string.IsNullOrEmpty(target.DisplayName) && registerByName.TryGetValue(target.DisplayName, out var targetRegister))
+                {
+                    instructions.Add(new IrInstruction(IrOpCode.Copy, targetRegister, source));
+                    return;
+                }
+                break;
+            case BoundWriteTargetKind.Property when target.SetterMethod is not null:
+                instructions.Add(new IrInstruction(
+                    target.SetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
+                    source,
+                    new IrCallTarget(
+                        target.SetterMethod,
+                        target.DisplayName,
+                        [source],
+                        ResolveBoundWriteReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                        !target.SetterMethod.IsStatic)));
+                return;
+            case BoundWriteTargetKind.Property when target.WriteField is not null:
+                instructions.Add(new IrInstruction(
+                    target.WriteField.IsStatic ? IrOpCode.StoreStaticField : IrOpCode.StoreField,
+                    source,
+                    new IrFieldTarget(
+                        target.WriteField,
+                        target.DisplayName,
+                        ResolveBoundWriteReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+                return;
+            case BoundWriteTargetKind.Field when target.Field is not null:
+                instructions.Add(new IrInstruction(
+                    target.Field.IsStatic ? IrOpCode.StoreStaticField : IrOpCode.StoreField,
+                    source,
+                    new IrFieldTarget(
+                        target.Field,
+                        target.DisplayName,
+                        ResolveBoundWriteReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+                return;
+        }
+
+        throw new InvalidOperationException($"Cannot store into bound target '{target.DisplayName}'.");
+    }
+
+    private void LowerBoundReadInto(
+        BoundMemberRead target,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        switch (target.Kind)
+        {
+            case BoundMemberReadKind.Local:
+                if (!string.IsNullOrEmpty(target.DisplayName) && registerByName.TryGetValue(target.DisplayName, out var sourceRegister))
+                {
+                    instructions.Add(new IrInstruction(IrOpCode.Copy, destination, sourceRegister));
+                    return;
+                }
+                break;
+            case BoundMemberReadKind.Constant when target.Constant is not null:
+                instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, target.Constant.Value ?? 0));
+                return;
+            case BoundMemberReadKind.Property when target.GetterMethod is not null:
+                instructions.Add(new IrInstruction(
+                    target.GetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
+                    destination,
+                    new IrCallTarget(
+                        target.GetterMethod,
+                        target.DisplayName,
+                        [],
+                        ResolveBoundReadReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                        !target.GetterMethod.IsStatic)));
+                return;
+            case BoundMemberReadKind.Property when target.ReadField is not null:
+                instructions.Add(new IrInstruction(
+                    target.ReadField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
+                    destination,
+                    new IrFieldTarget(
+                        target.ReadField,
+                        target.DisplayName,
+                        ResolveBoundReadReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+                return;
+            case BoundMemberReadKind.Field when target.Field is not null:
+                instructions.Add(new IrInstruction(
+                    target.Field.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
+                    destination,
+                    new IrFieldTarget(
+                        target.Field,
+                        target.DisplayName,
+                        ResolveBoundReadReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+                return;
+        }
+
+        throw new InvalidOperationException($"Cannot lower bound read '{target.DisplayName}'.");
+    }
+
+    private BoundMemberRead? ResolveBoundRead(ExpressionSyntax expression, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod) =>
+        SemanticFacts.BindRead(
+            expression,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+
+    private BoundElementRead? ResolveBoundElementRead(
+        ExpressionSyntax target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        Dictionary<string, IrValue> registerByName,
+        MethodSymbol? currentMethod) =>
+        SemanticFacts.BindElementRead(
+            target,
+            indexExpressions,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+
+    private BoundElementWrite? ResolveBoundElementWrite(
+        ExpressionSyntax target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        Dictionary<string, IrValue> registerByName,
+        MethodSymbol? currentMethod) =>
+        SemanticFacts.BindElementWrite(
+            target,
+            indexExpressions,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+
+    private BoundSliceRead? ResolveBoundSliceRead(
+        ExpressionSyntax target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        Dictionary<string, IrValue> registerByName,
+        MethodSymbol? currentMethod) =>
+        SemanticFacts.BindSliceRead(
+            target,
+            indexExpressions,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+
+    private BoundLengthRead? ResolveBoundLengthRead(
+        ExpressionSyntax expression,
+        Dictionary<string, IrValue> registerByName,
+        MethodSymbol? currentMethod) =>
+        SemanticFacts.BindLengthRead(
+            expression,
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+
+    private IrValue? ResolveBoundReadReceiver(
+        BoundMemberRead target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Receiver is null || target.Receiver.Kind == BoundReceiverKind.Type)
+        {
+            return null;
+        }
+
+        if (TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        if (target.Receiver?.SourceExpression is not null)
+        {
+            return ResolveReceiverExpression(target.Receiver.SourceExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        return target.SourceExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolveFieldReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            MemberAccessExpressionSyntax memberAccess => ResolveReceiverExpression(memberAccess.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => null
+        };
+    }
+
+    private IrValue? ResolveBoundWriteReceiver(
+        BoundWriteTarget target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Property?.IsStatic == true || target.Field?.IsStatic == true)
+        {
+            return null;
+        }
+
+        if (target.Receiver is null || target.Receiver.Kind == BoundReceiverKind.Type)
+        {
+            return null;
+        }
+
+        if (TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        if (target.Receiver.SourceExpression is not null)
+        {
+            return ResolveReceiverExpression(target.Receiver.SourceExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        return target.SourceExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolveFieldWriteReceiver(nameExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            MemberAccessExpressionSyntax memberAccess => ResolveReceiverExpression(memberAccess.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => null
+        };
+    }
+
+    private IrValue? ResolveBoundCallReceiver(
+        BoundCall target,
+        ExpressionSyntax sourceTarget,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Method.IsStatic || target.Receiver is null || target.Receiver.Kind == BoundReceiverKind.Type)
+        {
+            return null;
+        }
+
+        if (TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        if (target.Receiver.SourceExpression is not null)
+        {
+            return ResolveReceiverExpression(target.Receiver.SourceExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        return sourceTarget switch
+        {
+            NameExpressionSyntax nameExpression => ResolveCallReceiver(nameExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            MemberAccessExpressionSyntax memberAccess => ResolveReceiverExpression(memberAccess.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => null
+        };
+    }
+
+    private IrValue? ResolveBoundElementReceiver(
+        BoundElementRead target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Receiver is not null &&
+            TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        return target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolveIndexedReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => ResolveReceiverExpression(target.TargetExpression!, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+    }
+
+    private IrValue? ResolveBoundSliceReceiver(
+        BoundSliceRead target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Receiver is not null &&
+            TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        if (target.TargetExpression is null)
+        {
+            return null;
+        }
+
+        return target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolveIndexedReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => ResolveReceiverExpression(target.TargetExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+    }
+
+    private IrValue? ResolveBoundLengthReceiver(
+        BoundLengthRead target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Receiver is null || target.Receiver.Kind == BoundReceiverKind.Type)
+        {
+            return null;
+        }
+
+        if (TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        if (target.Receiver?.SourceExpression is not null)
+        {
+            return ResolveReceiverExpression(target.Receiver.SourceExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        return target.SourceExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolveIndexedReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => ResolveReceiverExpression(target.SourceExpression!, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+    }
+
+    private IrValue? ResolveBoundElementOwnerReceiver(
+        BoundElementRead target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.GetterMethod?.IsStatic == true || target.ReadField?.IsStatic == true)
+        {
+            return null;
+        }
+
+        if (target.Receiver is not null &&
+            TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        return target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolvePropertyReceiver(nameExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => ResolvePropertyReceiver(target.TargetExpression!, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+    }
+
+    private IrValue? ResolveBoundElementWriteReceiver(
+        BoundElementWrite target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.Receiver is not null &&
+            TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        return target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolveIndexedReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => ResolveReceiverExpression(target.TargetExpression!, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+    }
+
+    private IrValue? ResolveBoundElementWriteOwnerReceiver(
+        BoundElementWrite target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (target.SetterMethod?.IsStatic == true || target.WriteField?.IsStatic == true)
+        {
+            return null;
+        }
+
+        if (target.Receiver is not null &&
+            TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
+        {
+            return resolvedReceiver;
+        }
+
+        return target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => ResolvePropertyReceiver(nameExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => ResolvePropertyReceiver(target.TargetExpression!, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+    }
+
+    private IrValue? TryResolveBoundReceiver(
+        BoundReceiver receiver,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (!string.IsNullOrEmpty(receiver.LocalName) && registerByName.TryGetValue(receiver.LocalName, out var localRegister))
+        {
+            return localRegister;
+        }
+
+        if (receiver.SourceExpression is not null)
+        {
+            return ResolveReceiverExpression(receiver.SourceExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        return null;
+    }
+
+    private void LowerBoundElementReadInto(
+        BoundElementRead target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var indexedType = target.IndexedType ?? target.ElementType;
+        var indexRegister = target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => LowerFlattenedElementIndex(nameExpression.Name, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => LowerFlattenedElementIndex(target.TargetExpression!, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+
+        if (target.GetterMethod is not null)
+        {
+            instructions.Add(new IrInstruction(
+                target.GetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
+                destination,
+                new IrCallTarget(
+                    target.GetterMethod,
+                    target.DisplayName,
+                    [indexRegister],
+                    ResolveBoundElementOwnerReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                    !target.GetterMethod.IsStatic)));
+            return;
+        }
+
+        if (target.ReadField is not null)
+        {
+            var backingArrayRegister = AllocateTemp(target.ReadField.Type, registers);
+            instructions.Add(new IrInstruction(
+                target.ReadField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
+                backingArrayRegister,
+                new IrFieldTarget(
+                    target.ReadField,
+                    target.DisplayName,
+                    ResolveBoundElementOwnerReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+            instructions.Add(new IrInstruction(
+                IrOpCode.LoadElement,
+                destination,
+                new IrArrayTarget(
+                    backingArrayRegister,
+                    indexRegister,
+                    target.TargetExpression is NameExpressionSyntax namedTarget
+                        ? TryGetTargetShape(namedTarget.Name, arrayShapesByName)
+                        : null)));
+            return;
+        }
+
+        var arrayRegister = ResolveBoundElementReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(
+            IrOpCode.LoadElement,
+            destination,
+            new IrArrayTarget(arrayRegister!, indexRegister)));
+    }
+
+    private void LowerBoundElementWriteInto(
+        BoundElementWrite target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        IrValue valueRegister,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var indexedType = target.IndexedType ?? target.ElementType;
+        var indexRegister = target.TargetExpression switch
+        {
+            NameExpressionSyntax nameExpression => LowerFlattenedElementIndex(nameExpression.Name, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => LowerFlattenedElementIndex(target.TargetExpression!, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
+
+        if (target.SetterMethod is not null)
+        {
+            instructions.Add(new IrInstruction(
+                target.SetterMethod.IsStatic ? IrOpCode.Call : IrOpCode.CallVirtual,
+                valueRegister,
+                new IrCallTarget(
+                    target.SetterMethod,
+                    target.DisplayName,
+                    [indexRegister, valueRegister],
+                    ResolveBoundElementWriteOwnerReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                    !target.SetterMethod.IsStatic)));
+            return;
+        }
+
+        if (target.WriteField is not null)
+        {
+            var backingArrayRegister = AllocateTemp(target.WriteField.Type, registers);
+            instructions.Add(new IrInstruction(
+                target.WriteField.IsStatic ? IrOpCode.LoadStaticField : IrOpCode.LoadField,
+                backingArrayRegister,
+                new IrFieldTarget(
+                    target.WriteField,
+                    target.DisplayName,
+                    ResolveBoundElementWriteOwnerReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod))));
+            instructions.Add(new IrInstruction(
+                IrOpCode.StoreElement,
+                valueRegister,
+                new IrArrayTarget(
+                    backingArrayRegister,
+                    indexRegister,
+                    target.TargetExpression is NameExpressionSyntax namedTarget
+                        ? TryGetTargetShape(namedTarget.Name, arrayShapesByName)
+                        : null)));
+            return;
+        }
+
+        var arrayRegister = ResolveBoundElementWriteReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(
+            IrOpCode.StoreElement,
+            valueRegister,
+            new IrArrayTarget(
+                arrayRegister!,
+                indexRegister,
+                target.TargetExpression is NameExpressionSyntax directNamedTarget
+                    ? TryGetTargetShape(directNamedTarget.Name, arrayShapesByName)
+                    : null)));
+    }
+
+    private void LowerBoundSliceReadInto(
+        BoundSliceRead target,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var sourceRegister = ResolveBoundSliceReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+            ?? throw new InvalidOperationException($"Cannot lower bound slice receiver '{target.DisplayName}'.");
+        var range = target.Range
+            ?? throw new InvalidOperationException($"Cannot lower bound slice '{target.DisplayName}' without range expression.");
+
+        if (target.TargetType == TypeSymbol.String)
+        {
+            LowerStringSliceInto(destination, sourceRegister, range, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            return;
+        }
+
+        LowerArraySliceCopyInto(destination, sourceRegister, range, target.TargetType, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+    }
+
+    private void LowerBoundLengthReadInto(
+        BoundLengthRead target,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var receiverRegister = ResolveBoundLengthReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(IrOpCode.LoadLength, destination, new IrArrayTarget(receiverRegister!)));
     }
 
     private ConstantSymbol? ResolveConstant(ExpressionSyntax expression, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod) =>
@@ -3471,7 +3824,8 @@ public sealed class Lowerer
                 _knownFields,
                 _knownConstants,
                 _knownProperties,
-                currentMethod)
+                currentMethod,
+                _knownTypes)
             ,
             MemberAccessExpressionSyntax memberAccess => SemanticFacts.ResolveMemberAccess(
                     memberAccess,
@@ -3480,7 +3834,8 @@ public sealed class Lowerer
                     _knownFields,
                     _knownConstants,
                     _knownProperties,
-                    currentMethod).Property
+                    currentMethod,
+                    _knownTypes).Property
                 ?? (TryFlattenMemberAccess(memberAccess) is { } qualifiedName
                     ? SemanticFacts.ResolvePropertyReference(
                         qualifiedName,
@@ -3488,10 +3843,135 @@ public sealed class Lowerer
                         _knownFields,
                         _knownConstants,
                         _knownProperties,
-                        currentMethod)
+                        currentMethod,
+                        _knownTypes)
                     : null),
             _ => null
         };
+
+    private IEnumerable<NamedTypeSymbol> EnumerateTypeHierarchy(NamedTypeSymbol type)
+    {
+        var current = type;
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (visited.Add(current.Name))
+        {
+            yield return current;
+            if (current.BaseType is null)
+            {
+                yield break;
+            }
+
+            current = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == current.BaseType.Name);
+            if (current is null)
+            {
+                yield break;
+            }
+        }
+    }
+
+    private InvocationResolution? ResolveInvocationForLowering(
+        CallExpressionSyntax call,
+        Dictionary<string, IrValue> registerByName,
+        MethodSymbol? currentMethod)
+    {
+        var locals = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        var invocation = SemanticFacts.ResolveInvocation(
+            call.Target,
+            call.Arguments.Count,
+            locals,
+            _knownTypes,
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod);
+        if (invocation is not null)
+        {
+            return invocation;
+        }
+
+        QualifiedNameSyntax? qualifiedTarget = call.Target switch
+        {
+            NameExpressionSyntax nameExpression => nameExpression.Name,
+            MemberAccessExpressionSyntax targetMemberAccess => TryFlattenMemberAccess(targetMemberAccess),
+            _ => null
+        };
+
+        if (qualifiedTarget is not null)
+        {
+            if (qualifiedTarget.Parts.Count >= 2)
+            {
+                var declaringTypeName = string.Join(".", qualifiedTarget.Parts.Take(qualifiedTarget.Parts.Count - 1).Select(part => part.Text));
+                if (SemanticFacts.ResolveTypeReference(declaringTypeName, _knownTypes) is { } targetType)
+                {
+                    var staticMethod = _knownMethods.FirstOrDefault(method =>
+                        method.IsStatic &&
+                        method.DeclaringTypeName == targetType.Name &&
+                        method.Name == qualifiedTarget.Parts[^1].Text &&
+                        SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
+                    if (staticMethod is not null)
+                    {
+                        return new InvocationResolution(staticMethod);
+                    }
+                }
+            }
+
+            if (SemanticFacts.TryResolveValueReceiverType(qualifiedTarget, locals, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes) is { } valueReceiverType)
+            {
+                var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == valueReceiverType.Name);
+                if (namedReceiverType is not null)
+                {
+                    var instanceMethod = EnumerateTypeHierarchy(namedReceiverType)
+                        .SelectMany(type => _knownMethods.Where(method =>
+                            !method.IsStatic &&
+                            method.DeclaringTypeName == type.Name &&
+                            method.Name == qualifiedTarget.Parts[^1].Text &&
+                            SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count)))
+                        .FirstOrDefault();
+                    if (instanceMethod is not null)
+                    {
+                        return new InvocationResolution(instanceMethod, valueReceiverType, instanceMethod.IsVirtual || instanceMethod.IsOverride);
+                    }
+                }
+            }
+        }
+
+        if (call.Target is MemberAccessExpressionSyntax memberAccess)
+        {
+            if (memberAccess.Receiver is NameExpressionSyntax receiverName &&
+                SemanticFacts.ResolveTypeReference(receiverName.Name.ToDisplayString(), _knownTypes) is { } targetType)
+            {
+                var staticMethod = _knownMethods.FirstOrDefault(method =>
+                    method.IsStatic &&
+                    method.DeclaringTypeName == targetType.Name &&
+                    method.Name == memberAccess.MemberName.Text &&
+                    SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
+                if (staticMethod is not null)
+                {
+                    return new InvocationResolution(staticMethod);
+                }
+            }
+
+            var receiverType = SemanticFacts.InferExpressionType(memberAccess.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == receiverType.Name);
+            if (namedReceiverType is not null)
+            {
+                var instanceMethod = EnumerateTypeHierarchy(namedReceiverType)
+                    .SelectMany(type => _knownMethods.Where(method =>
+                        !method.IsStatic &&
+                        method.DeclaringTypeName == type.Name &&
+                        method.Name == memberAccess.MemberName.Text &&
+                        SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count)))
+                    .FirstOrDefault();
+                if (instanceMethod is not null)
+                {
+                    return new InvocationResolution(instanceMethod, receiverType, instanceMethod.IsVirtual || instanceMethod.IsOverride);
+                }
+            }
+        }
+
+        return null;
+    }
 
     private static QualifiedNameSyntax? TryFlattenMemberAccess(ExpressionSyntax expression)
     {
@@ -3517,16 +3997,6 @@ public sealed class Lowerer
         return parts.Count == 0 ? null : new QualifiedNameSyntax(parts);
     }
 
-    private PropertySymbol? ResolveIndexerProperty(ExpressionSyntax target, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod) =>
-        SemanticFacts.ResolveIndexerReference(
-            target,
-            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-            _knownMethods,
-            _knownFields,
-            _knownConstants,
-            _knownProperties,
-            currentMethod);
-
     private IrValue? ResolvePropertyReceiver(
         ExpressionSyntax expression,
         Dictionary<string, IrValue> registerByName,
@@ -3551,6 +4021,22 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod) =>
         ResolveMemberReceiver(name, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+    private IrValue? ResolveFieldWriteReceiver(
+        ExpressionSyntax target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod) =>
+        target switch
+        {
+            NameExpressionSyntax assignmentTargetName => assignmentTargetName.Name.Parts.Count > 1
+                ? ResolveMemberReceiver(assignmentTargetName.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+                : ResolveFieldReceiver(assignmentTargetName.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            MemberAccessExpressionSyntax memberAssignment => ResolveReceiverExpression(memberAssignment.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => null
+        };
 
     private IrValue? ResolveIndexedReceiver(
         QualifiedNameSyntax target,
@@ -3610,6 +4096,12 @@ public sealed class Lowerer
             _knownProperties,
             currentMethod);
         var temp = AllocateTemp(receiverType, registers);
+        if (ResolveBoundLengthRead(receiver, registerByName, currentMethod) is { } boundLengthRead)
+        {
+            LowerBoundLengthReadInto(boundLengthRead, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            return temp;
+        }
+
         LowerExpressionInto(receiver, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
         return temp;
     }
@@ -3675,7 +4167,7 @@ public sealed class Lowerer
         var receiverType = SemanticFacts.ResolveName(
             receiverName,
             registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
-            [],
+            _knownTypes,
             _knownMethods,
             _knownFields,
             _knownConstants,

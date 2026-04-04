@@ -957,12 +957,14 @@ public sealed class BytecodeEmitter
                         break;
                     case IrOpCode.Call:
                         var callTarget = (IrCallTarget)instruction.Operand!;
-                        var firstArgumentRegister = EmitPackedArguments(instructions, callTarget.Arguments, ref nextScratchRegister);
+                        var firstArgumentRegister = callTarget.Receiver is null
+                            ? EmitPackedArguments(instructions, callTarget.Arguments, ref nextScratchRegister)
+                            : EmitPackedCallFrame(instructions, callTarget.Receiver, callTarget.Arguments, ref nextScratchRegister);
                         instructions.Add(new Instruction(
                             OpCode.Call,
                             instruction.Destination?.Index ?? 0,
                             firstArgumentRegister,
-                            (ushort)callTarget.Arguments.Count,
+                            (ushort)(callTarget.Arguments.Count + (callTarget.Receiver is null ? 0 : 1)),
                             ResolveFunctionId(callTarget.Method)));
                         break;
                     case IrOpCode.CallVirtual:

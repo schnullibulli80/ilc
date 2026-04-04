@@ -129,6 +129,8 @@ public sealed record MethodSymbol(
     bool IsSynthetic = false,
     IReadOnlyList<MemberSyntax>? SyntheticMembers = null,
     bool IsExtern = false,
+    bool IsVirtual = false,
+    bool IsOverride = false,
     HostImportKind HostImportKind = HostImportKind.None) : Symbol(Name);
 
 public sealed record CompilationUnitSymbol(
@@ -171,6 +173,9 @@ public sealed record NamedTypeSymbol(
     string Name,
     bool IsReferenceType,
     bool IsRecord,
+    bool IsInterface,
+    TypeSymbol? BaseType,
+    IReadOnlyList<TypeSymbol> InterfaceTypes,
     IReadOnlyList<MethodSymbol> Methods,
     IReadOnlyList<FieldSymbol> Fields,
     IReadOnlyList<ConstantSymbol> Constants,
@@ -204,6 +209,111 @@ public sealed record MemberResolution(
     MethodSymbol? Method = null,
     ConstantSymbol? Constant = null);
 
+public enum BoundReceiverKind
+{
+    None,
+    Local,
+    Self,
+    Type,
+    Expression
+}
+
+public sealed record BoundReceiver(
+    BoundReceiverKind Kind,
+    TypeSymbol Type,
+    string? LocalName = null,
+    TypeSymbol? TargetType = null,
+    ExpressionSyntax? SourceExpression = null);
+
+public enum BoundMemberReadKind
+{
+    Local,
+    Field,
+    Property,
+    Constant
+}
+
+public sealed record BoundMemberRead(
+    BoundMemberReadKind Kind,
+    string DisplayName,
+    TypeSymbol Type,
+    BoundReceiver? Receiver = null,
+    FieldSymbol? Field = null,
+    PropertySymbol? Property = null,
+    MethodSymbol? GetterMethod = null,
+    FieldSymbol? ReadField = null,
+    ConstantSymbol? Constant = null,
+    ExpressionSyntax? SourceExpression = null);
+
+public sealed record BoundLengthRead(
+    string DisplayName,
+    TypeSymbol TargetType,
+    BoundReceiver? Receiver = null,
+    ExpressionSyntax? SourceExpression = null);
+
+public sealed record BoundSliceRead(
+    string DisplayName,
+    TypeSymbol TargetType,
+    BoundReceiver? Receiver = null,
+    ExpressionSyntax? TargetExpression = null,
+    RangeExpressionSyntax? Range = null);
+
+public sealed record BoundElementRead(
+    string DisplayName,
+    TypeSymbol ElementType,
+    BoundReceiver? Receiver = null,
+    PropertySymbol? IndexerProperty = null,
+    MethodSymbol? GetterMethod = null,
+    FieldSymbol? ReadField = null,
+    TypeSymbol? IndexedType = null,
+    ExpressionSyntax? TargetExpression = null);
+
+public sealed record BoundElementWrite(
+    string DisplayName,
+    TypeSymbol ElementType,
+    BoundReceiver? Receiver = null,
+    PropertySymbol? IndexerProperty = null,
+    MethodSymbol? SetterMethod = null,
+    FieldSymbol? WriteField = null,
+    TypeSymbol? IndexedType = null,
+    ExpressionSyntax? TargetExpression = null);
+
+public enum BoundWriteTargetKind
+{
+    Local,
+    Field,
+    Property,
+    ElementAccess
+}
+
+public sealed record BoundWriteTarget(
+    BoundWriteTargetKind Kind,
+    string DisplayName,
+    TypeSymbol Type,
+    BoundReceiver? Receiver = null,
+    FieldSymbol? Field = null,
+    PropertySymbol? Property = null,
+    MethodSymbol? SetterMethod = null,
+    FieldSymbol? WriteField = null,
+    ExpressionSyntax? SourceExpression = null);
+
+public enum BoundCallKind
+{
+    Direct,
+    Virtual,
+    Intrinsic,
+    Constructor
+}
+
+public sealed record BoundCall(
+    BoundCallKind Kind,
+    string DisplayName,
+    MethodSymbol Method,
+    TypeSymbol ReturnType,
+    BoundReceiver? Receiver = null,
+    IReadOnlyList<TypeSymbol>? ArgumentTypes = null,
+    ExpressionSyntax? SourceExpression = null);
+
 public sealed class Binder
 {
     public BindingResult Bind(SyntaxTree syntaxTree)
@@ -224,7 +334,30 @@ public sealed class Binder
             switch (member)
             {
                 case ClassDeclarationSyntax classDeclaration:
-                    declaredTypeShells.Add(new TypeSymbol(classDeclaration.Identifier.Text, true));
+                    declaredTypeShells.Add(new NamedTypeSymbol(
+                        classDeclaration.Identifier.Text,
+                        true,
+                        classDeclaration.ClassKeyword.Kind == SyntaxKind.RecordKeyword,
+                        false,
+                        null,
+                        [],
+                        [],
+                        [],
+                        [],
+                        []));
+                    break;
+                case InterfaceDeclarationSyntax interfaceDeclaration:
+                    declaredTypeShells.Add(new NamedTypeSymbol(
+                        interfaceDeclaration.Identifier.Text,
+                        true,
+                        false,
+                        true,
+                        null,
+                        [],
+                        [],
+                        [],
+                        [],
+                        []));
                     break;
                 case EnumDeclarationSyntax enumDeclaration:
                     declaredTypeShells.Add(new TypeSymbol(enumDeclaration.Identifier.Text, false));
@@ -239,6 +372,9 @@ public sealed class Binder
             {
                 case ClassDeclarationSyntax classDeclaration:
                     declaredTypes.Add(BindClass(classDeclaration, declaredTypeShells));
+                    break;
+                case InterfaceDeclarationSyntax interfaceDeclaration:
+                    declaredTypes.Add(BindInterface(interfaceDeclaration, declaredTypeShells));
                     break;
                 case EnumDeclarationSyntax enumDeclaration:
                     declaredTypes.Add(ResolveDeclaredType(enumDeclaration.Identifier.Text, declaredTypeShells, false));
@@ -412,6 +548,9 @@ public sealed class Binder
                 case ClassDeclarationSyntax classDeclaration:
                     ValidateClassSemantics(classDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics);
                     break;
+                case InterfaceDeclarationSyntax interfaceDeclaration:
+                    ValidateInterfaceSemantics(interfaceDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics);
+                    break;
                 case EnumDeclarationSyntax:
                     break;
             }
@@ -427,6 +566,72 @@ public sealed class Binder
         IReadOnlyList<PropertySymbol> knownProperties,
         DiagnosticBag diagnostics)
     {
+        var declaredTypeName = classDeclaration.Identifier.Text;
+        if (classDeclaration.BaseType is not null)
+        {
+            var primaryType = SemanticFacts.ResolveTypeReference(classDeclaration.BaseType.ToDisplayString(), knownTypes);
+            if (primaryType is null)
+            {
+                diagnostics.Report(
+                    "ILC2193",
+                    $"Unknown inherited type '{classDeclaration.BaseType.ToDisplayString()}' for class '{declaredTypeName}'.",
+                    DiagnosticSeverity.Error,
+                    classDeclaration.BaseType.Parts[^1].Span);
+            }
+            else if (!IsReferenceClassOrInterfaceType(primaryType))
+            {
+                diagnostics.Report(
+                    "ILC2194",
+                    $"Inherited type '{primaryType.Name}' for class '{declaredTypeName}' must be a class, record, or interface type.",
+                    DiagnosticSeverity.Error,
+                    classDeclaration.BaseType.Parts[^1].Span);
+            }
+            else if (ResolveNamedType(primaryType, knownTypes) is { IsInterface: false } namedPrimaryType &&
+                CreatesTypeCycle(declaredTypeName, namedPrimaryType, knownTypes))
+            {
+                diagnostics.Report(
+                    "ILC2195",
+                    $"Inheritance cycle detected for class '{declaredTypeName}'.",
+                    DiagnosticSeverity.Error,
+                    classDeclaration.Identifier.Span);
+            }
+        }
+
+        foreach (var interfaceTypeName in classDeclaration.InterfaceTypes)
+        {
+            var interfaceType = SemanticFacts.ResolveTypeReference(interfaceTypeName.ToDisplayString(), knownTypes);
+            if (interfaceType is null)
+            {
+                diagnostics.Report(
+                    "ILC2200",
+                    $"Unknown interface '{interfaceTypeName.ToDisplayString()}' for class '{declaredTypeName}'.",
+                    DiagnosticSeverity.Error,
+                    interfaceTypeName.Parts[^1].Span);
+                continue;
+            }
+
+            if (ResolveNamedType(interfaceType, knownTypes) is not { IsInterface: true })
+            {
+                diagnostics.Report(
+                    "ILC2201",
+                    $"Implemented type '{interfaceType.Name}' for class '{declaredTypeName}' must be an interface.",
+                    DiagnosticSeverity.Error,
+                    interfaceTypeName.Parts[^1].Span);
+            }
+        }
+
+        var (baseType, interfaceTypes) = ResolveClassInheritanceTargets(classDeclaration, knownTypes);
+        foreach (var interfaceType in interfaceTypes)
+        {
+            ValidateInterfaceImplementation(
+                declaredTypeName,
+                interfaceType,
+                classDeclaration,
+                knownTypes,
+                knownMethods,
+                diagnostics);
+        }
+
         var typeFields = FindFields(knownFields, classDeclaration.Identifier.Text);
         foreach (var property in classDeclaration.Members.OfType<PropertyDeclarationSyntax>())
         {
@@ -450,6 +655,15 @@ public sealed class Binder
             {
                 locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
             }
+
+            ValidateMethodInheritanceModifiers(
+                method,
+                boundMethod,
+                baseType,
+                knownTypes,
+                knownMethods,
+                declaredTypeName,
+                diagnostics);
 
             foreach (var field in typeFields.Where(field => field.IsStatic))
             {
@@ -521,6 +735,81 @@ public sealed class Binder
             false,
             false,
             diagnostics);
+        }
+    }
+
+    private static void ValidateInterfaceSemantics(
+        InterfaceDeclarationSyntax interfaceDeclaration,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        DiagnosticBag diagnostics)
+    {
+        foreach (var baseInterfaceName in interfaceDeclaration.BaseInterfaces)
+        {
+            var resolvedInterface = SemanticFacts.ResolveTypeReference(baseInterfaceName.ToDisplayString(), knownTypes);
+            if (resolvedInterface is null)
+            {
+                diagnostics.Report(
+                    "ILC2202",
+                    $"Unknown base interface '{baseInterfaceName.ToDisplayString()}' for interface '{interfaceDeclaration.Identifier.Text}'.",
+                    DiagnosticSeverity.Error,
+                    baseInterfaceName.Parts[^1].Span);
+                continue;
+            }
+
+            if (ResolveNamedType(resolvedInterface, knownTypes) is not { IsInterface: true })
+            {
+                diagnostics.Report(
+                    "ILC2203",
+                    $"Base interface '{resolvedInterface.Name}' for interface '{interfaceDeclaration.Identifier.Text}' must itself be an interface.",
+                    DiagnosticSeverity.Error,
+                    baseInterfaceName.Parts[^1].Span);
+            }
+        }
+
+        foreach (var member in interfaceDeclaration.Members)
+        {
+            switch (member)
+            {
+                case FieldDeclarationSyntax:
+                    diagnostics.Report(
+                        "ILC2204",
+                        $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare fields.",
+                        DiagnosticSeverity.Error,
+                        interfaceDeclaration.Identifier.Span);
+                    break;
+                case ConstantDeclarationSyntax:
+                    diagnostics.Report(
+                        "ILC2205",
+                        $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare constants in the current bootstrap compiler.",
+                        DiagnosticSeverity.Error,
+                        interfaceDeclaration.Identifier.Span);
+                    break;
+                case MethodDeclarationSyntax method when method.Keyword.Kind == SyntaxKind.ConstructorKeyword:
+                    diagnostics.Report(
+                        "ILC2206",
+                        $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare constructors.",
+                        DiagnosticSeverity.Error,
+                        method.Keyword.Span);
+                    break;
+                case MethodDeclarationSyntax method when method.Body is not null || method.ExpressionBody is not null:
+                    diagnostics.Report(
+                        "ILC2207",
+                        $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
+                        DiagnosticSeverity.Error,
+                        method.Keyword.Span);
+                    break;
+                case PropertyDeclarationSyntax property when property.BeginKeyword is not null || property.OpenBraceToken is not null:
+                    diagnostics.Report(
+                        "ILC2208",
+                        $"Interface property '{interfaceDeclaration.Identifier.Text}.{property.Identifier.Text}' must be declaration-only.",
+                        DiagnosticSeverity.Error,
+                        property.PropertyKeyword.Span);
+                    break;
+            }
         }
     }
 
@@ -1837,7 +2126,7 @@ public sealed class Binder
                     ValidateExpression(indexExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 }
 
-                ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 break;
             case PostfixElementAccessExpressionSyntax elementAccess:
                 ValidateExpression(elementAccess.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -1846,11 +2135,11 @@ public sealed class Binder
                     ValidateExpression(indexExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 }
 
-                ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 break;
             case MemberAccessExpressionSyntax memberAccess:
                 ValidateExpression(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var memberResolution = SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                var memberResolution = SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (memberResolution.Property is not null && memberResolution.Property.IsGetterPrivate && memberResolution.Property.DeclaringTypeName != currentMethod?.DeclaringTypeName)
                 {
                     diagnostics.Report(
@@ -2172,11 +2461,11 @@ public sealed class Binder
             return;
         }
 
-        if (!SemanticFacts.IsConstantExpression(label, locals, knownFields, knownConstants, knownProperties, currentMethod))
+        if (!SemanticFacts.IsConstantExpression(label, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes))
         {
             diagnostics.Report(
                 "ILC2147",
-                "Case labels must be literal or constant values in the current bootstrap compiler.",
+                $"Case label '{SemanticFacts.GetExpressionDisplayName(label)}' must be a literal or constant value in the current bootstrap compiler.",
                 DiagnosticSeverity.Error,
                 GetExpressionDiagnosticSpan(label, knownTypes));
             return;
@@ -2271,12 +2560,12 @@ public sealed class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
-        if (TryReportInvalidFieldAccess(name, locals, knownFields, knownConstants, knownProperties, currentMethod, diagnostics))
+        if (TryReportInvalidFieldAccess(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes, diagnostics))
         {
             return;
         }
 
-        var property = SemanticFacts.ResolvePropertyReference(name, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var property = SemanticFacts.ResolvePropertyReference(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (property is not null && property.IsGetterPrivate && property.DeclaringTypeName != currentMethod?.DeclaringTypeName)
         {
             diagnostics.Report(
@@ -2359,7 +2648,7 @@ public sealed class Binder
                 return;
             }
 
-            ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+            ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
             return;
         }
 
@@ -2393,7 +2682,7 @@ public sealed class Binder
                 return;
             }
 
-            ValidateArrayAccess(postfixElementAccess.Target, postfixElementAccess.IndexExpressions, postfixElementAccess.OpenBracketToken.Span, locals, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+            ValidateArrayAccess(postfixElementAccess.Target, postfixElementAccess.IndexExpressions, postfixElementAccess.OpenBracketToken.Span, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
             return;
         }
 
@@ -2402,7 +2691,7 @@ public sealed class Binder
             if (target is MemberAccessExpressionSyntax memberTarget)
             {
                 ValidateExpression(memberTarget.Receiver, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var memberResolution = SemanticFacts.ResolveMemberAccess(memberTarget, locals, [], knownFields, knownConstants, knownProperties, currentMethod);
+                var memberResolution = SemanticFacts.ResolveMemberAccess(memberTarget, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (memberResolution.Property is not null)
                 {
                     if (memberResolution.Property.WriteField is null && memberResolution.Property.SetterMethod is null)
@@ -2454,12 +2743,12 @@ public sealed class Binder
         }
 
         var targetName = nameTarget.Name;
-        if (TryReportInvalidFieldAccess(targetName, locals, knownFields, knownConstants, knownProperties, currentMethod, diagnostics))
+        if (TryReportInvalidFieldAccess(targetName, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes, diagnostics))
         {
             return;
         }
 
-        var property = SemanticFacts.ResolvePropertyReference(targetName, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var property = SemanticFacts.ResolvePropertyReference(targetName, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (property is not null && property.WriteField is null && property.SetterMethod is null)
         {
             diagnostics.Report(
@@ -2545,6 +2834,7 @@ public sealed class Binder
         IReadOnlyList<ExpressionSyntax> indexExpressions,
         TextSpan indexSpan,
         IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
         IReadOnlyList<MethodSymbol> knownMethods,
         IReadOnlyList<FieldSymbol> knownFields,
         IReadOnlyList<ConstantSymbol> knownConstants,
@@ -2559,9 +2849,9 @@ public sealed class Binder
         }
 
         if (target is MemberAccessExpressionSyntax memberAccess &&
-            SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod).Property is { IsIndexer: true })
+            SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Property is { IsIndexer: true })
         {
-            var memberIndexer = SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod).Property!;
+            var memberIndexer = SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Property!;
             if (indexExpressions.Count != 1)
             {
                 diagnostics.Report(
@@ -2588,8 +2878,8 @@ public sealed class Binder
             return;
         }
 
-        var indexedType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-        var indexer = SemanticFacts.ResolveIndexerReference(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var indexedType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var indexer = SemanticFacts.ResolveIndexerReference(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (indexer is not null)
         {
             if (indexExpressions.Count != 1)
@@ -2622,7 +2912,7 @@ public sealed class Binder
         {
             diagnostics.Report(
                 "ILC2125",
-                $"Expression '{GetExpressionDisplayName(target)}' is not indexable in the current bootstrap compiler.",
+                $"Expression '{GetExpressionDisplayName(target)}' of type '{indexedType.Name}' is not indexable in the current bootstrap compiler.",
                 DiagnosticSeverity.Error,
                 GetExpressionDiagnosticSpan(target, []));
         }
@@ -2722,6 +3012,7 @@ public sealed class Binder
         IReadOnlyList<ExpressionSyntax> indexExpressions,
         TextSpan indexSpan,
         IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
         IReadOnlyList<MethodSymbol> knownMethods,
         IReadOnlyList<FieldSymbol> knownFields,
         IReadOnlyList<ConstantSymbol> knownConstants,
@@ -2735,7 +3026,7 @@ public sealed class Binder
             return;
         }
 
-        var indexer = SemanticFacts.ResolveIndexerReference(target, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var indexer = SemanticFacts.ResolveIndexerReference(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (indexer is not null)
         {
             if (indexExpressions.Count != 1)
@@ -2761,12 +3052,12 @@ public sealed class Binder
             return;
         }
 
-        var indexedType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var indexedType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (!SemanticFacts.IsIndexableType(indexedType))
         {
             diagnostics.Report(
                 "ILC2125",
-                $"Expression '{target.ToDisplayString()}' is not indexable in the current bootstrap compiler.",
+                $"Expression '{target.ToDisplayString()}' of type '{indexedType.Name}' is not indexable in the current bootstrap compiler.",
                 DiagnosticSeverity.Error,
                 GetReferenceDiagnosticSpan(target, []));
         }
@@ -2844,10 +3135,11 @@ public sealed class Binder
         IReadOnlyList<ConstantSymbol> knownConstants,
         IReadOnlyList<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes,
         DiagnosticBag diagnostics)
     {
         var receiverType = target.Parts.Count >= 2 && target.Parts[0].Text != "self"
-            ? SemanticFacts.TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod)
+            ? SemanticFacts.TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
             : null;
         if (receiverType is not null)
         {
@@ -3008,7 +3300,7 @@ public sealed class Binder
         }
 
         if (candidate.IsVirtual &&
-            SemanticFacts.TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod) is not null)
+            SemanticFacts.TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is not null)
         {
             return false;
         }
@@ -3138,6 +3430,277 @@ public sealed class Binder
         return resolvedType is not null && knownMethods.Any(method => method.DeclaringTypeName == resolvedType.Name && method.IsConstructor);
     }
 
+    private static bool IsReferenceClassOrInterfaceType(TypeSymbol type) =>
+        type == TypeSymbol.Object ||
+        (type.IsReferenceType && type is NamedTypeSymbol {
+            IsRecord: false or true,
+            IsInterface: false or true
+        });
+
+    private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
+        type is NamedTypeSymbol namedType
+            ? namedType
+            : knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name);
+
+    private static bool CreatesTypeCycle(string declaredTypeName, TypeSymbol baseType, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var current = ResolveNamedType(baseType, knownTypes);
+        while (current is not null && visited.Add(current.Name))
+        {
+            if (current.Name == declaredTypeName)
+            {
+                return true;
+            }
+
+            current = ResolveNamedType(current.BaseType ?? TypeSymbol.Object, knownTypes);
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<NamedTypeSymbol> GetTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
+    {
+        var current = ResolveNamedType(type ?? TypeSymbol.Object, knownTypes);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+
+        while (current is not null && visited.Add(current.Name))
+        {
+            yield return current;
+            current = ResolveNamedType(current.BaseType ?? TypeSymbol.Object, knownTypes);
+        }
+    }
+
+    private static IEnumerable<NamedTypeSymbol> GetInterfaceHierarchy(TypeSymbol interfaceType, IEnumerable<TypeSymbol> knownTypes)
+    {
+        var pending = new Queue<NamedTypeSymbol>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        if (ResolveNamedType(interfaceType, knownTypes) is { IsInterface: true } rootInterface)
+        {
+            pending.Enqueue(rootInterface);
+        }
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            if (!visited.Add(current.Name))
+            {
+                continue;
+            }
+
+            yield return current;
+            foreach (var inheritedInterface in current.InterfaceTypes)
+            {
+                if (ResolveNamedType(inheritedInterface, knownTypes) is { IsInterface: true } nextInterface)
+                {
+                    pending.Enqueue(nextInterface);
+                }
+            }
+        }
+    }
+
+    private static void ValidateInterfaceImplementation(
+        string declaringTypeName,
+        TypeSymbol interfaceType,
+        ClassDeclarationSyntax classDeclaration,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        DiagnosticBag diagnostics)
+    {
+        foreach (var inheritedInterface in GetInterfaceHierarchy(interfaceType, knownTypes))
+        {
+            foreach (var interfaceMethod in knownMethods.Where(method =>
+                         method.DeclaringTypeName == inheritedInterface.Name &&
+                         !method.IsStatic &&
+                         !method.IsConstructor))
+            {
+                var implementation = GetTypeHierarchy(new TypeSymbol(declaringTypeName, true), knownTypes)
+                    .SelectMany(type => knownMethods.Where(candidate =>
+                        candidate.DeclaringTypeName == type.Name &&
+                        candidate.Name == interfaceMethod.Name &&
+                        !candidate.IsStatic))
+                    .FirstOrDefault(candidate => AreMethodSignaturesEquivalent(interfaceMethod, candidate));
+
+                if (implementation is null)
+                {
+                    diagnostics.Report(
+                        "ILC2209",
+                        $"Class '{declaringTypeName}' does not implement interface method '{inheritedInterface.Name}.{interfaceMethod.Name}'.",
+                        DiagnosticSeverity.Error,
+                        classDeclaration.Identifier.Span);
+                }
+            }
+        }
+    }
+
+    private static void ValidateMethodInheritanceModifiers(
+        MethodDeclarationSyntax methodDeclaration,
+        MethodSymbol? boundMethod,
+        TypeSymbol? baseType,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        string declaringTypeName,
+        DiagnosticBag diagnostics)
+    {
+        if (boundMethod is null)
+        {
+            return;
+        }
+
+        if (boundMethod.IsVirtual && boundMethod.IsStatic)
+        {
+            diagnostics.Report(
+                "ILC2196",
+                $"Method '{declaringTypeName}.{boundMethod.Name}' cannot be static and virtual.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+        }
+
+        if (boundMethod.IsOverride && boundMethod.IsVirtual)
+        {
+            diagnostics.Report(
+                "ILC2197",
+                $"Method '{declaringTypeName}.{boundMethod.Name}' cannot be marked both virtual and override.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+        }
+
+        if (boundMethod.IsStatic && boundMethod.IsOverride)
+        {
+            diagnostics.Report(
+                "ILC2196",
+                $"Method '{declaringTypeName}.{boundMethod.Name}' cannot be static and override.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+        }
+
+        if (!boundMethod.IsOverride || baseType is null)
+        {
+            return;
+        }
+
+        var overriddenMethod = FindOverridableBaseMethod(baseType, boundMethod, knownTypes, knownMethods);
+        var baseMethodByName = overriddenMethod ?? FindBaseMethodByName(baseType, boundMethod, knownTypes, knownMethods);
+        if (baseMethodByName is null)
+        {
+            diagnostics.Report(
+                "ILC2198",
+                $"Method '{declaringTypeName}.{boundMethod.Name}' is marked override but no matching virtual method exists in base type hierarchy.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+
+            return;
+        }
+
+        if (!(baseMethodByName.IsVirtual || baseMethodByName.IsOverride))
+        {
+            diagnostics.Report(
+                "ILC2198",
+                $"Method '{declaringTypeName}.{boundMethod.Name}' is marked override but base method '{baseMethodByName.DeclaringTypeName}.{baseMethodByName.Name}' is not virtual.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+            return;
+        }
+
+        if (overriddenMethod is null)
+        {
+            diagnostics.Report(
+                "ILC2199",
+                $"Override method '{declaringTypeName}.{boundMethod.Name}' signature does not match overridden method '{baseMethodByName.DeclaringTypeName}.{baseMethodByName.Name}'.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+            return;
+        }
+
+        if (!AreMethodSignaturesEquivalent(overriddenMethod, boundMethod))
+        {
+            diagnostics.Report(
+                "ILC2199",
+                $"Override method '{declaringTypeName}.{boundMethod.Name}' signature does not match overridden method '{overriddenMethod.DeclaringTypeName}.{overriddenMethod.Name}'.",
+                DiagnosticSeverity.Error,
+                methodDeclaration.Keyword.Span);
+        }
+    }
+
+    private static MethodSymbol? FindOverridableBaseMethod(
+        TypeSymbol baseType,
+        MethodSymbol method,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods)
+    {
+        foreach (var baseTypeEntry in GetTypeHierarchy(baseType, knownTypes))
+        {
+            var candidate = FindMethod(
+                knownMethods,
+                baseTypeEntry.Name,
+                method.Name,
+                method.Parameters.Count,
+                method.Parameters);
+
+            if (candidate is not null)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static MethodSymbol? FindBaseMethodByName(
+        TypeSymbol baseType,
+        MethodSymbol method,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods)
+    {
+        foreach (var baseTypeEntry in GetTypeHierarchy(baseType, knownTypes))
+        {
+            var candidate = knownMethods.FirstOrDefault(knownMethod =>
+                knownMethod.DeclaringTypeName == baseTypeEntry.Name &&
+                knownMethod.Name == method.Name);
+
+            if (candidate is not null)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static MethodSymbol? FindMethod(
+        IEnumerable<MethodSymbol> knownMethods,
+        string? declaringTypeName,
+        string name,
+        int parameterCount,
+        IReadOnlyList<ParameterSymbol> parameterTypes)
+    {
+        return knownMethods.FirstOrDefault(candidate =>
+            candidate.DeclaringTypeName == declaringTypeName &&
+            candidate.Name == name &&
+            candidate.Parameters.Count == parameterCount &&
+            candidate.Parameters.Select(parameter => parameter.Type).SequenceEqual(parameterTypes.Select(parameter => parameter.Type)));
+    }
+
+    private static bool AreMethodSignaturesEquivalent(MethodSymbol left, MethodSymbol right)
+    {
+        if (left.ReturnType != right.ReturnType || left.Parameters.Count != right.Parameters.Count)
+        {
+            return false;
+        }
+
+        for (var parameterIndex = 0; parameterIndex < left.Parameters.Count; parameterIndex++)
+        {
+            var leftParameter = left.Parameters[parameterIndex];
+            var rightParameter = right.Parameters[parameterIndex];
+            if (leftParameter.Type != rightParameter.Type || leftParameter.PassingKind != rightParameter.PassingKind)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static TypeSymbol BindType(QualifiedNameSyntax? typeName, IEnumerable<TypeSymbol>? knownTypes = null)
     {
         if (typeName is null)
@@ -3158,8 +3721,35 @@ public sealed class Binder
     private static TypeSymbol ResolveDeclaredType(string typeName, IEnumerable<TypeSymbol> knownTypes, bool isReferenceType) =>
         SemanticFacts.ResolveTypeReference(typeName, knownTypes) ?? new TypeSymbol(typeName, isReferenceType);
 
+    private static (TypeSymbol? BaseType, IReadOnlyList<TypeSymbol> InterfaceTypes) ResolveClassInheritanceTargets(ClassDeclarationSyntax classDeclaration, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var interfaceTypes = new List<TypeSymbol>();
+        TypeSymbol? baseType = null;
+
+        if (classDeclaration.BaseType is not null)
+        {
+            var primaryType = BindType(classDeclaration.BaseType, knownTypes);
+            if (ResolveNamedType(primaryType, knownTypes) is { IsInterface: true })
+            {
+                interfaceTypes.Add(primaryType);
+            }
+            else
+            {
+                baseType = primaryType;
+            }
+        }
+
+        foreach (var interfaceTypeName in classDeclaration.InterfaceTypes)
+        {
+            interfaceTypes.Add(BindType(interfaceTypeName, knownTypes));
+        }
+
+        return (baseType, interfaceTypes);
+    }
+
     private static NamedTypeSymbol BindClass(ClassDeclarationSyntax classDeclaration, IReadOnlyList<TypeSymbol> knownTypes)
     {
+        var (baseType, interfaceTypes) = ResolveClassInheritanceTargets(classDeclaration, knownTypes);
         var constants = classDeclaration.Members
             .OfType<ConstantDeclarationSyntax>()
             .SelectMany(constant => BindConstants(constant, classDeclaration.Identifier.Text, knownTypes))
@@ -3197,9 +3787,44 @@ public sealed class Binder
             classDeclaration.Identifier.Text,
             true,
             classDeclaration.ClassKeyword.Kind == SyntaxKind.RecordKeyword,
+            false,
+            baseType,
+            interfaceTypes,
             methods,
             fields,
             constants,
+            properties);
+    }
+
+    private static NamedTypeSymbol BindInterface(InterfaceDeclarationSyntax interfaceDeclaration, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var interfaceTypes = interfaceDeclaration.BaseInterfaces
+            .Select(typeName => BindType(typeName, knownTypes))
+            .ToArray();
+        var methods = interfaceDeclaration.Members
+            .OfType<MethodDeclarationSyntax>()
+            .Select(method => BindMethod(method, interfaceDeclaration.Identifier.Text, knownTypes))
+            .ToArray();
+        var properties = interfaceDeclaration.Members
+            .OfType<PropertyDeclarationSyntax>()
+            .Select(property => BindProperty(property, interfaceDeclaration.Identifier.Text, [], knownTypes))
+            .ToArray();
+        var propertyAccessorMethods = properties
+            .SelectMany(property => new[] { property.GetterMethod, property.SetterMethod })
+            .Where(method => method is not null)
+            .Cast<MethodSymbol>()
+            .ToArray();
+
+        return new NamedTypeSymbol(
+            interfaceDeclaration.Identifier.Text,
+            true,
+            false,
+            true,
+            null,
+            interfaceTypes,
+            methods.Concat(propertyAccessorMethods).ToArray(),
+            [],
+            [],
             properties);
     }
 
@@ -3281,17 +3906,19 @@ public sealed class Binder
             .ToArray();
 
         return new MethodSymbol(
-            methodDeclaration.Identifier.Text,
-            returnType,
-            parameters,
-            declaringTypeName,
-            methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword),
-            methodDeclaration,
-            methodDeclaration.Keyword.Kind == SyntaxKind.ConstructorKeyword,
-            false,
-            null,
-            methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.ExternKeyword),
-            ResolveHostImportKind(
+            Name: methodDeclaration.Identifier.Text,
+            ReturnType: returnType,
+            Parameters: parameters,
+            DeclaringTypeName: declaringTypeName,
+            IsStatic: methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword),
+            Declaration: methodDeclaration,
+            IsConstructor: methodDeclaration.Keyword.Kind == SyntaxKind.ConstructorKeyword,
+            IsSynthetic: false,
+            SyntheticMembers: null,
+            IsExtern: methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.ExternKeyword),
+            IsVirtual: methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.VirtualKeyword),
+            IsOverride: methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.OverrideKeyword),
+            HostImportKind: ResolveHostImportKind(
                 methodDeclaration.Identifier.Text,
                 returnType,
                 parameters,
@@ -3502,15 +4129,18 @@ public sealed class Binder
         var isSetterPrivate = propertyDeclaration.SetterModifiers.Any(modifier => modifier.Kind == SyntaxKind.PrivateKeyword)
             || propertyDeclaration.SetterBlockModifiers.Any(modifier => modifier.Kind == SyntaxKind.PrivateKeyword);
         var isInitOnly = propertyDeclaration.InitKeyword is not null;
+        var autoPropertyField = propertyDeclaration.OpenBraceToken is not null
+            ? fields.FirstOrDefault(field => field.Name == $"__auto_{propertyDeclaration.Identifier.Text}" && field.DeclaringTypeName == declaringTypeName)
+            : null;
         var readField = propertyDeclaration.BeginKeyword is not null
             ? null
             : propertyDeclaration.OpenBraceToken is not null
-            ? fields.First(field => field.Name == $"__auto_{propertyDeclaration.Identifier.Text}" && field.DeclaringTypeName == declaringTypeName)
+            ? autoPropertyField
             : BindPropertyFieldReference(propertyDeclaration.ReadTarget!, declaringTypeName, fields);
         var writeField = propertyDeclaration.BeginKeyword is not null
             ? null
             : propertyDeclaration.OpenBraceToken is not null
-            ? (propertyDeclaration.SetKeyword is null && propertyDeclaration.InitKeyword is null ? null : readField)
+            ? (propertyDeclaration.SetKeyword is null && propertyDeclaration.InitKeyword is null ? null : autoPropertyField)
             : propertyDeclaration.WriteTarget is null
                 ? null
                 : BindPropertyFieldReference(propertyDeclaration.WriteTarget, declaringTypeName, fields);
@@ -3621,6 +4251,23 @@ public sealed class Binder
 
 public static class SemanticFacts
 {
+    private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
+        type is NamedTypeSymbol namedType
+            ? namedType
+            : knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name);
+
+    private static IEnumerable<NamedTypeSymbol> GetTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
+    {
+        var current = ResolveNamedType(type ?? TypeSymbol.Object, knownTypes);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+
+        while (current is not null && visited.Add(current.Name))
+        {
+            yield return current;
+            current = ResolveNamedType(current.BaseType ?? TypeSymbol.Object, knownTypes);
+        }
+    }
+
     public static TypeSymbol InferExpressionType(
         ExpressionSyntax? expression,
         IReadOnlyDictionary<string, TypeSymbol> localTypes,
@@ -3628,7 +4275,8 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol>? knownFields,
         IEnumerable<ConstantSymbol>? knownConstants,
         IEnumerable<PropertySymbol>? knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         if (expression is null)
         {
@@ -3639,16 +4287,16 @@ public static class SemanticFacts
         {
             LiteralExpressionSyntax literal => InferLiteralType(literal),
             SetLiteralExpressionSyntax setLiteral => InferSetLiteralType(setLiteral, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
-            RangeExpressionSyntax range => InferExpressionType(range.Start, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
-            ParenthesizedExpressionSyntax parenthesized => InferExpressionType(parenthesized.Expression, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
+            RangeExpressionSyntax range => InferExpressionType(range.Start, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
+            ParenthesizedExpressionSyntax parenthesized => InferExpressionType(parenthesized.Expression, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             MatchAndPatternSyntax andPattern => andPattern.Patterns.Count > 0
-                ? InferExpressionType(andPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)
+                ? InferExpressionType(andPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes)
                 : TypeSymbol.Integer,
-            MatchNotPatternSyntax notPattern => InferExpressionType(notPattern.Pattern, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
+            MatchNotPatternSyntax notPattern => InferExpressionType(notPattern.Pattern, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             MatchOrPatternSyntax orPattern => orPattern.Patterns.Count > 0
-                ? InferExpressionType(orPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)
+                ? InferExpressionType(orPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes)
                 : TypeSymbol.Integer,
-            MatchRelationalPatternSyntax relational => InferExpressionType(relational.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
+            MatchRelationalPatternSyntax relational => InferExpressionType(relational.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             NewExpressionSyntax newExpression => new TypeSymbol(newExpression.TypeName.ToDisplayString(), true),
             NewArrayExpressionSyntax newArray => new TypeSymbol(
                 $"{newArray.ElementTypeName.ToDisplayString()}{GetArrayTypeSuffix(newArray.LengthExpressions)}",
@@ -3656,17 +4304,17 @@ public static class SemanticFacts
             ArrayLengthExpressionSyntax => TypeSymbol.Integer,
             ElementAccessExpressionSyntax elementAccess => GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
             PostfixElementAccessExpressionSyntax elementAccess => GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
-            MemberAccessExpressionSyntax memberAccess => ResolveMemberAccess(memberAccess, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod).Type
+            MemberAccessExpressionSyntax memberAccess => ResolveMemberAccess(memberAccess, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes).Type
                 ?? TypeSymbol.Integer,
             NameExpressionSyntax name when localTypes.TryGetValue(name.Name.ToDisplayString(), out var localType) => localType,
-            NameExpressionSyntax name => ResolveName(name.Name, localTypes, [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod).Type
+            NameExpressionSyntax name => ResolveName(name.Name, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod).Type
                 ?? TypeSymbol.Integer,
             AssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, out var assignmentType) => assignmentType,
             AssignmentExpressionSyntax => TypeSymbol.Integer,
             CompoundAssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, out var compoundAssignmentType) => compoundAssignmentType,
             CompoundAssignmentExpressionSyntax => TypeSymbol.Integer,
             UnaryExpressionSyntax unary => unary.OperatorToken.Kind == SyntaxKind.NotKeyword
-                ? InferExpressionType(unary.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod) == TypeSymbol.Boolean
+                ? InferExpressionType(unary.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes) == TypeSymbol.Boolean
                     ? TypeSymbol.Boolean
                     : TypeSymbol.Integer
                 : TypeSymbol.Integer,
@@ -3675,7 +4323,7 @@ public static class SemanticFacts
                 : IsComparisonOperator(binary.OperatorToken.Kind)
                     ? TypeSymbol.Boolean
                     : InferBinaryExpressionType(binary, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
-            AsExpressionSyntax asExpression => ResolveTypeReference(asExpression.TypeName.ToDisplayString(), [])
+            AsExpressionSyntax asExpression => ResolveTypeReference(asExpression.TypeName.ToDisplayString(), knownTypes ?? [])
                 ?? new TypeSymbol(asExpression.TypeName.ToDisplayString(), true),
             TypeTestExpressionSyntax => TypeSymbol.Boolean,
             CallExpressionSyntax call => call.Target is MemberAccessExpressionSyntax memberAccess &&
@@ -3686,13 +4334,13 @@ public static class SemanticFacts
                     method.Parameters.Count == call.Arguments.Count &&
                     method.IsStatic) is { } staticMethod
                     ? staticMethod.ReturnType
-                    : ResolveInvocation(call.Target, call.Arguments.Count, localTypes, [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)?.Method.ReturnType ?? TypeSymbol.Integer,
+                    : ResolveInvocation(call.Target, call.Arguments.Count, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)?.Method.ReturnType ?? TypeSymbol.Integer,
             MatchExpressionSyntax matchExpression => matchExpression.Arms.Count > 0
                 ? InferExpressionType(
                     matchExpression.Arms[0].Expression,
                     matchExpression.Arms[0].TypeName is not null &&
                     matchExpression.Arms[0].Identifier is not null &&
-                    ResolveTypeReference(matchExpression.Arms[0].TypeName!.ToDisplayString(), []) is { } matchArmType
+                    ResolveTypeReference(matchExpression.Arms[0].TypeName!.ToDisplayString(), knownTypes ?? []) is { } matchArmType
                         ? new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
                         {
                             [matchExpression.Arms[0].Identifier!.Text] = matchArmType
@@ -3702,7 +4350,8 @@ public static class SemanticFacts
                     knownFields ?? [],
                     knownConstants ?? [],
                     knownProperties ?? [],
-                    currentMethod)
+                    currentMethod,
+                    knownTypes)
                 : TypeSymbol.Integer,
             _ => TypeSymbol.Integer
         };
@@ -3793,16 +4442,17 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         if (target is MemberAccessExpressionSyntax memberAccess &&
-            ResolveMemberAccess(memberAccess, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod).Property is { IsIndexer: true } directIndexer)
+            ResolveMemberAccess(memberAccess, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Property is { IsIndexer: true } directIndexer)
         {
             return directIndexer.Type;
         }
 
-        var targetType = InferExpressionType(target, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-        var indexer = ResolveIndexerReference(target, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var targetType = InferExpressionType(target, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var indexer = ResolveIndexerReference(target, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (indexer is not null)
         {
             return indexer.Type;
@@ -3872,46 +4522,56 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
-        var receiverType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var receiverType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         var displayName = $"{GetExpressionDisplayName(memberAccess.Receiver)}.{memberAccess.MemberName.Text}";
         if (memberAccess.MemberName.Text == "Length" && HasLengthProperty(receiverType))
         {
             return new MemberResolution(displayName, TypeSymbol.Integer);
         }
 
-        var property = knownProperties.FirstOrDefault(candidate =>
-            !candidate.IsStatic &&
-            candidate.DeclaringTypeName == receiverType.Name &&
-            candidate.Name == memberAccess.MemberName.Text);
+        var typeHierarchy = GetTypeHierarchy(receiverType, knownTypes ?? []);
+        var property = typeHierarchy
+            .SelectMany(knownType => knownProperties.Where(candidate =>
+                !candidate.IsStatic &&
+                candidate.DeclaringTypeName == knownType.Name &&
+                candidate.Name == memberAccess.MemberName.Text))
+            .FirstOrDefault();
         if (property is not null)
         {
             return new MemberResolution(displayName, property.Type, property.ReadField, property, null);
         }
 
-        var field = knownFields.FirstOrDefault(candidate =>
-            !candidate.IsStatic &&
-            candidate.DeclaringTypeName == receiverType.Name &&
-            candidate.Name == memberAccess.MemberName.Text);
+        var field = typeHierarchy
+            .SelectMany(knownType => knownFields.Where(candidate =>
+                !candidate.IsStatic &&
+                candidate.DeclaringTypeName == knownType.Name &&
+                candidate.Name == memberAccess.MemberName.Text))
+            .FirstOrDefault();
         if (field is not null)
         {
             return new MemberResolution(displayName, field.Type, field);
         }
 
-        var constant = knownConstants.FirstOrDefault(candidate =>
-            candidate.IsStatic &&
-            candidate.DeclaringTypeName == receiverType.Name &&
-            candidate.Name == memberAccess.MemberName.Text);
+        var constant = typeHierarchy
+            .SelectMany(knownType => knownConstants.Where(candidate =>
+                candidate.IsStatic &&
+                candidate.DeclaringTypeName == knownType.Name &&
+                candidate.Name == memberAccess.MemberName.Text))
+            .FirstOrDefault();
         if (constant is not null)
         {
             return new MemberResolution(displayName, constant.Type, null, null, null, constant);
         }
 
-        var method = knownMethods.FirstOrDefault(candidate =>
-            !candidate.IsStatic &&
-            candidate.DeclaringTypeName == receiverType.Name &&
-            candidate.Name == memberAccess.MemberName.Text);
+        var method = typeHierarchy
+            .SelectMany(knownType => knownMethods.Where(candidate =>
+                !candidate.IsStatic &&
+                candidate.DeclaringTypeName == knownType.Name &&
+                candidate.Name == memberAccess.MemberName.Text))
+            .FirstOrDefault();
         if (method is not null)
         {
             return new MemberResolution(displayName, method.ReturnType, Method: method);
@@ -3953,8 +4613,15 @@ public static class SemanticFacts
         MethodSymbol? currentMethod,
         bool ignoreAccess = false)
     {
-        if (memberAccess.Receiver is NameExpressionSyntax receiverName &&
-            ResolveTypeReference(receiverName.Name.ToDisplayString(), knownTypes) is { } targetType)
+        QualifiedNameSyntax? receiverTypeName = memberAccess.Receiver switch
+        {
+            NameExpressionSyntax receiverName => receiverName.Name,
+            MemberAccessExpressionSyntax nestedReceiver => TryFlattenQualifiedTarget(nestedReceiver),
+            _ => null
+        };
+
+        if (receiverTypeName is not null &&
+            ResolveTypeReference(receiverTypeName.ToDisplayString(), knownTypes) is { } targetType)
         {
             if (TryResolveTypeIntrinsic(targetType, memberAccess.MemberName.Text, argumentCount) is { } typeIntrinsic)
             {
@@ -3980,16 +4647,19 @@ public static class SemanticFacts
             return new InvocationResolution(intrinsic, receiverType, true);
         }
 
-        var method = knownMethods.FirstOrDefault(candidate =>
-            candidate.DeclaringTypeName == receiverType.Name &&
-            candidate.Name == memberAccess.MemberName.Text &&
-            SupportsArgumentCount(candidate, argumentCount));
-        if (method is null || (!ignoreAccess && method.IsStatic))
+        var method = GetTypeHierarchy(receiverType, knownTypes)
+            .SelectMany(knownType => knownMethods.Where(candidate =>
+                candidate.DeclaringTypeName == knownType.Name &&
+                candidate.Name == memberAccess.MemberName.Text &&
+                SupportsArgumentCount(candidate, argumentCount) &&
+                (!ignoreAccess || !candidate.IsStatic)))
+            .FirstOrDefault(candidate => !ignoreAccess ? !candidate.IsStatic : true);
+        if (method is null)
         {
             return null;
         }
 
-        return new InvocationResolution(method, receiverType, !method.IsStatic);
+        return new InvocationResolution(method, receiverType, method.IsVirtual || method.IsOverride);
     }
 
     private static MethodSymbol? TryResolveIntrinsic(TypeSymbol receiverType, string name, int argumentCount)
@@ -4269,7 +4939,8 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         if (target.Parts.Count >= 2)
         {
@@ -4289,8 +4960,8 @@ public static class SemanticFacts
             (locals.TryGetValue(target.Parts[0].Text, out var localTargetType) && IsIndexableType(localTargetType) ||
              currentMethod?.DeclaringTypeName is not null &&
              ResolveFieldReference(target, knownFields, currentMethod) is { Type: var fieldType } && IsIndexableType(fieldType) ||
-             ResolvePropertyReference(target, locals, knownFields, knownConstants, knownProperties, currentMethod) is { Type: var propertyType } && IsIndexableType(propertyType) ||
-             ResolveConstantReference(target, locals, knownFields, knownConstants, knownProperties, currentMethod) is { Type: var constantType } && IsIndexableType(constantType)))
+             ResolvePropertyReference(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is { Type: var propertyType } && IsIndexableType(propertyType) ||
+             ResolveConstantReference(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is { Type: var constantType } && IsIndexableType(constantType)))
         {
             return null;
         }
@@ -4332,12 +5003,13 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         return target switch
         {
-            NameExpressionSyntax name => ResolveIndexerReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod),
-            MemberAccessExpressionSyntax memberAccess => ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod).Property is { IsIndexer: true } property
+            NameExpressionSyntax name => ResolveIndexerReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+            MemberAccessExpressionSyntax memberAccess => ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Property is { IsIndexer: true } property
                 ? property
                 : knownProperties.FirstOrDefault(candidate =>
                     candidate.IsIndexer &&
@@ -4379,7 +5051,7 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
-        var valueReceiverType = TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var valueReceiverType = TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
             if (TryResolveIntrinsic(valueReceiverType, target.Parts[^1].Text, argumentCount) is { } intrinsic)
@@ -4387,14 +5059,16 @@ public static class SemanticFacts
                 return new InvocationResolution(intrinsic, valueReceiverType, true);
             }
 
-            var instanceMethod = knownMethods.FirstOrDefault(method =>
-                method.DeclaringTypeName == valueReceiverType.Name &&
-                method.Name == target.Parts[^1].Text &&
-                SupportsArgumentCount(method, argumentCount) &&
-                !method.IsStatic);
+            var instanceMethod = GetTypeHierarchy(valueReceiverType, knownTypes)
+                .SelectMany(knownType => knownMethods.Where(method =>
+                    method.DeclaringTypeName == knownType.Name &&
+                    method.Name == target.Parts[^1].Text &&
+                    SupportsArgumentCount(method, argumentCount) &&
+                    !method.IsStatic))
+                .FirstOrDefault();
             if (instanceMethod is not null)
             {
-                return new InvocationResolution(instanceMethod, valueReceiverType, true);
+                return new InvocationResolution(instanceMethod, valueReceiverType, instanceMethod.IsVirtual || instanceMethod.IsOverride);
             }
         }
 
@@ -4473,13 +5147,15 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
-        var valueReceiverType = TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var valueReceiverType = TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var method = knownMethods.FirstOrDefault(candidate =>
-                candidate.DeclaringTypeName == valueReceiverType.Name &&
-                candidate.Name == target.Parts[^1].Text &&
-                SupportsArgumentCount(candidate, argumentCount));
+            var method = GetTypeHierarchy(valueReceiverType, knownTypes)
+                .SelectMany(knownType => knownMethods.Where(candidate =>
+                    candidate.DeclaringTypeName == knownType.Name &&
+                    candidate.Name == target.Parts[^1].Text &&
+                    SupportsArgumentCount(candidate, argumentCount)))
+                .FirstOrDefault();
             if (method is not null)
             {
                 return new InvocationResolution(method, valueReceiverType, !method.IsStatic);
@@ -4541,40 +5217,49 @@ public static class SemanticFacts
             return new NameResolution(NameResolutionKind.LocalOrGlobal, displayName, localType);
         }
 
-        var receiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var receiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (receiverType is not null)
         {
-            var instanceField = knownFields.FirstOrDefault(field =>
-                field.DeclaringTypeName == receiverType.Name &&
-                field.Name == name.Parts[^1].Text &&
-                !field.IsStatic);
+            var hierarchy = GetTypeHierarchy(receiverType, knownTypes);
+            var instanceField = hierarchy
+                .SelectMany(receiver => knownFields.Where(field =>
+                    field.DeclaringTypeName == receiver.Name &&
+                    field.Name == name.Parts[^1].Text &&
+                    !field.IsStatic))
+                .FirstOrDefault();
             if (instanceField is not null)
             {
                 return new NameResolution(NameResolutionKind.Field, displayName, instanceField.Type, null, instanceField);
             }
 
-            var instanceProperty = knownProperties.FirstOrDefault(property =>
-                property.DeclaringTypeName == receiverType.Name &&
-                property.Name == name.Parts[^1].Text &&
-                !property.IsStatic);
+            var instanceProperty = hierarchy
+                .SelectMany(receiver => knownProperties.Where(property =>
+                    property.DeclaringTypeName == receiver.Name &&
+                    property.Name == name.Parts[^1].Text &&
+                    !property.IsStatic))
+                .FirstOrDefault();
             if (instanceProperty is not null)
             {
                 return new NameResolution(NameResolutionKind.Field, displayName, instanceProperty.Type, null, instanceProperty.ReadField);
             }
 
-            var instanceConstant = knownConstants.FirstOrDefault(constant =>
-                constant.IsStatic &&
-                constant.DeclaringTypeName == receiverType.Name &&
-                constant.Name == name.Parts[^1].Text);
+            var instanceConstant = hierarchy
+                .SelectMany(receiver => knownConstants.Where(constant =>
+                    constant.IsStatic &&
+                    constant.DeclaringTypeName == receiver.Name &&
+                    constant.Name == name.Parts[^1].Text))
+                .FirstOrDefault();
             if (instanceConstant is not null)
             {
                 return new NameResolution(NameResolutionKind.Constant, displayName, instanceConstant.Type, null, null, instanceConstant);
             }
 
-            var instanceMethodGroup = knownMethods.FirstOrDefault(method =>
-                method.DeclaringTypeName == receiverType.Name &&
-                method.Name == name.Parts[^1].Text &&
-                !method.IsStatic);
+            var instanceMethodGroup = hierarchy
+                .SelectMany(receiver => knownMethods.Where(method =>
+                    method.DeclaringTypeName == receiver.Name &&
+                    method.Name == name.Parts[^1].Text &&
+                    !method.IsStatic))
+                .FirstOrDefault();
             if (instanceMethodGroup is not null)
             {
                 return new NameResolution(NameResolutionKind.MethodGroup, displayName, instanceMethodGroup.ReturnType, instanceMethodGroup);
@@ -4612,6 +5297,743 @@ public static class SemanticFacts
         }
 
         return new NameResolution(NameResolutionKind.Unknown, displayName);
+    }
+
+    public static BoundWriteTarget? BindWriteTarget(
+        ExpressionSyntax target,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        switch (target)
+        {
+            case NameExpressionSyntax nameExpression:
+            {
+                var name = nameExpression.Name;
+                var displayName = name.ToDisplayString();
+                if (name.Parts.Count == 1 && locals.TryGetValue(displayName, out var localType))
+                {
+                    return new BoundWriteTarget(
+                        BoundWriteTargetKind.Local,
+                        displayName,
+                        localType,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        target);
+                }
+
+                var property = ResolvePropertyReference(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (property is not null && (property.WriteField is not null || property.SetterMethod is not null))
+                {
+                    return new BoundWriteTarget(
+                        BoundWriteTargetKind.Property,
+                        displayName,
+                        property.Type,
+                        property.IsStatic
+                            ? null
+                            : BindQualifiedValueReceiver(name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        null,
+                        property,
+                        property.SetterMethod,
+                        property.WriteField,
+                        target);
+                }
+
+                var resolution = ResolveName(name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                if (resolution.Field is not null)
+                {
+                    return new BoundWriteTarget(
+                        BoundWriteTargetKind.Field,
+                        displayName,
+                        resolution.Field.Type,
+                        resolution.Field.IsStatic
+                            ? null
+                            : BindQualifiedValueReceiver(name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        resolution.Field,
+                        null,
+                        null,
+                        null,
+                        target);
+                }
+
+                return null;
+            }
+            case MemberAccessExpressionSyntax memberAccess:
+            {
+                var displayName = GetExpressionDisplayName(memberAccess);
+                var memberResolution = ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (memberResolution.Property is not null && (memberResolution.Property.WriteField is not null || memberResolution.Property.SetterMethod is not null))
+                {
+                    return new BoundWriteTarget(
+                        BoundWriteTargetKind.Property,
+                        displayName,
+                        memberResolution.Property.Type,
+                        BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        null,
+                        memberResolution.Property,
+                        memberResolution.Property.SetterMethod,
+                        memberResolution.Property.WriteField,
+                        target);
+                }
+
+                if (memberResolution.Field is not null)
+                {
+                    return new BoundWriteTarget(
+                        BoundWriteTargetKind.Field,
+                        displayName,
+                        memberResolution.Field.Type,
+                        BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        memberResolution.Field,
+                        null,
+                        null,
+                        null,
+                        target);
+                }
+
+                return null;
+            }
+            case ElementAccessExpressionSyntax or PostfixElementAccessExpressionSyntax:
+                return new BoundWriteTarget(
+                    BoundWriteTargetKind.ElementAccess,
+                    GetExpressionDisplayName(target),
+                    InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    target);
+            default:
+                return null;
+        }
+    }
+
+    public static BoundMemberRead? BindRead(
+        ExpressionSyntax expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        switch (expression)
+        {
+            case NameExpressionSyntax nameExpression:
+            {
+                var displayName = nameExpression.Name.ToDisplayString();
+                if (locals.TryGetValue(displayName, out var localType))
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Local,
+                        displayName,
+                        localType,
+                        new BoundReceiver(BoundReceiverKind.Local, localType, LocalName: displayName, SourceExpression: expression),
+                        SourceExpression: expression);
+                }
+
+                var property = ResolvePropertyReference(nameExpression.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (property is not null)
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Property,
+                        displayName,
+                        property.Type,
+                        property.IsStatic
+                            ? null
+                            : BindQualifiedValueReceiver(nameExpression.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        null,
+                        property,
+                        property.GetterMethod,
+                        property.ReadField,
+                        null,
+                        expression);
+                }
+
+                var constant = ResolveConstantReference(nameExpression.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (constant is not null)
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Constant,
+                        displayName,
+                        constant.Type,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        constant,
+                        expression);
+                }
+
+                var resolvedName = ResolveName(nameExpression.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                if (resolvedName.Field is not null)
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Field,
+                        displayName,
+                        resolvedName.Field.Type,
+                        resolvedName.Field.IsStatic
+                            ? null
+                            : BindQualifiedValueReceiver(nameExpression.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        resolvedName.Field,
+                        null,
+                        null,
+                        null,
+                        null,
+                        expression);
+                }
+
+                return null;
+            }
+            case MemberAccessExpressionSyntax memberAccess:
+            {
+                var memberResolution = ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (memberResolution.Property is not null)
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Property,
+                        memberResolution.DisplayName,
+                        memberResolution.Property.Type,
+                        memberResolution.Property.IsStatic
+                            ? null
+                            : BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        null,
+                        memberResolution.Property,
+                        memberResolution.Property.GetterMethod,
+                        memberResolution.Property.ReadField,
+                        null,
+                        expression);
+                }
+
+                if (memberResolution.Field is not null)
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Field,
+                        memberResolution.DisplayName,
+                        memberResolution.Field.Type,
+                        memberResolution.Field.IsStatic
+                            ? null
+                            : BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        memberResolution.Field,
+                        null,
+                        null,
+                        null,
+                        null,
+                        expression);
+                }
+
+                if (memberResolution.Constant is not null)
+                {
+                    return new BoundMemberRead(
+                        BoundMemberReadKind.Constant,
+                        memberResolution.DisplayName,
+                        memberResolution.Constant.Type,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        memberResolution.Constant,
+                        expression);
+                }
+
+                var qualifiedTarget = TryFlattenQualifiedTarget(memberAccess);
+                if (qualifiedTarget is not null)
+                {
+                    var displayName = qualifiedTarget.ToDisplayString();
+                    var qualifiedProperty = ResolvePropertyReference(qualifiedTarget, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (qualifiedProperty is not null)
+                    {
+                        return new BoundMemberRead(
+                            BoundMemberReadKind.Property,
+                            displayName,
+                            qualifiedProperty.Type,
+                            qualifiedProperty.IsStatic
+                                ? null
+                                : BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                            null,
+                            qualifiedProperty,
+                            qualifiedProperty.GetterMethod,
+                            qualifiedProperty.ReadField,
+                            null,
+                            expression);
+                    }
+
+                    var qualifiedConstant = ResolveConstantReference(qualifiedTarget, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (qualifiedConstant is not null)
+                    {
+                        return new BoundMemberRead(
+                            BoundMemberReadKind.Constant,
+                            displayName,
+                            qualifiedConstant.Type,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            qualifiedConstant,
+                            expression);
+                    }
+
+                    var qualifiedResolution = ResolveName(qualifiedTarget, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                    if (qualifiedResolution.Field is not null)
+                    {
+                        return new BoundMemberRead(
+                            BoundMemberReadKind.Field,
+                            displayName,
+                            qualifiedResolution.Field.Type,
+                            qualifiedResolution.Field.IsStatic
+                                ? null
+                                : BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                            qualifiedResolution.Field,
+                            null,
+                            null,
+                            null,
+                            null,
+                            expression);
+                    }
+                }
+
+                return null;
+            }
+            default:
+                return null;
+        }
+    }
+
+    public static BoundCall? BindCall(
+        CallExpressionSyntax call,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var invocation = ResolveInvocation(call.Target, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        if (invocation?.Method is not null)
+        {
+            return CreateBoundCall(call, invocation, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        }
+
+        var qualifiedTarget = TryFlattenQualifiedTarget(call.Target);
+        if (qualifiedTarget is null)
+        {
+            return null;
+        }
+
+        invocation = ResolveInvocation(qualifiedTarget, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        if (invocation?.Method is not null)
+        {
+            return CreateBoundCall(call, invocation, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        }
+
+        return null;
+    }
+
+    public static BoundElementRead? BindElementRead(
+        ExpressionSyntax target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        if (IsSliceAccess(indexExpressions))
+        {
+            return null;
+        }
+
+        var indexedType = InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var indexer = ResolveIndexerReference(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (indexer?.GetterMethod is not null)
+        {
+            return new BoundElementRead(
+                $"{GetExpressionDisplayName(target)}[{indexer.IndexParameter?.Name ?? "index"}]",
+                indexer.Type,
+                indexer.GetterMethod.IsStatic
+                    ? null
+                    : BindIndexedOwnerReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                indexer,
+                indexer.GetterMethod,
+                null,
+                indexedType,
+                target);
+        }
+
+        if (indexer?.ReadField is not null)
+        {
+            return new BoundElementRead(
+                $"{GetExpressionDisplayName(target)}[{indexer.IndexParameter?.Name ?? "index"}]",
+                indexer.Type,
+                indexer.ReadField.IsStatic
+                    ? null
+                    : BindIndexedOwnerReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                indexer,
+                null,
+                indexer.ReadField,
+                indexedType,
+                target);
+        }
+
+        if (IsIndexableType(indexedType))
+        {
+            return new BoundElementRead(
+                $"{GetExpressionDisplayName(target)}[...]",
+                GetElementType(indexedType) ?? indexedType,
+                BindReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                null,
+                null,
+                null,
+                indexedType,
+                target);
+        }
+
+        return null;
+    }
+
+    public static BoundSliceRead? BindSliceRead(
+        ExpressionSyntax target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        if (!IsSliceAccess(indexExpressions) || indexExpressions[0] is not RangeExpressionSyntax range)
+        {
+            return null;
+        }
+
+        var targetType = InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (!HasLengthProperty(targetType))
+        {
+            return null;
+        }
+
+        return new BoundSliceRead(
+            $"{GetExpressionDisplayName(target)}[..]",
+            targetType,
+            BindReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            target,
+            range);
+    }
+
+    public static BoundElementWrite? BindElementWrite(
+        ExpressionSyntax target,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        if (IsSliceAccess(indexExpressions))
+        {
+            return null;
+        }
+
+        var indexedType = InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var indexer = ResolveIndexerReference(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (indexer?.SetterMethod is not null)
+        {
+            return new BoundElementWrite(
+                $"{GetExpressionDisplayName(target)}[{indexer.IndexParameter?.Name ?? "index"}]",
+                indexer.Type,
+                indexer.SetterMethod.IsStatic
+                    ? null
+                    : BindIndexedOwnerReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                indexer,
+                indexer.SetterMethod,
+                null,
+                indexedType,
+                target);
+        }
+
+        if (indexer?.WriteField is not null)
+        {
+            return new BoundElementWrite(
+                $"{GetExpressionDisplayName(target)}[{indexer.IndexParameter?.Name ?? "index"}]",
+                indexer.Type,
+                indexer.WriteField.IsStatic
+                    ? null
+                    : BindIndexedOwnerReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                indexer,
+                null,
+                indexer.WriteField,
+                indexedType,
+                target);
+        }
+
+        if (IsIndexableType(indexedType))
+        {
+            return new BoundElementWrite(
+                $"{GetExpressionDisplayName(target)}[...]",
+                GetElementType(indexedType) ?? indexedType,
+                BindReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                null,
+                null,
+                null,
+                indexedType,
+                target);
+        }
+
+        return null;
+    }
+
+    public static BoundLengthRead? BindLengthRead(
+        ExpressionSyntax expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        switch (expression)
+        {
+            case ArrayLengthExpressionSyntax arrayLength:
+            {
+                var targetExpression = new NameExpressionSyntax(arrayLength.Target);
+                var targetType = InferExpressionType(targetExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (!HasLengthProperty(targetType))
+                {
+                    return null;
+                }
+
+                return new BoundLengthRead(
+                    $"{arrayLength.Target.ToDisplayString()}.Length",
+                    targetType,
+                    BindReceiver(targetExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                    targetExpression);
+            }
+            case MemberAccessExpressionSyntax memberAccess when memberAccess.MemberName.Text == "Length":
+            {
+                var targetType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (!HasLengthProperty(targetType) &&
+                    BindRead(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod) is { } boundReceiverRead)
+                {
+                    targetType = boundReceiverRead.Type;
+                }
+
+                if (!HasLengthProperty(targetType))
+                {
+                    return null;
+                }
+
+                return new BoundLengthRead(
+                    $"{GetExpressionDisplayName(memberAccess.Receiver)}.Length",
+                    targetType,
+                    BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                    memberAccess.Receiver);
+            }
+            default:
+                return null;
+        }
+    }
+
+    private static BoundCall CreateBoundCall(
+        CallExpressionSyntax call,
+        InvocationResolution invocation,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var receiver = invocation.Method.IsStatic
+            ? null
+            : call.Target switch
+            {
+                MemberAccessExpressionSyntax memberAccess => BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                NameExpressionSyntax nameExpression when nameExpression.Name.Parts.Count > 1 => BindReceiver(
+                    new QualifiedNameSyntax(nameExpression.Name.Parts.Take(nameExpression.Name.Parts.Count - 1).ToArray()),
+                    locals,
+                    knownFields,
+                    knownConstants,
+                    knownProperties,
+                    currentMethod,
+                    knownTypes),
+                _ => currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic
+                    ? new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self")
+                    : null
+            };
+
+        var kind = invocation.Method.IsConstructor
+            ? BoundCallKind.Constructor
+            : invocation.Method.IsSynthetic && invocation.Method.HostImportKind != HostImportKind.None
+                ? BoundCallKind.Intrinsic
+                : invocation.IsVirtual
+                    ? BoundCallKind.Virtual
+                    : BoundCallKind.Direct;
+
+        var argumentTypes = call.Arguments
+            .Select(argument => InferExpressionType(argument.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod))
+            .ToArray();
+
+        return new BoundCall(
+            kind,
+            GetExpressionDisplayName(call.Target),
+            invocation.Method,
+            invocation.Method.ReturnType,
+            receiver,
+            argumentTypes,
+            call);
+    }
+
+    private static BoundReceiver? BindReceiver(
+        ExpressionSyntax receiver,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var receiverType = InferExpressionType(receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        return receiver switch
+        {
+            NameExpressionSyntax nameExpression => BindReceiver(nameExpression.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+            _ => new BoundReceiver(BoundReceiverKind.Expression, receiverType, SourceExpression: receiver)
+        };
+    }
+
+    private static BoundReceiver? BindImplicitReceiver(MethodSymbol? currentMethod) =>
+        currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic
+            ? new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self")
+            : null;
+
+    private static BoundReceiver? BindIndexedOwnerReceiver(
+        ExpressionSyntax target,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        if (BindRead(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod) is { Receiver: not null } boundRead)
+        {
+            return boundRead.Receiver;
+        }
+
+        return target switch
+        {
+            MemberAccessExpressionSyntax memberAccess => BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            NameExpressionSyntax nameExpression => BindQualifiedValueReceiver(nameExpression.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            _ => BindReceiver(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+        };
+    }
+
+    private static BoundReceiver? BindQualifiedValueReceiver(
+        QualifiedNameSyntax name,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        if (name.Parts.Count <= 1)
+        {
+            return BindImplicitReceiver(currentMethod);
+        }
+
+        var receiverName = new QualifiedNameSyntax(name.Parts.Take(name.Parts.Count - 1).ToArray());
+        return BindReceiver(receiverName, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
+            ?? new BoundReceiver(
+                BoundReceiverKind.Expression,
+                InferExpressionType(new NameExpressionSyntax(receiverName), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+                SourceExpression: new NameExpressionSyntax(receiverName));
+    }
+
+    private static BoundReceiver? BindReceiver(
+        QualifiedNameSyntax receiver,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var displayName = receiver.ToDisplayString();
+        if (receiver.Parts.Count == 1)
+        {
+            if (displayName == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+            {
+                return new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self");
+            }
+
+            if (locals.TryGetValue(displayName, out var localType))
+            {
+                return new BoundReceiver(BoundReceiverKind.Local, localType, LocalName: displayName);
+            }
+
+            if (ResolveTypeReference(displayName, knownTypes) is { } targetType)
+            {
+                return new BoundReceiver(BoundReceiverKind.Type, targetType, TargetType: targetType);
+            }
+        }
+
+        if (TryResolveValueReferenceType(receiver, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is { } valueType)
+        {
+            return new BoundReceiver(BoundReceiverKind.Expression, valueType, SourceExpression: new NameExpressionSyntax(receiver));
+        }
+
+        if (ResolveTypeReference(displayName, knownTypes) is { } qualifiedTargetType)
+        {
+            return new BoundReceiver(BoundReceiverKind.Type, qualifiedTargetType, TargetType: qualifiedTargetType);
+        }
+
+        return null;
+    }
+
+    private static QualifiedNameSyntax? TryFlattenQualifiedTarget(ExpressionSyntax expression)
+    {
+        var parts = new List<SyntaxToken>();
+        ExpressionSyntax? current = expression;
+        while (current is not null)
+        {
+            switch (current)
+            {
+                case MemberAccessExpressionSyntax memberAccess:
+                    parts.Insert(0, memberAccess.MemberName);
+                    current = memberAccess.Receiver;
+                    break;
+                case NameExpressionSyntax nameExpression when nameExpression.Name.Parts.Count > 0:
+                    parts.InsertRange(0, nameExpression.Name.Parts);
+                    current = null;
+                    break;
+                default:
+                    return null;
+            }
+        }
+
+        return parts.Count == 0 ? null : new QualifiedNameSyntax(parts);
     }
 
     private static TypeSymbol InferLiteralType(LiteralExpressionSyntax literal) =>
@@ -4749,7 +6171,8 @@ public static class SemanticFacts
     private static FieldSymbol? ResolveFieldReference(
         QualifiedNameSyntax name,
         IEnumerable<FieldSymbol> knownFields,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         var fields = knownFields.ToArray();
         var locals = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
@@ -4766,13 +6189,15 @@ public static class SemanticFacts
             }
         }
 
-        var valueReceiverType = TryResolveValueReceiverType(name, locals, fields, [], [], currentMethod);
+        var valueReceiverType = TryResolveValueReceiverType(name, locals, fields, [], [], currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var instanceField = fields.FirstOrDefault(field =>
-                !field.IsStatic &&
-                field.DeclaringTypeName == valueReceiverType.Name &&
-                field.Name == name.Parts[^1].Text);
+            var instanceField = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+                .SelectMany(knownType => fields.Where(field =>
+                    !field.IsStatic &&
+                    field.DeclaringTypeName == knownType.Name &&
+                    field.Name == name.Parts[^1].Text))
+                .FirstOrDefault();
             if (instanceField is not null)
             {
                 return instanceField;
@@ -4858,16 +6283,19 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         var properties = knownProperties.ToArray();
-        var valueReceiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, properties, currentMethod);
+        var valueReceiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, properties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            return properties.FirstOrDefault(property =>
-                property.DeclaringTypeName == valueReceiverType.Name &&
-                property.Name == name.Parts[^1].Text &&
-                !property.IsStatic);
+            return GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+                .SelectMany(knownType => properties.Where(property =>
+                    property.DeclaringTypeName == knownType.Name &&
+                    property.Name == name.Parts[^1].Text &&
+                    !property.IsStatic))
+                .FirstOrDefault();
         }
 
         if (name.Parts.Count >= 2 && name.Parts[0].Text == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
@@ -4912,16 +6340,19 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         var constants = knownConstants.ToArray();
-        var valueReceiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var valueReceiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var instanceConstant = constants.FirstOrDefault(constant =>
-                constant.DeclaringTypeName == valueReceiverType.Name &&
-                constant.Name == name.Parts[^1].Text &&
-                constant.IsStatic);
+            var instanceConstant = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+                .SelectMany(knownType => constants.Where(constant =>
+                    constant.DeclaringTypeName == knownType.Name &&
+                    constant.Name == name.Parts[^1].Text &&
+                    constant.IsStatic))
+                .FirstOrDefault();
             if (instanceConstant is not null)
             {
                 return instanceConstant;
@@ -4968,10 +6399,11 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod) =>
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null) =>
         expression is LiteralExpressionSyntax ||
-        expression is NameExpressionSyntax name && ResolveConstantReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod) is not null ||
-        expression is MemberAccessExpressionSyntax member && ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod).Constant is not null;
+        expression is NameExpressionSyntax name && ResolveConstantReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is not null ||
+        expression is MemberAccessExpressionSyntax member && ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Constant is not null;
 
     public static bool TryGetInt32LiteralValue(SyntaxToken token, out int value)
     {
@@ -5004,14 +6436,15 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod) =>
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null) =>
         expression switch
         {
             LiteralExpressionSyntax literal => GetLiteralValue(literal.LiteralToken) ?? 0,
-            NameExpressionSyntax name => ResolveConstantReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod)?.Value,
-            MemberAccessExpressionSyntax member => ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod).Constant?.Value,
-            ParenthesizedExpressionSyntax parenthesized => GetConstantValue(parenthesized.Expression, locals, knownFields, knownConstants, knownProperties, currentMethod),
-            UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.NotKeyword => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod) is int operand
+            NameExpressionSyntax name => ResolveConstantReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)?.Value,
+            MemberAccessExpressionSyntax member => ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Constant?.Value,
+            ParenthesizedExpressionSyntax parenthesized => GetConstantValue(parenthesized.Expression, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+            UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.NotKeyword => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is int operand
                 ? InferExpressionType(unary.Operand, locals, [], knownFields, knownConstants, knownProperties, currentMethod) == TypeSymbol.Boolean
                     ? operand == 0 ? 1 : 0
                     : ~operand
@@ -5031,7 +6464,8 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         var qualifier = GetQualifier(memberAccess);
         if (qualifier is null)
@@ -5041,7 +6475,7 @@ public static class SemanticFacts
                 : null;
         }
 
-        return TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        return TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
     }
 
     public static TypeSymbol? TryResolveValueReferenceType(
@@ -5050,7 +6484,8 @@ public static class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         var displayName = name.ToDisplayString();
         if (locals.TryGetValue(displayName, out var localType))
@@ -5106,22 +6541,26 @@ public static class SemanticFacts
             return null;
         }
 
-        var valueReceiverType = TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod);
+        var valueReceiverType = TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var instanceProperty = knownProperties.FirstOrDefault(property =>
-                property.DeclaringTypeName == valueReceiverType.Name &&
-                property.Name == name.Parts[^1].Text &&
-                !property.IsStatic);
+            var instanceProperty = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+                .SelectMany(knownType => knownProperties.Where(property =>
+                    property.DeclaringTypeName == knownType.Name &&
+                    property.Name == name.Parts[^1].Text &&
+                    !property.IsStatic))
+                .FirstOrDefault();
             if (instanceProperty is not null)
             {
                 return instanceProperty.Type;
             }
 
-            var instanceField = knownFields.FirstOrDefault(field =>
-                field.DeclaringTypeName == valueReceiverType.Name &&
-                field.Name == name.Parts[^1].Text &&
-                !field.IsStatic);
+            var instanceField = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+                .SelectMany(knownType => knownFields.Where(field =>
+                    field.DeclaringTypeName == knownType.Name &&
+                    field.Name == name.Parts[^1].Text &&
+                    !field.IsStatic))
+                .FirstOrDefault();
             if (instanceField is not null)
             {
                 return instanceField.Type;

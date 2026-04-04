@@ -4,13 +4,16 @@ using ILC.Compiler.Core;
 using ILC.Compiler.Lowering;
 using ILC.Compiler.Syntax;
 
-if (args.Length == 0)
+var debugEnabled = args.Contains("--debug", StringComparer.Ordinal);
+var positionalArgs = args.Where(argument => !string.Equals(argument, "--debug", StringComparison.Ordinal)).ToArray();
+
+if (positionalArgs.Length == 0)
 {
-    Console.Error.WriteLine("usage: ilc <main-source-file> [additional-source-files...]");
+    Console.Error.WriteLine("usage: ilc [--debug] <main-source-file> [additional-source-files...]");
     return 1;
 }
 
-var sourcePath = args[0];
+var sourcePath = positionalArgs[0];
 if (!File.Exists(sourcePath))
 {
     Console.Error.WriteLine($"error: file not found: {sourcePath}");
@@ -21,13 +24,13 @@ var sourceText = await File.ReadAllTextAsync(sourcePath);
 var syntaxTree = SyntaxTree.Parse(sourceText);
 
 var importedSyntaxTrees = new List<SyntaxTree>();
-if (args.Length > 1)
+if (positionalArgs.Length > 1)
 {
     var importedNamespaces = syntaxTree.Root.Uses?.Imports.Select(importSyntax => importSyntax.NamespaceName.ToDisplayString()).ToHashSet(StringComparer.Ordinal)
         ?? [];
-    for (var index = 1; index < args.Length; index++)
+    for (var index = 1; index < positionalArgs.Length; index++)
     {
-        var importedPath = args[index];
+        var importedPath = positionalArgs[index];
         if (!File.Exists(importedPath))
         {
             Console.Error.WriteLine($"error: file not found: {importedPath}");
@@ -55,11 +58,6 @@ if (bindingResult.Diagnostics.Count > 0)
     }
 }
 
-Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
-Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
-Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
-Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
-
 var declaredMethods = bindingResult.Compilation.Types
     .OfType<NamedTypeSymbol>()
     .SelectMany(type => type.Methods)
@@ -67,15 +65,22 @@ var declaredMethods = bindingResult.Compilation.Types
 var declaredFields = bindingResult.Compilation.GetAllFields();
 var declaredProperties = bindingResult.Compilation.GetAllProperties();
 
-Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
-Console.WriteLine($"declared methods: {declaredMethods.Length}");
-Console.WriteLine($"declared fields: {declaredFields.Count}");
-
 var moduleMethods = bindingResult.Compilation.Methods.Concat(declaredMethods).ToArray();
 if (bindingResult.HasErrors)
 {
-    Console.WriteLine("module functions: 0");
-    Console.WriteLine("entry point: <none>");
+    if (debugEnabled)
+    {
+        Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
+        Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
+        Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
+        Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
+        Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
+        Console.WriteLine($"declared methods: {declaredMethods.Length}");
+        Console.WriteLine($"declared fields: {declaredFields.Count}");
+        Console.WriteLine("module functions: 0");
+        Console.WriteLine("entry point: <none>");
+    }
+
     return 1;
 }
 
@@ -87,34 +92,56 @@ if (moduleMethods.Length > 0)
     var ilbPath = Path.ChangeExtension(sourcePath, ".ilb");
     await File.WriteAllBytesAsync(ilbPath, ilbImage.Bytes);
     var entryPoint = bindingResult.Compilation.EntryPoint;
-    Console.WriteLine($"module functions: {module.Functions.Count}");
-    Console.WriteLine($"module array-shapes: {module.ArrayShapes.Count}");
-    Console.WriteLine($"ilb file: {Path.GetFileName(ilbPath)} bytes={ilbImage.Bytes.Length} sections={ilbImage.Sections.Count}");
-    Console.WriteLine($"entry point: {FormatMethod(entryPoint)}");
+    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
+    Console.WriteLine($"ilb file: {Path.GetFileName(ilbPath)}");
 
-    foreach (var shape in module.ArrayShapes)
+    if (debugEnabled)
     {
-        Console.WriteLine($"module-array-shape fn={shape.FunctionId} r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
-    }
+        Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
+        Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
+        Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
+        Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
+        Console.WriteLine($"declared methods: {declaredMethods.Length}");
+        Console.WriteLine($"declared fields: {declaredFields.Count}");
+        Console.WriteLine($"module functions: {module.Functions.Count}");
+        Console.WriteLine($"module array-shapes: {module.ArrayShapes.Count}");
+        Console.WriteLine($"ilb file: {Path.GetFileName(ilbPath)} bytes={ilbImage.Bytes.Length} sections={ilbImage.Sections.Count}");
+        Console.WriteLine($"entry point: {FormatMethod(entryPoint)}");
 
-    foreach (var function in module.Functions)
-    {
-        Console.WriteLine($"function {function.FunctionId}: {function.Name} regs={function.RegisterCount} argc={function.ArgumentCount} instr={function.Instructions.Count}");
-        foreach (var shape in function.ArrayShapes)
+        foreach (var shape in module.ArrayShapes)
         {
-            Console.WriteLine($"  array-shape r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
+            Console.WriteLine($"module-array-shape fn={shape.FunctionId} r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
         }
 
-        foreach (var instruction in function.Instructions)
+        foreach (var function in module.Functions)
         {
-            Console.WriteLine($"  {instruction.OpCode} dst={instruction.Destination} left={instruction.Left} right={instruction.Right} imm={instruction.Immediate}");
+            Console.WriteLine($"function {function.FunctionId}: {function.Name} regs={function.RegisterCount} argc={function.ArgumentCount} instr={function.Instructions.Count}");
+            foreach (var shape in function.ArrayShapes)
+            {
+                Console.WriteLine($"  array-shape r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
+            }
+
+            foreach (var instruction in function.Instructions)
+            {
+                Console.WriteLine($"  {instruction.OpCode} dst={instruction.Destination} left={instruction.Left} right={instruction.Right} imm={instruction.Immediate}");
+            }
         }
     }
 }
 else
 {
-    Console.WriteLine("module functions: 0");
-    Console.WriteLine("entry point: <none>");
+    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
+    if (debugEnabled)
+    {
+        Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
+        Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
+        Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
+        Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
+        Console.WriteLine($"declared methods: {declaredMethods.Length}");
+        Console.WriteLine($"declared fields: {declaredFields.Count}");
+        Console.WriteLine("module functions: 0");
+        Console.WriteLine("entry point: <none>");
+    }
 }
 
 return 0;

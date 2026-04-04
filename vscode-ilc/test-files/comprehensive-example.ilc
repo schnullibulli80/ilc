@@ -1,0 +1,213 @@
+// This is a comprehensive ILC test file demonstrating syntax highlighting
+// All major language features are included
+
+namespace MyApplication.Utils;
+
+uses System.Collections;
+uses System.Diagnostics;
+
+// Attributes
+[Serializable]
+[Custom(value: 42)]
+public class MathOperations
+    // Properties
+    public property Value: Int32
+    begin
+        get => _value;
+        set => _value = value;
+    end;
+
+    private var _value: Int32 := 0;
+
+    // Constructor
+    public constructor Create(initialValue: Int32)
+    begin
+        _value := initialValue;
+    end;
+
+    // Method with various keywords
+    public method Add(a: Int32, b: Int32) -> Int32
+    begin
+        return a + b;
+    end;
+
+    // Method with control flow
+    public method ProcessNumber(n: Int32) -> String
+    begin
+        if n < 0 then
+            return "Negative";
+        else if n = 0 then
+            return "Zero";
+        else
+            return "Positive";
+        end;
+    end;
+
+    // Method with case expression
+    public method ClassifyNumber(n: Int32) -> String
+    begin
+        case n of
+            when 0 => return "Zero";
+            when 1 => return "One"; 
+            when 2 => return "Two";
+            else => return "Other";
+        end;
+    end;
+
+    // Method with match expression
+    public method GetDescription(value: Int32) -> String
+    begin
+        match value with
+            when 0 => "Zero"
+            when > 0 and < 10 => "Single Digit"
+            when >= 10 and < 100 => "Two Digits"
+            else => "Large Number"
+        end;
+    end;
+
+    // Method with loops
+    public method LoopExamples() -> Void
+    begin
+        // While loop
+        var i: Int32 := 0;
+        while i < 10 do
+        begin
+            i := i + 1;
+        end;
+
+        // For loop
+        for j: Int32 := 0 to 10 do
+        begin
+            // Process j
+        end;
+
+        // Foreach loop
+        var items: array Int32 := [1, 2, 3, 4, 5];
+        foreach item in items do
+        begin
+            var doubled := item * 2;
+        end;
+
+        // Repeat-until
+        repeat
+        begin
+            i := i - 1;
+        end
+        until i <= 0;
+    end;
+
+    // Method with exception handling
+    public method SafeDivide(a: Int32, b: Int32) -> Int32
+    begin
+        try
+        begin
+            checked
+            begin
+                return a / b;
+            end;
+        end
+        except on DivideByZeroException do
+        begin
+            return 0;
+        end
+        finally
+        begin
+            // Cleanup
+        end;
+    end;
+
+    // Method with lambda/arrow expressions
+    public method UseArrow(values: array Int32) -> array Int32
+    begin
+        return values where x => x > 5;
+    end;
+
+    // Async method
+    public async method FetchDataAsync() -> String
+    begin
+        // Simulate async operation
+        await Task.Delay(1000);
+        return "Data loaded";
+    end;
+end;
+
+// Enum
+public enum Status
+begin
+    Pending := 0;
+    Active := 1;
+    Completed := 2;
+    Failed := 3;
+end;
+
+// Interface
+public interface IProcessor
+    method Process(data: String) -> String;
+end;
+
+// Struct
+public struct Point
+    public property X: Float32;
+    public property Y: Float32;
+end;
+
+// Record
+public record Person(name: String, age: Int32, email: String);
+
+// Numerical literals example
+public class NumberLiterals
+    var decimal: Int32 := 42;
+    var hex: Int32 := $2A;
+    var binary: Int32 := %00101010;
+    var octal: Int32 := &52;
+    var floatNum: Float64 := 3.14159;
+    var floatExp: Float64 := 1.5e-4;
+end;
+
+// String examples
+public class StringExamples
+    var singleQuote: String := 'Hello';
+    var doubleQuote: String := "World";
+    var rawString: String := '''This is a raw string''';
+    var interpolated: String := $"Value is {42}";
+end;
+
+// Boolean and nil constants
+public class Constants
+    var isTrue: Boolean := true;
+    var isFalse: Boolean := false;
+    var nothing: object := nil;
+    var self: MathOperations := self;
+end;
+
+// Operators
+public class OperatorDemo
+    var result1: Int32 := 5 + 3;           // Addition
+    var result2: Int32 := 10 - 4;          // Subtraction
+    var result3: Int32 := 6 * 7;           // Multiplication
+    var result4: Int32 := 15 / 3;          // Division
+    var result5: Int32 := 17 mod 5;        // Modulo
+
+    var bitAnd: Int32 := 12 and 10;        // Bitwise AND
+    var bitOr: Int32 := 12 or 10;          // Bitwise OR
+    var bitXor: Int32 := 12 xor 10;        // Bitwise XOR
+    var bitNot: Int32 := not 12;           // Bitwise NOT
+
+    var shiftLeft: Int32 := 5 shl 2;       // Shift Left
+    var shiftRight: Int32 := 20 shr 2;     // Shift Right
+
+    var comparison1: Boolean := 5 < 10;
+    var comparison2: Boolean := 5 <= 10;
+    var comparison3: Boolean := 5 > 10;
+    var comparison4: Boolean := 5 >= 10;
+    var comparison5: Boolean := 5 = 5;
+    var comparison6: Boolean := 5 <> 10;
+
+    var logical1: Boolean := true and false;
+    var logical2: Boolean := true or false;
+    var logical3: Boolean := not true;
+
+    var nullCoalesce: String := nil ?? "default";
+    var nullCoalesceAssign: String := nil;
+    nullCoalesceAssign ??= "assigned";
+end;

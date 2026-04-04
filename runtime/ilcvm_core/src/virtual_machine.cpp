@@ -653,6 +653,21 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         if (function_leaf_fastpath_kind[function.function_id] == LeafFastpathKind::instance_field_add_argument_return)
         {
+            if (arguments[0] == 0)
+            {
+                throw std::runtime_error(
+                    "null reference object access during specialized leaf fastpath in function '" +
+                    function.name +
+                    "'");
+            }
+            if (!is_object_handle(arguments[0]))
+            {
+                throw std::runtime_error(
+                    "instruction expected an object reference during specialized leaf fastpath in function '" +
+                    function.name +
+                    "' receiver=" +
+                    std::to_string(arguments[0]));
+            }
             auto& object = require_object(arguments[0]);
             const auto owner_type_id = function_leaf_fastpath_owner_type_id[function.function_id];
             const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[function.function_id]);
@@ -884,6 +899,27 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         throw std::runtime_error("ld_field cannot target a static field");
                     }
 
+                    if (registers[instruction.left] == 0)
+                    {
+                        throw std::runtime_error(
+                            "null reference object access during ld_field at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                                std::to_string(instruction.immediate));
+                    }
+                    if (!is_object_handle(registers[instruction.left]))
+                    {
+                        throw std::runtime_error(
+                            "instruction expected an object reference during ld_field in function '" +
+                            function.name +
+                            "' at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                            std::to_string(instruction.immediate) +
+                            " receiver=" +
+                            std::to_string(registers[instruction.left]));
+                    }
+
                     auto& object = require_object(registers[instruction.left]);
                     if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
                     {
@@ -900,6 +936,27 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                     if (field.is_static)
                     {
                         throw std::runtime_error("st_field cannot target a static field");
+                    }
+
+                    if (registers[instruction.destination] == 0)
+                    {
+                        throw std::runtime_error(
+                            "null reference object access during st_field at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                                std::to_string(instruction.immediate));
+                    }
+                    if (!is_object_handle(registers[instruction.destination]))
+                    {
+                        throw std::runtime_error(
+                            "instruction expected an object reference during st_field in function '" +
+                            function.name +
+                            "' at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                            std::to_string(instruction.immediate) +
+                            " receiver=" +
+                            std::to_string(registers[instruction.destination]));
                     }
 
                     auto& object = require_object(registers[instruction.destination]);
@@ -1713,7 +1770,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             }
                             if (!is_object_handle(receiver_handle))
                             {
-                                throw std::runtime_error("instruction expected an object reference");
+                                throw std::runtime_error(
+                                    "instruction expected an object reference during call leaf fastpath at ip=" +
+                                    std::to_string(ip) +
+                                    " function=" +
+                                    std::to_string(callee_id) +
+                                    " receiver=" +
+                                    std::to_string(receiver_handle));
                             }
 
                             const auto object_id = decode_object_id(receiver_handle);
@@ -1783,7 +1846,11 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         }
                         if (register_values[instruction.left] == 0)
                         {
-                            throw std::runtime_error("null reference method call");
+                            throw std::runtime_error(
+                                "null reference method call at ip=" +
+                                std::to_string(ip) +
+                                " function=" +
+                                std::to_string(instruction.immediate));
                         }
 
                         const auto callee_id = static_cast<std::uint32_t>(instruction.immediate);
@@ -1802,7 +1869,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             const auto receiver_handle = register_values[instruction.left];
                             if (!is_object_handle(receiver_handle))
                             {
-                                throw std::runtime_error("instruction expected an object reference");
+                                throw std::runtime_error(
+                                    "instruction expected an object reference during call_virt leaf fastpath at ip=" +
+                                    std::to_string(ip) +
+                                    " function=" +
+                                    std::to_string(callee_id) +
+                                    " receiver=" +
+                                    std::to_string(receiver_handle));
                             }
 
                             const auto object_id = decode_object_id(receiver_handle);
@@ -1891,7 +1964,26 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             throw std::runtime_error("ld_field cannot target a static field");
                         }
 
-                        auto& object = require_object(register_values[instruction.left]);
+                    if (register_values[instruction.left] == 0)
+                    {
+                        throw std::runtime_error(
+                                "null reference object access during ld_field at ip=" +
+                                std::to_string(ip) +
+                                " field=" +
+                                std::to_string(instruction.immediate));
+                    }
+                    if (!is_object_handle(register_values[instruction.left]))
+                    {
+                        throw std::runtime_error(
+                            "instruction expected an object reference during ld_field at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                            std::to_string(instruction.immediate) +
+                            " receiver=" +
+                            std::to_string(register_values[instruction.left]));
+                    }
+
+                    auto& object = require_object(register_values[instruction.left]);
                         if (object.type_id != field.owner_type_id)
                         {
                             throw std::runtime_error("field load targets the wrong receiver type");
@@ -1914,7 +2006,26 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             throw std::runtime_error("st_field cannot target a static field");
                         }
 
-                        auto& object = require_object(register_values[instruction.destination]);
+                    if (register_values[instruction.destination] == 0)
+                    {
+                        throw std::runtime_error(
+                                "null reference object access during st_field at ip=" +
+                                std::to_string(ip) +
+                                " field=" +
+                                std::to_string(instruction.immediate));
+                    }
+                    if (!is_object_handle(register_values[instruction.destination]))
+                    {
+                        throw std::runtime_error(
+                            "instruction expected an object reference during st_field at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                            std::to_string(instruction.immediate) +
+                            " receiver=" +
+                            std::to_string(register_values[instruction.destination]));
+                    }
+
+                    auto& object = require_object(register_values[instruction.destination]);
                         if (object.type_id != field.owner_type_id)
                         {
                             throw std::runtime_error("field store targets the wrong receiver type");

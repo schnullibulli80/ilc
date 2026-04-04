@@ -66,3 +66,6 @@ ilc_secure_packaging_and_execution_spec.md
 
 ilc_numeric_and_cryptographic_integer_spec.md
 ilc_uint128_implementation_plan.md
+docs/bound-semantics-design.md
+docs/compiler-stabilization-plan.md
+.codex

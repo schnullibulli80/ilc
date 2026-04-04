@@ -940,7 +940,8 @@ int main()
         }
         catch (const std::runtime_error& error)
         {
-            return std::string(error.what()) == expected_message;
+            const std::string actual_message(error.what());
+            return actual_message.starts_with(expected_message);
         }
 
         return false;

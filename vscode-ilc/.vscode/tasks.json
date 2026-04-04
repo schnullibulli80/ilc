@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: watch",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "watch"
+      ],
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^([^\\(]*)\\((\\d+)\\,(\\d+)\\):\\s+(error|warning|info)\\s+([^:]*): (.*)$",
+          "file": 1,
+          "location": 2,
+          "endLine": 2,
+          "endColumn": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*",
+          "endsPattern": "^.*"
+        }
+      }
+    }
+  ]
+}

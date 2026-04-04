@@ -4,12 +4,18 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$repo_root/tmp"
+bootstrap_fixture="$repo_root/tests/fixtures/compiler-bootstrap.ilc"
+bootstrap_runtime_source="$tmp_dir/compiler-bootstrap-runtime.ilc"
+bootstrap_runtime_ilb="$tmp_dir/compiler-bootstrap-runtime.ilb"
+demo_core_fixture="$repo_root/tests/fixtures/demo-core.ilc"
 
 cd "$repo_root"
 
 mkdir -p "$tmp_dir"
 printf 'smoke-file-ok' >"$tmp_dir/runtime-smoke-input.txt"
 rm -f "$tmp_dir/runtime-smoke-output.txt"
+cp "$bootstrap_fixture" "$bootstrap_runtime_source"
+rm -f "$bootstrap_runtime_ilb"
 
 logs=(
     "$tmp_dir/solution-build-local.log"
@@ -104,7 +110,7 @@ run_step \
 run_step \
     "Compile runtime smoke" \
     "$tmp_dir/compiler-runtime-cli-local.log" \
-    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" "$repo_root/tmp/ilc-runtime-smoke.ilc" "$repo_root/libs/shipped/system.ilc"
+    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" "$bootstrap_runtime_source" "$repo_root/libs/shipped/system.ilc" "$demo_core_fixture"
 
 run_step \
     "Build runtime" \
@@ -119,7 +125,7 @@ run_step \
 run_runtime_smoke_step \
     "Run runtime smoke" \
     "$tmp_dir/runtime-run-local.log" \
-    "$repo_root/build/runtime/ilcvm_cli/ilcvm_cli" "$repo_root/tmp/ilc-runtime-smoke.ilb" --run
+    "$repo_root/build/runtime/ilcvm_cli/ilcvm_cli" "$bootstrap_runtime_ilb" --run
 
 log_status ""
 log_status "Verification complete."

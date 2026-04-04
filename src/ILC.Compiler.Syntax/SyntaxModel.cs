@@ -19,6 +19,7 @@ public enum SyntaxKind
     EnumKeyword,
     ClassKeyword,
     RecordKeyword,
+    InterfaceKeyword,
     BeginKeyword,
     EndKeyword,
     MethodKeyword,
@@ -66,6 +67,8 @@ public enum SyntaxKind
     StaticKeyword,
     DefaultKeyword,
     ReadonlyKeyword,
+    VirtualKeyword,
+    OverrideKeyword,
     OutKeyword,
     RefKeyword,
     PublicKeyword,
@@ -79,6 +82,7 @@ public enum SyntaxKind
     AndKeyword,
     NotKeyword,
     OrKeyword,
+    XorKeyword,
     NotInKeyword,
     WhenKeyword,
     ModKeyword,
@@ -135,6 +139,7 @@ public enum SyntaxKind
     EnumMember,
     TopLevelExpressionStatement,
     ClassDeclaration,
+    InterfaceDeclaration,
     FieldDeclaration,
     ConstantDeclaration,
     PropertyDeclaration,
@@ -295,10 +300,24 @@ public sealed record ClassDeclarationSyntax(
     IReadOnlyList<SyntaxToken> Modifiers,
     SyntaxToken ClassKeyword,
     SyntaxToken Identifier,
+    SyntaxToken? ColonToken,
+    QualifiedNameSyntax? BaseType,
+    IReadOnlyList<QualifiedNameSyntax> InterfaceTypes,
     SyntaxToken BeginKeyword,
     IReadOnlyList<TypeMemberSyntax> Members,
     SyntaxToken EndKeyword,
     SyntaxToken SemicolonToken) : MemberSyntax(SyntaxKind.ClassDeclaration);
+
+public sealed record InterfaceDeclarationSyntax(
+    IReadOnlyList<SyntaxToken> Modifiers,
+    SyntaxToken InterfaceKeyword,
+    SyntaxToken Identifier,
+    SyntaxToken? ColonToken,
+    IReadOnlyList<QualifiedNameSyntax> BaseInterfaces,
+    SyntaxToken BeginKeyword,
+    IReadOnlyList<TypeMemberSyntax> Members,
+    SyntaxToken EndKeyword,
+    SyntaxToken SemicolonToken) : MemberSyntax(SyntaxKind.InterfaceDeclaration);
 
 public sealed record FieldDeclarationSyntax(
     IReadOnlyList<SyntaxToken> Modifiers,
@@ -940,6 +959,7 @@ internal sealed class Lexer
             "enum" => SyntaxKind.EnumKeyword,
             "class" => SyntaxKind.ClassKeyword,
             "record" => SyntaxKind.RecordKeyword,
+            "interface" => SyntaxKind.InterfaceKeyword,
             "begin" => SyntaxKind.BeginKeyword,
             "end" => SyntaxKind.EndKeyword,
             "method" => SyntaxKind.MethodKeyword,
@@ -987,6 +1007,8 @@ internal sealed class Lexer
             "static" => SyntaxKind.StaticKeyword,
             "default" => SyntaxKind.DefaultKeyword,
             "readonly" => SyntaxKind.ReadonlyKeyword,
+            "virtual" => SyntaxKind.VirtualKeyword,
+            "override" => SyntaxKind.OverrideKeyword,
             "out" => SyntaxKind.OutKeyword,
             "ref" => SyntaxKind.RefKeyword,
             "public" => SyntaxKind.PublicKeyword,
@@ -1000,6 +1022,7 @@ internal sealed class Lexer
             "and" => SyntaxKind.AndKeyword,
             "not" => SyntaxKind.NotKeyword,
             "or" => SyntaxKind.OrKeyword,
+            "xor" => SyntaxKind.XorKeyword,
             "when" => SyntaxKind.WhenKeyword,
             "mod" => SyntaxKind.ModKeyword,
             "shl" => SyntaxKind.ShlKeyword,
@@ -1098,6 +1121,7 @@ internal sealed class Parser
             SyntaxKind.ConstKeyword => ParseTopLevelConstantDeclaration(modifiers),
             SyntaxKind.EnumKeyword => ParseEnumDeclaration(modifiers),
             SyntaxKind.ClassKeyword or SyntaxKind.RecordKeyword => ParseClassDeclaration(modifiers),
+            SyntaxKind.InterfaceKeyword => ParseInterfaceDeclaration(modifiers),
             _ => ParseTopLevelExpressionStatement()
         };
     }
@@ -1112,6 +1136,8 @@ internal sealed class Parser
             or SyntaxKind.StaticKeyword
             or SyntaxKind.DefaultKeyword
             or SyntaxKind.ReadonlyKeyword
+            or SyntaxKind.VirtualKeyword
+            or SyntaxKind.OverrideKeyword
             or SyntaxKind.ExternKeyword)
         {
             modifiers.Add(NextToken());
@@ -1154,6 +1180,20 @@ internal sealed class Parser
             ? Match(SyntaxKind.RecordKeyword)
             : Match(SyntaxKind.ClassKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+        SyntaxToken? colonToken = null;
+        QualifiedNameSyntax? baseType = null;
+        var interfaceTypes = new List<QualifiedNameSyntax>();
+        if (Current.Kind == SyntaxKind.ColonToken)
+        {
+            colonToken = Match(SyntaxKind.ColonToken);
+            baseType = ParseQualifiedName();
+            while (Current.Kind == SyntaxKind.CommaToken)
+            {
+                NextToken();
+                interfaceTypes.Add(ParseQualifiedName());
+            }
+        }
+
         var beginKeyword = Match(SyntaxKind.BeginKeyword);
         var members = new List<TypeMemberSyntax>();
 
@@ -1170,7 +1210,61 @@ internal sealed class Parser
 
         var endKeyword = Match(SyntaxKind.EndKeyword);
         var semicolon = Match(SyntaxKind.SemicolonToken);
-        return new ClassDeclarationSyntax(modifiers, classKeyword, identifier, beginKeyword, members, endKeyword, semicolon);
+        return new ClassDeclarationSyntax(
+            modifiers,
+            classKeyword,
+            identifier,
+            colonToken,
+            baseType,
+            interfaceTypes,
+            beginKeyword,
+            members,
+            endKeyword,
+            semicolon);
+    }
+
+    private InterfaceDeclarationSyntax ParseInterfaceDeclaration(IReadOnlyList<SyntaxToken> modifiers)
+    {
+        var interfaceKeyword = Match(SyntaxKind.InterfaceKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        SyntaxToken? colonToken = null;
+        var baseInterfaces = new List<QualifiedNameSyntax>();
+        if (Current.Kind == SyntaxKind.ColonToken)
+        {
+            colonToken = Match(SyntaxKind.ColonToken);
+            baseInterfaces.Add(ParseQualifiedName());
+            while (Current.Kind == SyntaxKind.CommaToken)
+            {
+                NextToken();
+                baseInterfaces.Add(ParseQualifiedName());
+            }
+        }
+
+        var beginKeyword = Match(SyntaxKind.BeginKeyword);
+        var members = new List<TypeMemberSyntax>();
+        while (Current.Kind != SyntaxKind.EndKeyword && Current.Kind != SyntaxKind.EndOfFileToken)
+        {
+            if (Current.Kind == SyntaxKind.SemicolonToken)
+            {
+                NextToken();
+                continue;
+            }
+
+            members.Add(ParseTypeMember());
+        }
+
+        var endKeyword = Match(SyntaxKind.EndKeyword);
+        var semicolon = Match(SyntaxKind.SemicolonToken);
+        return new InterfaceDeclarationSyntax(
+            modifiers,
+            interfaceKeyword,
+            identifier,
+            colonToken,
+            baseInterfaces,
+            beginKeyword,
+            members,
+            endKeyword,
+            semicolon);
     }
 
     private EnumDeclarationSyntax ParseEnumDeclaration(IReadOnlyList<SyntaxToken> modifiers)
@@ -2043,11 +2137,11 @@ internal sealed class Parser
                 : new MatchAndPatternSyntax(patterns);
         }
 
-        var start = ParseExpression();
+        var start = ParseComparisonExpression();
         if (Current.Kind == SyntaxKind.RangeToken)
         {
             var rangeToken = NextToken();
-            var end = ParseExpression();
+            var end = ParseComparisonExpression();
             return new RangeExpressionSyntax(start, rangeToken, end);
         }
 
@@ -2057,7 +2151,7 @@ internal sealed class Parser
     private MatchRelationalPatternSyntax ParseMatchRelationalPattern()
     {
         var operatorToken = NextToken();
-        var operand = ParseExpression();
+        var operand = ParseComparisonExpression();
         return new MatchRelationalPatternSyntax(operatorToken, operand);
     }
 
@@ -2172,12 +2266,25 @@ internal sealed class Parser
 
     private ExpressionSyntax ParseNullCoalescingExpression()
     {
-        var left = ParseComparisonExpression();
+        var left = ParseLogicalExpression();
         if (Current.Kind == SyntaxKind.NullCoalescingToken)
         {
             var operatorToken = NextToken();
             var right = ParseNullCoalescingExpression();
             return new BinaryExpressionSyntax(left, operatorToken, right);
+        }
+
+        return left;
+    }
+
+    private ExpressionSyntax ParseLogicalExpression()
+    {
+        var left = ParseComparisonExpression();
+        while (Current.Kind is SyntaxKind.AndKeyword or SyntaxKind.OrKeyword or SyntaxKind.XorKeyword)
+        {
+            var operatorToken = NextToken();
+            var right = ParseComparisonExpression();
+            left = new BinaryExpressionSyntax(left, operatorToken, right);
         }
 
         return left;
@@ -2786,6 +2893,7 @@ public sealed class SyntaxTree
                     .Select(member => member switch
                     {
                         ClassDeclarationSyntax classDeclaration => classDeclaration.Identifier.Text,
+                        InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration.Identifier.Text,
                         EnumDeclarationSyntax enumDeclaration => enumDeclaration.Identifier.Text,
                         _ => null
                     })
@@ -2859,7 +2967,14 @@ public sealed class SyntaxTree
             EnumDeclarationSyntax enumDeclaration => enumDeclaration,
             ClassDeclarationSyntax classDeclaration => classDeclaration with
             {
+                BaseType = NormalizeQualifiedName(classDeclaration.BaseType, aliases),
+                InterfaceTypes = classDeclaration.InterfaceTypes.Select(typeName => NormalizeQualifiedName(typeName, aliases)!).ToArray(),
                 Members = classDeclaration.Members.Select(memberSyntax => NormalizeTypeMember(memberSyntax, aliases)).ToArray()
+            },
+            InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration with
+            {
+                BaseInterfaces = interfaceDeclaration.BaseInterfaces.Select(typeName => NormalizeQualifiedName(typeName, aliases)!).ToArray(),
+                Members = interfaceDeclaration.Members.Select(memberSyntax => NormalizeTypeMember(memberSyntax, aliases)).ToArray()
             },
             _ => member
         };

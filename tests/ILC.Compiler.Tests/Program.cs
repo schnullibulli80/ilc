@@ -5,722 +5,34 @@ using ILC.Compiler.Lowering;
 using ILC.Compiler.Syntax;
 
 var failures = new List<string>();
-
-var tree = SyntaxTree.Parse("""
-namespace Demo.App;
-uses Sys = System, Demo.Core;
-const TopBonus: Integer = 2;
-public enum Mode
-begin
-  Idle;
-  Busy;
-  Done = 5;
-end;
-public record Point
-begin
-  public var X: Integer;
-  public var Y: Integer;
-end;
-var value := 42;
-Program.Add(3, 4);
-public class Program
-begin
-  public static const DefaultSeed: Integer = 1;
-  public static const CaseHit: Integer = 90;
-  public static var Accumulator: Integer;
-  public var Counter: Integer;
-  public var Items: array of Integer;
-  public var Children: array of Program;
-  public var Matrix: array[3, 3] of Integer;
-  public static property Total: Integer read Accumulator write Accumulator;
-  public property Value: Integer read Counter write Counter;
-  public property Grid: array[3, 3] of Integer read Matrix write Matrix;
-  public default property Item[index: Integer]: Integer read Items write Items;
-  public default property Child[index: Integer]: Program read Children write Children;
-  public static property AutoTotal: Integer { get; set; };
-  public property AutoValue: Integer { get; set; };
-  public static property HiddenTotal: Integer { get; private set; };
-  public static property SecretRead: Integer { private get; set; };
-  public property Created: Integer { get; init; };
-  public property Adjusted: Integer
-  begin
-    get
-    begin
-      return Counter + 10;
-    end;
-
-    set(value)
-    begin
-      Counter := value - 10;
-    end;
-  end;
-
-  public constructor(seed: Integer);
-  begin
-    Counter := seed;
-    Items := new Integer[4];
-    Children := new Program[2];
-    Created := seed + 100;
-  end;
-
-  public static function ParseSeed(text: String; out value: Integer): Boolean;
-  begin
-    value := Integer.Parse(text);
-    return true;
-  end;
-
-  public static procedure Bump(ref value: Integer);
-  begin
-    value := value + 1;
-  end;
-
-  public static procedure ReadOnly(in value: Integer);
-  begin
-    Program.Total := Program.Total + value;
-  end;
-
-  public static procedure Collect(params values: array of Integer);
-  begin
-    Program.Total := Program.Total + values.Length;
-  end;
-
-  public static function Add(left: Integer; right: Integer): Integer;
-  begin
-    if left > right then
-    begin
-      exit left - right;
-    end;
-
-    exit left + right;
-  end;
-
-  public static method Main;
-  begin
-    Program.Total := Program.Add(Program.DefaultSeed, TopBonus);
-    Program.AutoTotal := Program.Total;
-    Program.HiddenTotal := Program.AutoTotal;
-    Program.SecretRead := Program.HiddenTotal + 1;
-    var result := Program.Total;
-    var text := 'abcd';
-    var first := text[0];
-    var textSize := text.Length;
-    var maybeProgram: Program := nil;
-    var noProgram := maybeProgram = nil;
-    var sameText := text = 'abcd';
-    var differentText := text <> 'abce';
-    var maybeText: String := nil;
-    var noText := maybeText = nil;
-    var hasMissingText := not noText;
-    var invertedZero := not 0;
-    var coalescedText := maybeText ?? 'xy';
-    var preservedText := coalescedText ?? 'zz';
-    var hasTextType := text is String;
-    var castText := text as String;
-    var castTextOk := castText <> nil;
-    var fixedValues: array[10] of Integer;
-    var matrix := new Integer[2, 2];
-    var numbers: array of Integer := new Integer[4];
-    numbers[0] := result;
-    numbers[1] := numbers[0] + 2;
-    matrix[0, 1] := numbers[1];
-    var matrixCell := matrix[0, 1];
-    var size := numbers.Length;
-    var p := new Program(5);
-    p.Increment();
-    p.Value := p.Value + 3;
-    p[0] := p.Value;
-    p.Matrix := new Integer[3, 3];
-    p.Matrix[1, 2] := matrixCell;
-    var fieldCell := p.Matrix[1, 2];
-    p.Grid := new Integer[3, 3];
-    p.Grid[1, 2] := fieldCell;
-    var propertyCell := p.Grid[1, 2];
-    var programs: array of Program := new Program[2];
-    programs[0] := p;
-    programs[1] := new Program(7);
-    var hasProgramType := programs[1] is Program;
-    var castProgram := programs[1] as Program;
-    var castProgramOk := castProgram <> nil;
-    var castMismatch := text as Program;
-    var castMismatchNil := castMismatch = nil;
-    programs[0].Value := programs[0].Value + 1;
-    programs[0].Items[0] := programs[1].Current();
-    var chainedItem := programs[0].Items[0];
-    var chainedCurrent := programs[1].Current();
-    p.Child[0] := programs[1];
-    var nestedCurrent := p.Child[0].Current();
-    p.AutoValue := p.Value + 2;
-    p.Adjusted := p.AutoValue + 1;
-    var indexed := p[0];
-    var current := p.Adjusted + p.Created + numbers[1] + matrixCell + fieldCell + propertyCell + chainedCurrent + chainedItem + nestedCurrent + size + textSize + indexed;
-    if sameText then
-    begin
-      current := current + 1;
-    end;
-
-    if differentText then
-    begin
-      current := current + 1;
-    end;
-
-    if noProgram then
-    begin
-      current := current + 1;
-    end;
-
-    if hasProgramType then
-    begin
-      current := current + 1;
-    end;
-
-    if noText then
-    begin
-      current := current + 1;
-    end;
-
-    if hasTextType then
-    begin
-      current := current + 1;
-    end;
-
-    if castTextOk then
-    begin
-      current := current + 1;
-    end;
-
-    if castProgramOk then
-    begin
-      current := current + 1;
-    end;
-
-    if castMismatchNil then
-    begin
-      current := current + 1;
-    end;
-
-    try
-      raise 7;
-    except
-      current := current + 1;
-    end;
-
-    try
-      raise new Program(6);
-    except
-      on ex: Program do
-        current := current + ex.Current();
-      current := current + 2;
-    end;
-
-    try
-      current := current + 1;
-    finally
-      current := current + 1;
-    end;
-
-    try
-      raise new Program(3);
-    except
-      on ex: Program do
-        current := current + ex.Current();
-    finally
-      current := current + 1;
-    end;
-
-    var index := 0;
-    for var ascending := 0 to 2 do
-    begin
-      current := current + ascending;
-    end;
-
-    for var descending := 2 downto 0 do
-    begin
-      current := current + descending;
-    end;
-
-    for var steppedUp := 0 to 4 step 2 do
-    begin
-      current := current + steppedUp;
-    end;
-
-    for var steppedDown := 4 downto 0 step 2 do
-    begin
-      current := current + steppedDown;
-    end;
-
-    for each var item in numbers do
-    begin
-      current := current + item;
-    end;
-
-    var numberSlice := numbers[0..1];
-    current := current + numberSlice.Length + numberSlice[0];
-
-    var textSlice := text[1..2];
-    current := current + textSlice.Length;
-    if textSlice = 'bc' then
-    begin
-      current := current + 1;
-    end;
-
-    var joinedText := textSlice + 'd';
-    current := current + joinedText.Length;
-    if joinedText = 'bcd' then
-    begin
-      current := current + 1;
-    end;
-
-    if joinedText.StartsWith('bc') then
-    begin
-      current := current + 1;
-    end;
-
-    if joinedText.EndsWith('cd') then
-    begin
-      current := current + 1;
-    end;
-
-    if joinedText.Contains('c') then
-    begin
-      current := current + 1;
-    end;
-
-    current := current + joinedText.IndexOf('c');
-    current := current + joinedText.LastIndexOf('d');
-    var middleText := joinedText.Substring(1, 2);
-    current := current + middleText.Length;
-    if middleText = 'cd' then
-    begin
-      current := current + 1;
-    end;
-    var replacedText := joinedText.Replace('z', 'x');
-    current := current + replacedText.Length;
-    if replacedText.EndsWith('x') then
-    begin
-      current := current + 1;
-    end;
-    var insertedText := joinedText.Insert(1, 'x');
-    current := current + insertedText.Length;
-    if insertedText = 'bxcd' then
-    begin
-      current := current + 1;
-    end;
-    var removedText := insertedText.Remove(1, 1);
-    current := current + removedText.Length;
-    if removedText = 'bcd' then
-    begin
-      current := current + 1;
-    end;
-    var upperText := removedText.ToUpper();
-    current := current + upperText.Length;
-    if upperText = 'BCD' then
-    begin
-      current := current + 1;
-    end;
-    var lowerText := upperText.ToLower();
-    current := current + lowerText.Length;
-    if lowerText = 'bcd' then
-    begin
-      current := current + 1;
-    end;
-    var paddedText := '  bcd  ';
-    var trimmedText := paddedText.Trim();
-    current := current + trimmedText.Length;
-    if trimmedText = 'bcd' then
-    begin
-      current := current + 1;
-    end;
-    var trimStartText := paddedText.TrimStart();
-    current := current + trimStartText.Length;
-    if trimStartText = 'bcd  ' then
-    begin
-      current := current + 1;
-    end;
-    var trimEndText := paddedText.TrimEnd();
-    current := current + trimEndText.Length;
-    if trimEndText = '  bcd' then
-    begin
-      current := current + 1;
-    end;
-    var parsedTextValue := Integer.Parse('15');
-    current := current + parsedTextValue;
-    var tryParsedValue: Integer := 99;
-    if Integer.TryParse('18', tryParsedValue) then
-    begin
-      current := current + tryParsedValue;
-    end;
-    if Integer.TryParse('oops', tryParsedValue) then
-    begin
-      current := current + 100;
-    end
-    else
-    begin
-      current := current + 1;
-    end;
-    if tryParsedValue = 0 then
-    begin
-      current := current + 1;
-    end;
-    Program.Collect(1, 2, 3);
-    var formattedValue := parsedTextValue.ToString();
-    current := current + formattedValue.Length;
-    if formattedValue = '15' then
-    begin
-      current := current + 1;
-    end;
-    if hasMissingText then
-    begin
-      current += 100;
-    end
-    else
-    begin
-      current += 1;
-    end;
-    if invertedZero <> 0 then
-    begin
-      current += 1;
-    end;
-    var shiftedLeft := 3 shl 2;
-    var shiftedRight := 16 shr 2;
-    current += shiftedLeft;
-    current += shiftedRight;
-    current shl= 1;
-    current shr= 1;
-    var moduloValue := 17 mod 5;
-    current += moduloValue;
-    current mod= 7;
-    var quotientValue := 17 div 5;
-    current += quotientValue;
-    var quotientAccumulator := 20;
-    quotientAccumulator div= 3;
-    current += quotientAccumulator;
-    current += coalescedText.Length;
-    if coalescedText = 'xy' then
-    begin
-      current += 1;
-    end;
-    current += preservedText.Length;
-    if preservedText = 'xy' then
-    begin
-      current += 1;
-    end;
-    current += 1;
-    current *= 2;
-    current -= 3;
-    current /= 3;
-    textSlice += 'd';
-    current += textSlice.Length;
-    maybeText ??= 'xy';
-    current += maybeText.Length;
-    if maybeText = 'xy' then
-    begin
-      current += 1;
-    end;
-    maybeText ??= 'zz';
-    if maybeText = 'xy' then
-    begin
-      current += 1;
-    end;
-
-    foreach var ch in text do
-    begin
-      current := current + 1;
-    end;
-
-    for index := 0 to 4 do
-    begin
-      if index = 3 then
-      begin
-        break;
-      end;
-
-      current := current + index;
-    end;
-
-    for index := 0 to 3 do
-    begin
-      if index = 1 then
-      begin
-        continue;
-      end;
-
-      current := current + 1;
-    end;
-
-    repeat
-      result := result + 1;
-      if result = 2 then
-      begin
-        continue;
-      end;
-
-      if result = 4 then
-      begin
-        break;
-      end;
-
-      current := current + 1;
-    until result > 10;
-
-    case current of
-      88:
-        current := current + 2;
-      89, Program.CaseHit:
-        current := current + 3;
-    else
-      current := current + 9;
-    end;
-
-    case 2 of
-      1..3:
-        current := current + 1;
-    end;
-
-    case text of
-      'abcd':
-        current := current + 1;
-    else
-      current := current + 7;
-    end;
-
-    var mode: Mode := Mode.Busy;
-    var activeModes: set of Mode := [Mode.Busy, Mode.Done];
-    var extraModes: set of Mode := [Mode.Idle..Mode.Busy, Mode.Done];
-    var combinedModes := activeModes + extraModes;
-    var commonModes := combinedModes * [Mode.Done];
-    var reducedModes := combinedModes - [Mode.Busy];
-    case mode of
-      Mode.Idle:
-        current := current + 1000;
-      Mode.Busy:
-        current := current + 3;
-      Mode.Done:
-        current := current + 1000;
-    end;
-
-    case mode of
-      Mode.Busy when Mode.Done in activeModes:
-        current := current + 2;
-    else
-      current := current + 1000;
-    end;
-
-    match mode with
-      Mode.Idle => current := current + 1000;
-      Mode.Busy or Mode.Done => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var modeText := match mode with
-      Mode.Busy => 'busy'
-      Mode.Done => 'done'
-      _ => 'idle'
-    end;
-    current := current + modeText.Length;
-
-    match castText with
-      String s when s.Length = 4 => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var matchedText := match castText with
-      String s when s.Length = 4 => s
-      _ => 'bad'
-    end;
-    current := current + matchedText.Length;
-
-    var objectText := match castText with
-      Object any => 'obj'
-      _ => 'bad'
-    end;
-    current := current + objectText.Length;
-
-    match 5 with
-      < 0 => current := current + 1000;
-      >= 5 => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var sizedText := match 5 with
-      >= 5 => 'high'
-      _ => 'low'
-    end;
-    current := current + sizedText.Length;
-
-    match 7 with
-      >= 5 and <= 10 => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var boundedText := match 7 with
-      >= 5 and < 10 => 'mid'
-      _ => 'low'
-    end;
-    current := current + boundedText.Length;
-
-    match 12 with
-      < 0 or >= 10 => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var edgeText := match 12 with
-      < 0 or >= 10 => 'edge'
-      _ => 'inner'
-    end;
-    current := current + edgeText.Length;
-    var negativeSeed := -1;
-    current := current + (negativeSeed + 2);
-    inc(current);
-    dec(current);
-    inc(p.Value);
-    dec(Program.Total);
-
-    match 12 with
-      not < 0 or 7 => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var mixedText := match 12 with
-      not < 0 or 7 => 'mix'
-      _ => 'bad'
-    end;
-    current := current + mixedText.Length;
-
-    match 5 with
-      not < 0 => current := current + 2;
-    else
-      current := current + 1000;
-    end match;
-
-    var notText := match 1 with
-      not < 0 => 'x'
-      _ => 'ok'
-    end;
-    current := current + notText.Length;
-
-    if Mode.Busy in activeModes then
-    begin
-      current := current + 3;
-    end;
-
-    if Mode.Busy in combinedModes then
-    begin
-      current := current + 1;
-    end;
-
-    if Mode.Done in commonModes then
-    begin
-      current := current + 1;
-    end;
-
-    if Mode.Idle in reducedModes then
-    begin
-      current := current + 1;
-    end;
-    activeModes or= [Mode.Idle];
-    if Mode.Idle in activeModes then
-    begin
-      current := current + 1;
-    end;
-    activeModes and= [Mode.Done];
-    if Mode.Done in activeModes then
-    begin
-      current := current + 1;
-    end;
-    if mode in activeModes then
-    begin
-      current := current + 2;
-    end;
-    if mode not in activeModes then
-    begin
-      current := current + 100;
-    end
-    else
-    begin
-      current := current + 1;
-    end;
-    activeModes xor= [Mode.Done];
-    if Mode.Done in activeModes then
-    begin
-      current := current + 100;
-    end
-    else
-    begin
-      current := current + 1;
-    end;
-    include(activeModes, Mode.Busy);
-    if Mode.Busy in activeModes then
-    begin
-      current := current + 1;
-    end;
-    exclude(activeModes, Mode.Busy);
-    if Mode.Busy in activeModes then
-    begin
-      current := current + 100;
-    end
-    else
-    begin
-      current := current + 1;
-    end;
-    for each var listedMode in extraModes do
-    begin
-      current := current + 1;
-    end;
-
-    var point := new Point();
-    point.X := 1;
-    point.Y := 2;
-    var point2 := new Point();
-    current := current + point.X + point.Y;
-    with point2 do
-    begin
-      X := 1;
-      Y := 2;
-      current := current + X + Y;
-    end;
-    if point = point2 then
-    begin
-      current := current + 1;
-    end;
-
-    var compoundProgram := new Program(5);
-    compoundProgram.Value += 2;
-    compoundProgram.Counter += 3;
-    Program.Total += 4;
-    current := current + compoundProgram.Value + compoundProgram.Counter;
-
-    while result > 0 do
-    begin
-      result := result - 1;
-    end;
-
-    Program.Total := result + current + Program.AutoTotal + Program.SecretRead;
-    return;
-  end;
-
-  public method Increment;
-  begin
-    Counter := Counter + 1;
-    self.Counter := Counter + 1;
-    return;
-  end;
-
-  public function Current: Integer;
-  begin
-    return self.Value;
-  end;
-end;
-""");
+var debugEnabled = args.Contains("--debug", StringComparer.Ordinal);
+var bootstrapFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "compiler-bootstrap.ilc"));
+var systemFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "system.ilc"));
+var demoCoreFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "demo-core.ilc"));
+var bootstrapSource = File.ReadAllText(bootstrapFixturePath);
+var systemSource = File.ReadAllText(systemFixturePath);
+var demoCoreSource = File.ReadAllText(demoCoreFixturePath);
+
+var tree = SyntaxTree.Parse(bootstrapSource);
+var systemTree = SyntaxTree.Parse(systemSource);
+var demoCoreTree = SyntaxTree.Parse(demoCoreSource);
+var mergedTree = SyntaxTree.Merge(tree, [systemTree, demoCoreTree]);
 
 if (tree.Root.Tokens.Count == 0)
 {
     failures.Add("SyntaxTree.Parse should produce tokens.");
+}
+
+if (tree.Diagnostics.Count > 0)
+{
+    if (debugEnabled)
+    {
+        Console.Error.WriteLine(
+            "debug.parser.diagnostics=" +
+            string.Join(
+                " | ",
+                tree.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+    }
 }
 
 if (tree.Root.Namespace?.Name.ToDisplayString() != "Demo.App")
@@ -732,10 +44,10 @@ if (tree.Root.Uses?.Imports.Count != 2)
 {
     failures.Add("Parser should capture the uses clause.");
 }
-else if (tree.Root.Uses.Imports[0].AliasIdentifier?.Text != "Sys" ||
-         tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System")
+else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" ||
+         tree.Root.Uses.Imports[1].NamespaceName.ToDisplayString() != "Demo.Core")
 {
-    failures.Add("Parser should capture uses aliases.");
+    failures.Add("Parser should capture imported namespaces.");
 }
 
 if (tree.Root.Members.Count != 6)
@@ -758,9 +70,53 @@ else
     {
         failures.Add("Class declaration should capture field, property and method members.");
     }
+
+    if (debugEnabled)
+    {
+        Console.Error.WriteLine(
+            "debug.parser.program.methods=" +
+            string.Join(
+                ",",
+                classDeclaration.Members
+                    .OfType<MethodDeclarationSyntax>()
+                    .Select(method => method.Identifier.Text)));
+    }
+
+    var parsedMain = classDeclaration.Members
+        .OfType<MethodDeclarationSyntax>()
+        .FirstOrDefault(method => method.Identifier.Text == "Main");
+    if (debugEnabled && parsedMain?.Body is not null)
+    {
+        Console.Error.WriteLine($"debug.parser.main.statementCount={parsedMain.Body.Statements.Count}");
+        Console.Error.WriteLine(
+            "debug.parser.main.tailStatements=" +
+            string.Join(
+                ",",
+                parsedMain.Body.Statements
+                    .TakeLast(8)
+                    .Select(statement => statement.Kind.ToString())));
+
+        Console.Error.WriteLine(
+            "debug.parser.main.caseLabels=" +
+            string.Join(
+                " | ",
+                parsedMain.Body.Statements
+                    .OfType<CaseStatementSyntax>()
+                    .SelectMany(caseStatement => caseStatement.Clauses)
+                    .SelectMany(clause => clause.Labels)
+                    .Select(label => $"{label.Kind}:{SemanticFacts.GetExpressionDisplayName(label)}")));
+    }
 }
 
-var binding = new Binder().Bind(tree);
+var binding = new Binder().Bind(mergedTree);
+if (debugEnabled && binding.Diagnostics.Count > 0)
+{
+    Console.Error.WriteLine(
+        "debug.binding.diagnostics=" +
+        string.Join(
+            " | ",
+            binding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
 if (binding.HasErrors)
 {
     failures.Add("Valid fixture code should not produce binding errors.");
@@ -821,12 +177,19 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 11)
+else if (programType.Methods.Count != 13)
 {
     failures.Add("Binder should surface declared methods and synthesized property accessors for classes.");
 }
 else
 {
+    if (debugEnabled)
+    {
+        Console.Error.WriteLine(
+            "debug.binder.program.methods=" +
+            string.Join(",", programType.Methods.Select(method => method.Name)));
+    }
+
     if (programType.Fields.Count != 10 ||
         !programType.Fields.Any(field => field.Name == "Accumulator" && field.IsStatic) ||
         !programType.Fields.Any(field => field.Name == "Counter" && !field.IsStatic) ||
@@ -933,11 +296,11 @@ else
         {
             failures.Add("Bound call sites should carry a resolved non-zero target function id.");
         }
-        else if (mainMethod.Declaration?.Body?.Statements.OfType<ExpressionStatementSyntax>().FirstOrDefault()?.Expression is not AssignmentExpressionSyntax accumulatorAssignment ||
+        else if (mainMethod.Declaration?.Body?.Statements.OfType<ExpressionStatementSyntax>().Skip(1).FirstOrDefault()?.Expression is not AssignmentExpressionSyntax accumulatorAssignment ||
             accumulatorAssignment.Target is not NameExpressionSyntax accumulatorTargetName ||
             accumulatorTargetName.Name.ToDisplayString() != "Program.Total")
         {
-            failures.Add("The test fixture expects the first statement to assign Program.Total.");
+            failures.Add("The test fixture expects the second expression statement to assign Program.Total after the trace banner.");
         }
         else if (mainMethod.Declaration?.Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>().FirstOrDefault()?.Declarators[0].Initializer is not NameExpressionSyntax fieldRead ||
             fieldRead.Name.ToDisplayString() != "Program.Total")
@@ -947,6 +310,13 @@ else
         else if (mainMethod.Declaration?.Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>().FirstOrDefault()?.Declarators[0].TypeName is not null)
         {
             failures.Add("The test fixture expects local 'var result := Program.Total;' to remain implicitly typed.");
+        }
+
+        var invalidMainInstanceFieldLoad = mainBytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.LdField && instruction.Left == 0);
+        var invalidMainInstanceFieldStore = mainBytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.StField && instruction.Destination == 0);
+        if (invalidMainInstanceFieldLoad || invalidMainInstanceFieldStore)
+        {
+            failures.Add("Static Main lowering must not emit instance field access with receiver register 0.");
         }
 
 var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilation.GetAllFields(), binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants()).Lower(mainMethod);
@@ -1446,11 +816,12 @@ if (!bytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.Call)
     failures.Add("Synthetic top-level entry lowering should emit call instructions for top-level expressions.");
 }
 
+var allMethods = binding.Compilation.GetAllMethods();
 var allFields = binding.Compilation.GetAllFields();
-var module = new BytecodeEmitter().EmitModule(binding.Compilation.Methods.Concat(programType?.Methods ?? []), allFields, binding.Compilation.Types, new Lowerer(binding.Compilation.Methods.Concat(programType?.Methods ?? []), allFields, binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants()));
-if (module.Functions.Count != 12)
+var module = new BytecodeEmitter().EmitModule(allMethods, allFields, binding.Compilation.Types, new Lowerer(allMethods, allFields, binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants()));
+if (module.Functions.Count != allMethods.Count)
 {
-    failures.Add("Module emission should include the synthetic entry point, declared methods and synthesized accessor methods.");
+    failures.Add("Module emission should include all bound methods from the merged bootstrap fixture.");
 }
 else if (module.Functions.Count(function => function.Name == "Main") != 1)
 {
@@ -1461,7 +832,7 @@ else if (!module.ExceptionHandlers.Any())
     failures.Add("Module emission should surface exception handler metadata when try/except is present.");
 }
 
-var ilbImage = new IlbSerializer().Serialize(module, binding.Compilation.Methods.Concat(programType?.Methods ?? []).ToArray(), allFields, binding.Compilation.Types, binding.Compilation.EntryPoint);
+var ilbImage = new IlbSerializer().Serialize(module, allMethods.ToArray(), allFields, binding.Compilation.Types, binding.Compilation.EntryPoint);
 if (ilbImage.Bytes.Length <= 64)
 {
     failures.Add("ILB serialization should emit a non-trivial binary image.");
@@ -1696,6 +1067,313 @@ if (!invalidReferenceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC
 if (!invalidReferenceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2113"))
 {
     failures.Add("Binder should report static fields accessed through an instance receiver.");
+}
+
+var inheritanceBindingTree = SyntaxTree.Parse("""
+public class Animal
+begin
+  public var Name: String;
+  public virtual function Speak(): String;
+  begin
+    return 'generic';
+  end;
+end;
+
+public class Dog: Animal
+begin
+  public var Breed: String;
+  public override function Speak(): String;
+  begin
+    return 'woof';
+  end;
+end;
+
+public class Program
+begin
+  public static method Main;
+  begin
+    var pet := new Dog();
+    var inheritedName := pet.Name;
+    var ownBreed := pet.Breed;
+    var sound := pet.Speak();
+    var asBase: Animal := pet;
+    var baseName := asBase.Name;
+    var baseSound := asBase.Speak();
+  end;
+end;
+""");
+
+var inheritanceBinding = new Binder().Bind(inheritanceBindingTree);
+if (inheritanceBinding.HasErrors)
+{
+    failures.Add("Binder should accept valid inheritance and virtual dispatch member access in a single-pass hierarchy scenario.");
+}
+
+var interfaceBindingTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public function Run(value: Integer): Integer;
+end;
+
+public interface IAdvancedWorker: IWorker
+begin
+  public function Stop(): Integer;
+end;
+
+public class Worker: IAdvancedWorker
+begin
+  public function Run(value: Integer): Integer;
+  begin
+    return value;
+  end;
+
+  public function Stop(): Integer;
+  begin
+    return 0;
+  end;
+end;
+""");
+
+if (interfaceBindingTree.Root.Members[0] is not InterfaceDeclarationSyntax parsedInterface ||
+    parsedInterface.Identifier.Text != "IWorker" ||
+    parsedInterface.Members.Count != 1)
+{
+    failures.Add("Parser should capture interface declarations and interface members.");
+}
+
+var interfaceBinding = new Binder().Bind(interfaceBindingTree);
+if (interfaceBinding.HasErrors)
+{
+    failures.Add("Binder should accept valid interface declarations and class implementations.");
+}
+else
+{
+    var workerType = interfaceBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Worker");
+    var iWorkerType = interfaceBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IWorker");
+    if (workerType is null || workerType.IsInterface || workerType.InterfaceTypes.Count != 1 || workerType.InterfaceTypes[0].Name != "IAdvancedWorker")
+    {
+        failures.Add("Binder should record implemented interfaces on classes.");
+    }
+
+    if (iWorkerType is null || !iWorkerType.IsInterface)
+    {
+        failures.Add("Binder should expose interfaces as dedicated named types.");
+    }
+}
+
+var invalidInheritanceTree = SyntaxTree.Parse("""
+public enum Value
+begin
+  One;
+end;
+
+public class UnknownBase: MissingType
+begin
+end;
+
+public class NotClassBase: Value
+begin
+end;
+
+public class CycleA: CycleB
+begin
+end;
+
+public class CycleB: CycleA
+begin
+end;
+
+public class StaticVirtualBase
+begin
+  public static virtual function Mark(): Integer;
+  begin
+    return 1;
+  end;
+end;
+
+public class StaticVirtualOverride: StaticVirtualBase
+begin
+  public static override function Mark(): Integer;
+  begin
+    return 2;
+  end;
+end;
+
+public class BadOverride: Value
+begin
+  public virtual override function Mixed(): Integer;
+  begin
+    return 3;
+  end;
+end;
+
+public class NoVirtualBase
+begin
+  public function BaseOnly(): Integer;
+  begin
+    return 1;
+  end;
+end;
+
+public class MissingVirtualOverride: NoVirtualBase
+begin
+  public override function BaseOnly(): Integer;
+  begin
+    return 2;
+  end;
+end;
+
+public class SignatureBase
+begin
+  public virtual function Sum(left: Integer; right: Integer): Integer;
+  begin
+    return left + right;
+  end;
+end;
+
+public class SignatureMismatch: SignatureBase
+begin
+  public override function Sum(left: Integer): Integer;
+  begin
+    return left;
+  end;
+end;
+""");
+
+var invalidInheritanceBinding = new Binder().Bind(invalidInheritanceTree);
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2193"))
+{
+    failures.Add("Binder should report unknown base types for classes.");
+}
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2194"))
+{
+    failures.Add("Binder should report non-class base types.");
+}
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2195"))
+{
+    failures.Add("Binder should report inheritance cycles.");
+}
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2196"))
+{
+    failures.Add("Binder should report static members marked virtual or override.");
+}
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2197"))
+{
+    failures.Add("Binder should report members marked as both virtual and override.");
+}
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2198"))
+{
+    failures.Add("Binder should report override members with no matching virtual base method.");
+}
+
+if (!invalidInheritanceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2199"))
+{
+    failures.Add("Binder should report overrides with signature mismatches.");
+}
+
+var invalidInterfaceTree = SyntaxTree.Parse("""
+public enum NotAnInterface
+begin
+  One;
+end;
+
+public interface IMissingBase: UnknownInterface
+begin
+end;
+
+public interface IWrongBase: NotAnInterface
+begin
+end;
+
+public interface IInvalidMembers
+begin
+  public var Value: Integer;
+  public const Fixed = 1;
+  public constructor;
+  public function Run(): Integer;
+  begin
+    return 1;
+  end;
+  public property Name: String { get; };
+end;
+
+public interface IRequired
+begin
+  public function Run(value: Integer): Integer;
+end;
+
+public class BaseClass
+begin
+end;
+
+public class WrongImplementation: BaseClass, NotAnInterface
+begin
+end;
+
+public class UnknownInterfaceImplementation: BaseClass, UnknownInterface
+begin
+end;
+
+public class MissingImplementation: IRequired
+begin
+end;
+""");
+
+var invalidInterfaceBinding = new Binder().Bind(invalidInterfaceTree);
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2200"))
+{
+    failures.Add("Binder should report unknown implemented interfaces for classes.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2201"))
+{
+    failures.Add("Binder should report non-interface implemented types for classes.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2202"))
+{
+    failures.Add("Binder should report unknown base interfaces.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2203"))
+{
+    failures.Add("Binder should report non-interface base interfaces.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2204"))
+{
+    failures.Add("Binder should report interface fields.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2205"))
+{
+    failures.Add("Binder should report interface constants.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2206"))
+{
+    failures.Add("Binder should report interface constructors.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2207"))
+{
+    failures.Add("Binder should report interface methods with bodies.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2208"))
+{
+    failures.Add("Binder should report interface properties with bodies or auto-implementation blocks.");
+}
+
+if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2209"))
+{
+    failures.Add("Binder should report missing interface method implementations.");
 }
 
 if (!invalidReferenceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2117"))
@@ -2445,6 +2123,15 @@ else
         if (externMainFunction.Instructions.Count(instruction => instruction.OpCode == OpCode.Call) < 17)
         {
             failures.Add("Calls to extern host methods should still lower through the call opcode.");
+        }
+        else if (!externMainFunction.Instructions.Any(instruction => instruction.OpCode == OpCode.LdLen))
+        {
+            failures.Add("Environment.CommandLineArgs.Length should lower to a length load in the extern fixture.");
+        }
+        else if (externMainFunction.Instructions.Any(instruction => instruction.OpCode == OpCode.LdField && instruction.Left == 0) ||
+            externMainFunction.Instructions.Any(instruction => instruction.OpCode == OpCode.StField && instruction.Destination == 0))
+        {
+            failures.Add("Extern-backed static access in Main must not emit instance field access with receiver register 0.");
         }
     }
 }
