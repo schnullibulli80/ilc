@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -43,6 +44,18 @@ std::uint64_t StandardHostServices::get_wall_timestamp_ms() const
 {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
+
+std::string StandardHostServices::get_wall_datetime_text() const
+{
+    const auto now = std::chrono::system_clock::now();
+    const auto time = std::chrono::system_clock::to_time_t(now);
+    std::tm local_time {};
+    localtime_r(&time, &local_time);
+
+    std::ostringstream buffer;
+    buffer << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S");
+    return buffer.str();
 }
 
 std::string StandardHostServices::get_current_working_directory() const

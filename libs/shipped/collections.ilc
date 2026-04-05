@@ -1,0 +1,126 @@
+namespace System.Collections;
+uses System;
+
+public class StringList
+begin
+  private var Items: array of String;
+  private var CountValue: Integer;
+
+  private method EnsureCapacity(minimum: Integer);
+  begin
+    if Items = nil then
+    begin
+      Items := new String[4];
+    end;
+
+    if Items.Length >= minimum then
+    begin
+      return;
+    end;
+
+    var capacity := Items.Length;
+    if capacity <= 0 then
+    begin
+      capacity := 4;
+    end;
+
+    while capacity < minimum do
+    begin
+      capacity := capacity * 2;
+    end;
+
+    var resized := new String[capacity];
+    var index := 0;
+    while index < CountValue do
+    begin
+      resized[index] := Items[index];
+      index := index + 1;
+    end;
+
+    Items := resized;
+  end;
+
+  public constructor;
+  begin
+    Items := new String[4];
+    CountValue := 0;
+  end;
+
+  public property Count: Integer
+  begin
+    get
+    begin
+      return CountValue;
+    end;
+  end;
+
+  public default property Item[index: Integer]: String
+  begin
+    get
+    begin
+      return Items[index];
+    end;
+
+    set(value)
+    begin
+      Items[index] := value;
+    end;
+  end;
+
+  public method Add(value: String);
+  begin
+    EnsureCapacity(CountValue + 1);
+    Items[CountValue] := value;
+    CountValue := CountValue + 1;
+  end;
+
+  public method AddRange(values: array of String);
+  begin
+    var index := 0;
+    while index < values.Length do
+    begin
+      Add(values[index]);
+      index := index + 1;
+    end;
+  end;
+
+  public method Clear;
+  begin
+    Items := new String[4];
+    CountValue := 0;
+  end;
+
+  public function Contains(value: String): Boolean;
+  begin
+    return IndexOf(value) >= 0;
+  end;
+
+  public function IndexOf(value: String): Integer;
+  begin
+    var index := 0;
+    while index < CountValue do
+    begin
+      if Items[index] = value then
+      begin
+        return index;
+      end;
+
+      index := index + 1;
+    end;
+
+    return -1;
+  end;
+
+  public function ToArray: array of String;
+  begin
+    var result := new String[CountValue];
+    var index := 0;
+    while index < CountValue do
+    begin
+      result[index] := Items[index];
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+end;

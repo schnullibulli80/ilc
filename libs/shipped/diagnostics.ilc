@@ -1,0 +1,1134 @@
+namespace System.Diagnostics;
+uses System;
+
+public enum TraceLevel
+begin
+  Debug;
+  Information;
+  Warning;
+  Error;
+end;
+
+public enum TraceTarget
+begin
+  Console;
+  File;
+  Null;
+end;
+
+public interface ITrace
+begin
+  public property Targets: array of TraceTarget { get; set; };
+  public property MinimumLevel: TraceLevel { get; set; };
+  public method Write(text: String);
+  public method WriteLine(text: String);
+  public method WriteDebug(text: String);
+  public method WriteInformation(text: String);
+  public method WriteWarning(text: String);
+  public method WriteError(text: String);
+  public method WriteErrorWithStackTrace(text: String);
+end;
+
+public class Stopwatch
+begin
+  private var StartTick: Integer;
+  private var ElapsedTick: Integer;
+  private var Running: Boolean;
+
+  private static function CurrentTick: Integer;
+  begin
+    return Integer.Parse(Clock.MonotonicMillisecondsText);
+  end;
+
+  public constructor;
+  begin
+    StartTick := 0;
+    ElapsedTick := 0;
+    Running := false;
+  end;
+
+  public static function StartNew: Stopwatch;
+  begin
+    var stopwatch := new Stopwatch();
+    stopwatch.Start();
+    return stopwatch;
+  end;
+
+  public property IsRunning: Boolean
+  begin
+    get
+    begin
+      return Running;
+    end;
+  end;
+
+  public property ElapsedMilliseconds: Integer
+  begin
+    get
+    begin
+      if Running then
+      begin
+        return ElapsedTick + (CurrentTick() - StartTick);
+      end;
+
+      return ElapsedTick;
+    end;
+  end;
+
+  public method Start;
+  begin
+    if not Running then
+    begin
+      StartTick := CurrentTick();
+      Running := true;
+    end;
+  end;
+
+  public method Stop;
+  begin
+    if Running then
+    begin
+      ElapsedTick := ElapsedMilliseconds;
+      Running := false;
+    end;
+  end;
+
+  public method Restart;
+  begin
+    ElapsedTick := 0;
+    StartTick := CurrentTick();
+    Running := true;
+  end;
+
+  public method Reset;
+  begin
+    StartTick := 0;
+    ElapsedTick := 0;
+    Running := false;
+  end;
+end;
+
+public class TraceFormatting
+begin
+  private static function NewLine: String;
+  begin
+    return '
+';
+  end;
+
+  public static function LevelText(level: TraceLevel): String;
+  begin
+    if level = TraceLevel.Debug then
+    begin
+      return 'DEBUG';
+    end;
+
+    if level = TraceLevel.Information then
+    begin
+      return 'INFO';
+    end;
+
+    if level = TraceLevel.Warning then
+    begin
+      return 'WARN';
+    end;
+
+    return 'ERROR';
+  end;
+
+  public static function Prefix(level: TraceLevel): String;
+  begin
+    return '[' + Clock.WallDateTimeText + '] [' + LevelText(level) + '] ';
+  end;
+
+  public static function AppendLine(text: String): String;
+  begin
+    return text + NewLine();
+  end;
+
+  public static method ThrowStackTraceNotSupported;
+  begin
+    raise new NotSupportedException('Stacktrace tracing is not supported in the bootstrap runtime yet.');
+  end;
+end;
+
+public class ConsoleTrace: ITrace
+begin
+  private var TargetKinds: array of TraceTarget;
+  private var MinimumLevelValue: TraceLevel;
+  private var HasPending: Boolean;
+  private var PendingText: String;
+  private var PendingLevel: TraceLevel;
+
+  private function ShouldWrite(level: TraceLevel): Boolean;
+  begin
+    return level >= MinimumLevelValue;
+  end;
+
+  private method FlushPending;
+  begin
+    if HasPending then
+    begin
+      Console.WriteLine(TraceFormatting.Prefix(PendingLevel) + PendingText);
+      PendingText := '';
+      HasPending := false;
+    end;
+  end;
+
+  private method EmitFragment(level: TraceLevel; text: String);
+  begin
+    if not ShouldWrite(level) then
+    begin
+      return;
+    end;
+
+    if HasPending and PendingLevel = level then
+    begin
+      PendingText := PendingText + text;
+    end
+    else
+    begin
+      FlushPending();
+      PendingText := text;
+      PendingLevel := level;
+      HasPending := true;
+    end;
+  end;
+
+  private method EmitLine(level: TraceLevel; text: String; continuePending: Boolean);
+  begin
+    if not ShouldWrite(level) then
+    begin
+      return;
+    end;
+
+    if continuePending and HasPending and PendingLevel = level then
+    begin
+      Console.WriteLine(TraceFormatting.Prefix(level) + PendingText + text);
+      PendingText := '';
+      HasPending := false;
+      return;
+    end;
+
+    FlushPending();
+    Console.WriteLine(TraceFormatting.Prefix(level) + text);
+  end;
+
+  public constructor;
+  begin
+    TargetKinds := new TraceTarget[1];
+    TargetKinds[0] := TraceTarget.Console;
+    MinimumLevelValue := TraceLevel.Debug;
+    HasPending := false;
+    PendingText := '';
+    PendingLevel := TraceLevel.Information;
+  end;
+
+  public property Targets: array of TraceTarget
+  begin
+    get
+    begin
+      return TargetKinds;
+    end;
+
+    set(value)
+    begin
+      TargetKinds := value;
+    end;
+  end;
+
+  public property MinimumLevel: TraceLevel
+  begin
+    get
+    begin
+      return MinimumLevelValue;
+    end;
+
+    set(value)
+    begin
+      MinimumLevelValue := value;
+    end;
+  end;
+
+  public method Write(text: String);
+  begin
+    EmitFragment(TraceLevel.Information, text);
+  end;
+
+  public method WriteLine(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, true);
+  end;
+
+  public method WriteDebug(text: String);
+  begin
+    EmitLine(TraceLevel.Debug, text, false);
+  end;
+
+  public method WriteInformation(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, false);
+  end;
+
+  public method WriteWarning(text: String);
+  begin
+    EmitLine(TraceLevel.Warning, text, false);
+  end;
+
+  public method WriteError(text: String);
+  begin
+    EmitLine(TraceLevel.Error, text, false);
+  end;
+
+  public method WriteErrorWithStackTrace(text: String);
+  begin
+    TraceFormatting.ThrowStackTraceNotSupported();
+  end;
+end;
+
+public class FileTrace: ITrace
+begin
+  private var TargetKinds: array of TraceTarget;
+  private var MinimumLevelValue: TraceLevel;
+  private var FilePathValue: String;
+  private var HasPending: Boolean;
+  private var PendingText: String;
+  private var PendingLevel: TraceLevel;
+
+  private function ShouldWrite(level: TraceLevel): Boolean;
+  begin
+    return level >= MinimumLevelValue;
+  end;
+
+  private method FlushPending;
+  begin
+    if HasPending then
+    begin
+      File.AppendAllText(FilePathValue, TraceFormatting.AppendLine(TraceFormatting.Prefix(PendingLevel) + PendingText));
+      PendingText := '';
+      HasPending := false;
+    end;
+  end;
+
+  private method EmitFragment(level: TraceLevel; text: String);
+  begin
+    if not ShouldWrite(level) then
+    begin
+      return;
+    end;
+
+    if FilePathValue = nil or FilePathValue = '' then
+    begin
+      return;
+    end;
+
+    if HasPending and PendingLevel = level then
+    begin
+      PendingText := PendingText + text;
+    end
+    else
+    begin
+      FlushPending();
+      PendingText := text;
+      PendingLevel := level;
+      HasPending := true;
+    end;
+  end;
+
+  private method EmitLine(level: TraceLevel; text: String; continuePending: Boolean);
+  begin
+    if not ShouldWrite(level) then
+    begin
+      return;
+    end;
+
+    if FilePathValue = nil or FilePathValue = '' then
+    begin
+      return;
+    end;
+
+    if continuePending and HasPending and PendingLevel = level then
+    begin
+      File.AppendAllText(FilePathValue, TraceFormatting.AppendLine(TraceFormatting.Prefix(level) + PendingText + text));
+      PendingText := '';
+      HasPending := false;
+      return;
+    end;
+
+    FlushPending();
+    File.AppendAllText(FilePathValue, TraceFormatting.AppendLine(TraceFormatting.Prefix(level) + text));
+  end;
+
+  public constructor(path: String);
+  begin
+    TargetKinds := new TraceTarget[1];
+    TargetKinds[0] := TraceTarget.File;
+    MinimumLevelValue := TraceLevel.Debug;
+    FilePathValue := path;
+    HasPending := false;
+    PendingText := '';
+    PendingLevel := TraceLevel.Information;
+  end;
+
+  public property Targets: array of TraceTarget
+  begin
+    get
+    begin
+      return TargetKinds;
+    end;
+
+    set(value)
+    begin
+      TargetKinds := value;
+    end;
+  end;
+
+  public property MinimumLevel: TraceLevel
+  begin
+    get
+    begin
+      return MinimumLevelValue;
+    end;
+
+    set(value)
+    begin
+      MinimumLevelValue := value;
+    end;
+  end;
+
+  public property FilePath: String
+  begin
+    get
+    begin
+      return FilePathValue;
+    end;
+
+    set(value)
+    begin
+      FilePathValue := value;
+    end;
+  end;
+
+  public method Write(text: String);
+  begin
+    EmitFragment(TraceLevel.Information, text);
+  end;
+
+  public method WriteLine(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, true);
+  end;
+
+  public method WriteDebug(text: String);
+  begin
+    EmitLine(TraceLevel.Debug, text, false);
+  end;
+
+  public method WriteInformation(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, false);
+  end;
+
+  public method WriteWarning(text: String);
+  begin
+    EmitLine(TraceLevel.Warning, text, false);
+  end;
+
+  public method WriteError(text: String);
+  begin
+    EmitLine(TraceLevel.Error, text, false);
+  end;
+
+  public method WriteErrorWithStackTrace(text: String);
+  begin
+    TraceFormatting.ThrowStackTraceNotSupported();
+  end;
+end;
+
+public class NullTrace: ITrace
+begin
+  private var TargetKinds: array of TraceTarget;
+  private var MinimumLevelValue: TraceLevel;
+
+  public constructor;
+  begin
+    TargetKinds := new TraceTarget[1];
+    TargetKinds[0] := TraceTarget.Null;
+    MinimumLevelValue := TraceLevel.Debug;
+  end;
+
+  public property Targets: array of TraceTarget
+  begin
+    get
+    begin
+      return TargetKinds;
+    end;
+
+    set(value)
+    begin
+      TargetKinds := value;
+    end;
+  end;
+
+  public property MinimumLevel: TraceLevel
+  begin
+    get
+    begin
+      return MinimumLevelValue;
+    end;
+
+    set(value)
+    begin
+      MinimumLevelValue := value;
+    end;
+  end;
+
+  public method Write(text: String);
+  begin
+    return;
+  end;
+
+  public method WriteLine(text: String);
+  begin
+    return;
+  end;
+
+  public method WriteDebug(text: String);
+  begin
+    return;
+  end;
+
+  public method WriteInformation(text: String);
+  begin
+    return;
+  end;
+
+  public method WriteWarning(text: String);
+  begin
+    return;
+  end;
+
+  public method WriteError(text: String);
+  begin
+    return;
+  end;
+
+  public method WriteErrorWithStackTrace(text: String);
+  begin
+    TraceFormatting.ThrowStackTraceNotSupported();
+  end;
+end;
+
+public class CompositeTrace: ITrace
+begin
+  private var EntryList: array of ITrace;
+  private var TargetKinds: array of TraceTarget;
+  private var MinimumLevelValue: TraceLevel;
+
+  public constructor;
+  begin
+    EntryList := new ITrace[0];
+    TargetKinds := new TraceTarget[0];
+    MinimumLevelValue := TraceLevel.Debug;
+  end;
+
+  public property Entries: array of ITrace
+  begin
+    get
+    begin
+      return EntryList;
+    end;
+
+    set(value)
+    begin
+      EntryList := value;
+    end;
+  end;
+
+  public property Targets: array of TraceTarget
+  begin
+    get
+    begin
+      return TargetKinds;
+    end;
+
+    set(value)
+    begin
+      TargetKinds := value;
+    end;
+  end;
+
+  public property MinimumLevel: TraceLevel
+  begin
+    get
+    begin
+      return MinimumLevelValue;
+    end;
+
+    set(value)
+    begin
+      MinimumLevelValue := value;
+    end;
+  end;
+
+  private static method DispatchWrite(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.Write(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.Write(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.Write(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.Write(text);
+      return;
+    end;
+
+    target.Write(text);
+  end;
+
+  private static method DispatchWriteLine(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.WriteLine(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.WriteLine(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.WriteLine(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.WriteLine(text);
+      return;
+    end;
+
+    target.WriteLine(text);
+  end;
+
+  private static method DispatchWriteDebug(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.WriteDebug(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.WriteDebug(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.WriteDebug(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.WriteDebug(text);
+      return;
+    end;
+
+    target.WriteDebug(text);
+  end;
+
+  private static method DispatchWriteInformation(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.WriteInformation(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.WriteInformation(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.WriteInformation(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.WriteInformation(text);
+      return;
+    end;
+
+    target.WriteInformation(text);
+  end;
+
+  private static method DispatchWriteWarning(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.WriteWarning(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.WriteWarning(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.WriteWarning(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.WriteWarning(text);
+      return;
+    end;
+
+    target.WriteWarning(text);
+  end;
+
+  private static method DispatchWriteError(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.WriteError(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.WriteError(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.WriteError(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.WriteError(text);
+      return;
+    end;
+
+    target.WriteError(text);
+  end;
+
+  private static method DispatchWriteErrorWithStackTrace(target: ITrace; text: String);
+  begin
+    var composite := target as CompositeTrace;
+    if composite <> nil then
+    begin
+      composite.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    var console := target as ConsoleTrace;
+    if console <> nil then
+    begin
+      console.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    var file := target as FileTrace;
+    if file <> nil then
+    begin
+      file.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    var none := target as NullTrace;
+    if none <> nil then
+    begin
+      none.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    target.WriteErrorWithStackTrace(text);
+  end;
+
+  public method Write(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWrite(entry, text);
+    end;
+  end;
+
+  public method WriteLine(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWriteLine(entry, text);
+    end;
+  end;
+
+  public method WriteDebug(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWriteDebug(entry, text);
+    end;
+  end;
+
+  public method WriteInformation(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWriteInformation(entry, text);
+    end;
+  end;
+
+  public method WriteWarning(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWriteWarning(entry, text);
+    end;
+  end;
+
+  public method WriteError(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWriteError(entry, text);
+    end;
+  end;
+
+  public method WriteErrorWithStackTrace(text: String);
+  begin
+    for each var entry in EntryList do
+    begin
+      DispatchWriteErrorWithStackTrace(entry, text);
+    end;
+  end;
+end;
+
+public class Trace
+begin
+  private static var CurrentTrace: ITrace;
+
+  private static method CurrentAsComposite: CompositeTrace;
+  begin
+    return Current as CompositeTrace;
+  end;
+
+  private static method CurrentAsConsole: ConsoleTrace;
+  begin
+    return Current as ConsoleTrace;
+  end;
+
+  private static method CurrentAsFile: FileTrace;
+  begin
+    return Current as FileTrace;
+  end;
+
+  private static method CurrentAsNull: NullTrace;
+  begin
+    return Current as NullTrace;
+  end;
+
+  public static property Current: ITrace
+  begin
+    get
+    begin
+      if CurrentTrace = nil then
+      begin
+        CurrentTrace := new ConsoleTrace();
+      end;
+
+      return CurrentTrace;
+    end;
+
+    set(value)
+    begin
+      CurrentTrace := value;
+    end;
+  end;
+
+  public static method Write(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.Write(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.Write(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.Write(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.Write(text);
+      return;
+    end;
+
+    Current.Write(text);
+  end;
+
+  public static method WriteLine(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.WriteLine(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.WriteLine(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.WriteLine(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.WriteLine(text);
+      return;
+    end;
+
+    Current.WriteLine(text);
+  end;
+
+  public static method WriteDebug(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.WriteDebug(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.WriteDebug(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.WriteDebug(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.WriteDebug(text);
+      return;
+    end;
+
+    Current.WriteDebug(text);
+  end;
+
+  public static method WriteInformation(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.WriteInformation(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.WriteInformation(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.WriteInformation(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.WriteInformation(text);
+      return;
+    end;
+
+    Current.WriteInformation(text);
+  end;
+
+  public static method WriteWarning(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.WriteWarning(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.WriteWarning(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.WriteWarning(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.WriteWarning(text);
+      return;
+    end;
+
+    Current.WriteWarning(text);
+  end;
+
+  public static method WriteError(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.WriteError(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.WriteError(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.WriteError(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.WriteError(text);
+      return;
+    end;
+
+    Current.WriteError(text);
+  end;
+
+  public static method WriteErrorWithStackTrace(text: String);
+  begin
+    var composite := CurrentAsComposite();
+    if composite <> nil then
+    begin
+      composite.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    var console := CurrentAsConsole();
+    if console <> nil then
+    begin
+      console.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    var file := CurrentAsFile();
+    if file <> nil then
+    begin
+      file.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    var none := CurrentAsNull();
+    if none <> nil then
+    begin
+      none.WriteErrorWithStackTrace(text);
+      return;
+    end;
+
+    Current.WriteErrorWithStackTrace(text);
+  end;
+end;

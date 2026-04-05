@@ -1,7 +1,39 @@
 namespace System;
 
+public interface IException
+begin
+  public property Message: String { get; };
+end;
+
+public class Exception: IException
+begin
+  protected var MessageValue: String;
+
+  public constructor(message: String);
+  begin
+    MessageValue := message;
+  end;
+
+  public property Message: String
+  begin
+    get
+    begin
+      return MessageValue;
+    end;
+  end;
+end;
+
+public class NotSupportedException: Exception
+begin
+  public constructor(message: String);
+  begin
+    MessageValue := message;
+  end;
+end;
+
 public class Console
 begin
+  public static extern method Write(text: String);
   public static extern method WriteLine(text: String);
 end;
 
@@ -82,6 +114,7 @@ public class Clock
 begin
   private static extern function GetMonotonicMillisecondsTextCore: String;
   private static extern function GetWallMillisecondsTextCore: String;
+  private static extern function GetWallDateTimeTextCore: String;
 
   public static property MonotonicMillisecondsText: String
   begin
@@ -98,6 +131,88 @@ begin
       return GetWallMillisecondsTextCore();
     end;
   end;
+
+  public static property WallDateTimeText: String
+  begin
+    get
+    begin
+      return GetWallDateTimeTextCore();
+    end;
+  end;
+end;
+
+public class Math
+begin
+  public static function Min(left: Integer; right: Integer): Integer;
+  begin
+    if left < right then
+    begin
+      return left;
+    end;
+
+    return right;
+  end;
+
+  public static function Max(left: Integer; right: Integer): Integer;
+  begin
+    if left > right then
+    begin
+      return left;
+    end;
+
+    return right;
+  end;
+
+  public static function Abs(value: Integer): Integer;
+  begin
+    if value < 0 then
+    begin
+      return -value;
+    end;
+
+    return value;
+  end;
+
+  public static function Clamp(value: Integer; minimum: Integer; maximum: Integer): Integer;
+  begin
+    var lower := Min(minimum, maximum);
+    var upper := Max(minimum, maximum);
+
+    if value < lower then
+    begin
+      return lower;
+    end;
+
+    if value > upper then
+    begin
+      return upper;
+    end;
+
+    return value;
+  end;
+end;
+
+public class Convert
+begin
+  public static function ToInteger(value: String): Integer;
+  begin
+    return Integer.Parse(value);
+  end;
+
+  public static function TryToInteger(value: String; out result: Integer): Boolean;
+  begin
+    return Integer.TryParse(value, result);
+  end;
+
+  public static function ToString(value: Integer): String;
+  begin
+    return value.ToString();
+  end;
+
+  public static function ToBoolean(value: Integer): Boolean;
+  begin
+    return value <> 0;
+  end;
 end;
 
 public class File
@@ -106,6 +221,48 @@ begin
   private static extern function ReadAllTextCore(path: String): String;
   private static extern method WriteAllTextCore(path: String; text: String);
   private static extern method AppendAllTextCore(path: String; text: String);
+
+  private static function NewLine: String;
+  begin
+    return '
+';
+  end;
+
+  private static function NormalizeLineEndings(text: String): String;
+  begin
+    return text.Replace('
+', NewLine());
+  end;
+
+  private static function CountLines(text: String): Integer;
+  begin
+    if text = '' then
+    begin
+      return 0;
+    end;
+
+    var newline := NewLine();
+    var count := 0;
+    var lineStart := 0;
+    var index := 0;
+    while index < text.Length do
+    begin
+      if text.Substring(index, 1) = newline then
+      begin
+        count := count + 1;
+        lineStart := index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    if lineStart < text.Length then
+    begin
+      count := count + 1;
+    end;
+
+    return count;
+  end;
 
   public static function Exists(path: String): Boolean;
   begin
@@ -125,6 +282,75 @@ begin
   public static method AppendAllText(path: String; text: String);
   begin
     AppendAllTextCore(path, text);
+  end;
+
+  public static function ReadAllLines(path: String): array of String;
+  begin
+    var normalized := NormalizeLineEndings(ReadAllText(path));
+    var lineCount := CountLines(normalized);
+    var lines := new String[lineCount];
+    var newline := NewLine();
+
+    if lineCount = 0 then
+    begin
+      return lines;
+    end;
+
+    var lineStart := 0;
+    var lineIndex := 0;
+    var index := 0;
+    while index < normalized.Length do
+    begin
+      if normalized.Substring(index, 1) = newline then
+      begin
+        lines[lineIndex] := normalized.Substring(lineStart, index - lineStart);
+        lineIndex := lineIndex + 1;
+        lineStart := index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    if lineStart < normalized.Length and lineIndex < lineCount then
+    begin
+      lines[lineIndex] := normalized.Substring(lineStart, normalized.Length - lineStart);
+    end;
+
+    return lines;
+  end;
+
+  public static method WriteAllLines(path: String; lines: array of String);
+  begin
+    var text := '';
+    var index := 0;
+    while index < lines.Length do
+    begin
+      if index > 0 then
+      begin
+        text := text + NewLine();
+      end;
+
+      text := text + lines[index];
+      index := index + 1;
+    end;
+
+    WriteAllText(path, text);
+  end;
+
+  public static method AppendLine(path: String; text: String);
+  begin
+    var newline := NewLine();
+    var prefix := '';
+    if Exists(path) then
+    begin
+      var current := ReadAllText(path);
+      if current <> '' and current.Substring(current.Length - 1, 1) <> newline then
+      begin
+        prefix := newline;
+      end;
+    end;
+
+    AppendAllText(path, prefix + text + newline);
   end;
 end;
 
@@ -153,5 +379,42 @@ begin
   public static function GetExtension(path: String): String;
   begin
     return GetExtensionCore(path);
+  end;
+
+  public static function HasExtension(path: String): Boolean;
+  begin
+    return GetExtension(path) <> '';
+  end;
+
+  public static function GetFileNameWithoutExtension(path: String): String;
+  begin
+    var fileName := GetFileName(path);
+    var extension := GetExtension(path);
+    if extension = '' then
+    begin
+      return fileName;
+    end;
+
+    return fileName.Substring(0, fileName.Length - extension.Length);
+  end;
+
+  public static function ChangeExtension(path: String; extension: String): String;
+  begin
+    var directory := GetDirectoryName(path);
+    var fileNameWithoutExtension := GetFileNameWithoutExtension(path);
+    var normalizedExtension := extension;
+
+    if normalizedExtension <> '' and not normalizedExtension.StartsWith('.') then
+    begin
+      normalizedExtension := '.' + normalizedExtension;
+    end;
+
+    var changedFileName := fileNameWithoutExtension + normalizedExtension;
+    if directory = '' then
+    begin
+      return changedFileName;
+    end;
+
+    return Combine(directory, changedFileName);
   end;
 end;

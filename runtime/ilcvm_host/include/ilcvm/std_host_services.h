@@ -16,6 +16,7 @@ public:
     [[nodiscard]] std::string console_read_line() const override;
     [[nodiscard]] std::uint64_t get_monotonic_timestamp_ms() const override;
     [[nodiscard]] std::uint64_t get_wall_timestamp_ms() const override;
+    [[nodiscard]] std::string get_wall_datetime_text() const override;
     [[nodiscard]] std::string get_current_working_directory() const override;
     [[nodiscard]] std::string get_user_name() const override;
     [[nodiscard]] std::string get_machine_name() const override;

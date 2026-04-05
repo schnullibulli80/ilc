@@ -1,5 +1,5 @@
 namespace Demo.App;
-uses System, Demo.Core;
+uses System, System.Diagnostics, System.Text, System.Collections, Demo.Core;
 const TopBonus: Integer = 2;
 public enum Mode
 begin
@@ -11,6 +11,47 @@ public record Point
 begin
   public var X: Integer;
   public var Y: Integer;
+end;
+public interface IWorker
+begin
+  public function Boost(value: Integer): Integer;
+  public property Name: String { get; set; };
+end;
+public interface IAdvancedWorker: IWorker
+begin
+  public function Bonus(): Integer;
+end;
+public class WorkerImpl: IAdvancedWorker
+begin
+  private var NameValue: String;
+
+  public property Name: String
+  begin
+    get
+    begin
+      return NameValue;
+    end;
+
+    set(value)
+    begin
+      NameValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    NameValue := 'worker';
+  end;
+
+  public function Boost(value: Integer): Integer;
+  begin
+    return value + 4;
+  end;
+
+  public function Bonus(): Integer;
+  begin
+    return 7;
+  end;
 end;
 var value := 42;
 Program.Add(3, 4);
@@ -133,6 +174,26 @@ begin
 
     Program.TraceText('SECTION object-model-properties-indexers');
     var p := new Program(5);
+    var worker: IWorker := new WorkerImpl();
+    var advancedWorker: IAdvancedWorker := new WorkerImpl();
+    var workerIsAdvanced := worker is IAdvancedWorker;
+    var advancedCast := worker as IAdvancedWorker;
+    var advancedCastOk := advancedCast <> nil;
+    var interfaceBoost := worker.Boost(2);
+    worker.Name := 'writer';
+    var interfaceNameSize := worker.Name.Length;
+    var interfaceBonus := advancedWorker.Bonus();
+    advancedWorker.Name := 'advanced';
+    var advancedNameSize := advancedWorker.Name.Length;
+    var advancedBoost := advancedWorker.Boost(3);
+    var advancedCastBonus := advancedCast.Bonus();
+    advancedCast.Name := 'casted';
+    var advancedCastNameSize := advancedCast.Name.Length;
+    var workerNameAfterCastSize := worker.Name.Length;
+    Program.Trace('CHECKPOINT interface-methods=', interfaceBoost);
+    Program.Trace('CHECKPOINT interface-properties=', interfaceNameSize);
+    Program.Trace('CHECKPOINT interface-inheritance=', interfaceBonus + advancedNameSize + advancedBoost);
+    Program.Trace('CHECKPOINT interface-casts=', workerIsAdvanced + advancedCastOk + advancedCastBonus + advancedCastNameSize + workerNameAfterCastSize);
     p.Increment();
     p.Value := p.Value + 3;
     p[0] := p.Value;
@@ -160,7 +221,7 @@ begin
     p.AutoValue := p.Value + 2;
     p.Adjusted := p.AutoValue + 1;
     var indexed := p[0];
-    var current := p.Adjusted + p.Created + numbers[1] + matrixCell + fieldCell + propertyCell + chainedCurrent + chainedItem + nestedCurrent + size + textSize + indexed;
+    var current := p.Adjusted + p.Created + numbers[1] + matrixCell + fieldCell + propertyCell + chainedCurrent + chainedItem + nestedCurrent + size + textSize + indexed + interfaceBoost + interfaceNameSize + interfaceBonus + advancedNameSize + advancedBoost + workerIsAdvanced + advancedCastOk + advancedCastBonus + advancedCastNameSize + workerNameAfterCastSize;
     Program.Trace('CHECKPOINT object-model=', current);
 
     Program.TraceText('SECTION comparisons-and-type-tests');
@@ -388,6 +449,33 @@ begin
     if formattedValue = '15' then
     begin
       current := current + 1;
+    end;
+    var convertedValue := Convert.ToInteger('17');
+    current := current + convertedValue;
+    var convertedTryValue: Integer := 0;
+    if Convert.TryToInteger('19', convertedTryValue) then
+    begin
+      current := current + convertedTryValue;
+    end;
+    if Convert.ToString(convertedValue) = '17' then
+    begin
+      current := current + 1;
+    end;
+    if Convert.ToBoolean(0) then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    if Convert.ToBoolean(2) then
+    begin
+      current := current + 1;
+    end
+    else
+    begin
+      current := current + 100;
     end;
     Program.Trace('CHECKPOINT strings-parse-format=', current);
 
@@ -734,6 +822,257 @@ begin
     begin
       result := result - 1;
     end;
+
+    Program.TraceText('SECTION math');
+    current := current + Math.Min(3, 7);
+    current := current + Math.Max(3, 7);
+    current := current + Math.Abs(-5);
+    current := current + Math.Clamp(-2, 0, 9);
+    current := current + Math.Clamp(4, 0, 9);
+    current := current + Math.Clamp(12, 0, 9);
+    current := current + Math.Clamp(12, 9, 0);
+    Program.Trace('CHECKPOINT math=', current);
+
+    Program.TraceText('SECTION io');
+    var ioLines := new String[3];
+    ioLines[0] := 'alpha';
+    ioLines[1] := 'beta';
+    ioLines[2] := 'gamma';
+    Program.Trace('CHECKPOINT io-seed=', ioLines.Length);
+    File.WriteAllLines('tmp/io-lines-smoke.log', ioLines);
+    Program.Trace('CHECKPOINT io-after-write=', File.ReadAllText('tmp/io-lines-smoke.log').Length);
+    File.AppendLine('tmp/io-lines-smoke.log', 'delta');
+    Program.Trace('CHECKPOINT io-after-append=', File.ReadAllText('tmp/io-lines-smoke.log').Length);
+    var loadedLines := File.ReadAllLines('tmp/io-lines-smoke.log');
+    Program.Trace('CHECKPOINT io-read-lines=', loadedLines.Length);
+    var ioText := File.ReadAllText('tmp/io-lines-smoke.log');
+    Program.Trace('CHECKPOINT io-read-text=', ioText.Length);
+    var ioHasExtension := Path.HasExtension('tmp/io-lines-smoke.log');
+    var ioFileNameWithoutExtension := Path.GetFileNameWithoutExtension('tmp/io-lines-smoke.log');
+    var ioChangedExtension := Path.ChangeExtension('tmp/io-lines-smoke.log', 'txt');
+    var ioJoinedLines := Text.Join('|', loadedLines);
+    Program.Trace('CHECKPOINT io-joined=', ioJoinedLines.Length);
+    var ioSplitJoinedLines := Text.Split(ioJoinedLines, '|');
+    Program.Trace('CHECKPOINT io-split=', ioSplitJoinedLines.Length);
+    var ioTextLines := Text.Lines(ioText);
+    Program.Trace('CHECKPOINT io-lines=', ioTextLines.Length);
+    var ioNilText := Text.NullIfEmpty('');
+    Program.Trace('CHECKPOINT io-nullifempty=', ioNilText = nil);
+    var ioHasEmpty := Text.IsNullOrEmpty('');
+    Program.Trace('CHECKPOINT io-isnullorempty=', ioHasEmpty);
+    var ioRepeated := Text.Repeat('-', 5);
+    var ioPadLeft := Text.PadLeft('42', 5, '0');
+    var ioPadRight := Text.PadRight('42', 5, '.');
+    var ioCentered := Text.Center('42', 6, '.');
+    var ioStartsIgnoreCase := Text.StartsWithIgnoreCase('AlphaBeta', 'alpha');
+    var ioEndsIgnoreCase := Text.EndsWithIgnoreCase('AlphaBeta', 'BETA');
+    var ioContainsIgnoreCase := Text.ContainsIgnoreCase('AlphaBeta', 'PHAB');
+    var ioTrimmedToNull := Text.TrimToNull('   ');
+    var ioCollapsedWhitespace := Text.CollapseWhitespace(' alpha  ' + '
+' + ' beta		gamma ');
+    var ioIndented := Text.Indent('left' + '
+' + 'right', '>> ');
+    Program.Trace('CHECKPOINT io-repeat=', ioRepeated.Length);
+    Program.Trace('CHECKPOINT io-padleft=', ioPadLeft.Length);
+    Program.Trace('CHECKPOINT io-padright=', ioPadRight.Length);
+    Program.Trace('CHECKPOINT io-center=', ioCentered.Length);
+    Program.Trace('CHECKPOINT io-starts-ignore-case=', ioStartsIgnoreCase);
+    Program.Trace('CHECKPOINT io-ends-ignore-case=', ioEndsIgnoreCase);
+    Program.Trace('CHECKPOINT io-contains-ignore-case=', ioContainsIgnoreCase);
+    Program.Trace('CHECKPOINT io-trim-to-null=', ioTrimmedToNull = nil);
+    Program.Trace('CHECKPOINT io-collapse-whitespace=', ioCollapsedWhitespace.Length);
+    Program.Trace('CHECKPOINT io-indent=', ioIndented.Length);
+    current := current + loadedLines.Length;
+    current := current + loadedLines[0].Length;
+    current := current + loadedLines[1].Length;
+    if loadedLines.Length >= 3 then
+    begin
+      current := current + loadedLines[2].Length;
+    end;
+    if loadedLines.Length >= 4 then
+    begin
+      current := current + loadedLines[3].Length;
+    end;
+    if ioText.Contains('alpha') and ioText.Contains('delta') then
+    begin
+      current := current + 1;
+    end;
+    if ioHasExtension then
+    begin
+      current := current + 1;
+    end;
+    current := current + ioJoinedLines.Length;
+    current := current + ioSplitJoinedLines.Length;
+    current := current + ioTextLines.Length;
+    if ioNilText = nil then
+    begin
+      current := current + 1;
+    end;
+    if ioHasEmpty then
+    begin
+      current := current + 1;
+    end;
+    current := current + ioRepeated.Length;
+    current := current + ioPadLeft.Length;
+    current := current + ioPadRight.Length;
+    current := current + ioCentered.Length;
+    if ioStartsIgnoreCase then
+    begin
+      current := current + 1;
+    end;
+    if ioEndsIgnoreCase then
+    begin
+      current := current + 1;
+    end;
+    if ioContainsIgnoreCase then
+    begin
+      current := current + 1;
+    end;
+    if ioTrimmedToNull = nil then
+    begin
+      current := current + 1;
+    end;
+    current := current + ioCollapsedWhitespace.Length;
+    current := current + ioIndented.Length;
+    current := current + ioFileNameWithoutExtension.Length;
+    current := current + ioChangedExtension.Length;
+    Program.Trace('CHECKPOINT io=', current);
+
+    Program.TraceText('SECTION collections');
+    var words := new StringList();
+    words.Add('alpha');
+    words.Add('beta');
+    var extraWords := new String[2];
+    extraWords[0] := 'gamma';
+    extraWords[1] := 'delta';
+    words.AddRange(extraWords);
+    Program.Trace('CHECKPOINT collections-count=', words.Count);
+    Program.Trace('CHECKPOINT collections-contains=', words.Contains('beta'));
+    Program.Trace('CHECKPOINT collections-index=', words.IndexOf('gamma'));
+    var wordsArray := words.ToArray();
+    Program.Trace('CHECKPOINT collections-array=', wordsArray.Length);
+    current := current + words.Count;
+    current := current + words.IndexOf('gamma');
+    current := current + wordsArray.Length;
+    if words.Contains('beta') then
+    begin
+      current := current + 1;
+    end;
+    current := current + words[0].Length;
+    words.Clear();
+    Program.Trace('CHECKPOINT collections=', current);
+
+    Program.TraceText('SECTION diagnostics');
+    var stopwatch := Stopwatch.StartNew();
+    if stopwatch.IsRunning then
+    begin
+      current := current + 1;
+    end;
+    stopwatch.Stop();
+    if stopwatch.IsRunning then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    if stopwatch.ElapsedMilliseconds >= 0 then
+    begin
+      current := current + 1;
+    end;
+    stopwatch.Reset();
+    if stopwatch.ElapsedMilliseconds = 0 then
+    begin
+      current := current + 1;
+    end;
+    stopwatch.Restart();
+    if stopwatch.IsRunning then
+    begin
+      current := current + 1;
+    end;
+    stopwatch.Stop();
+    if stopwatch.ElapsedMilliseconds >= 0 then
+    begin
+      current := current + 1;
+    end;
+
+    var manualStopwatch := new Stopwatch();
+    if manualStopwatch.IsRunning then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    manualStopwatch.Start();
+    if manualStopwatch.IsRunning then
+    begin
+      current := current + 1;
+    end;
+    manualStopwatch.Stop();
+    if manualStopwatch.IsRunning then
+    begin
+      current := current + 100;
+    end
+    else
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT diagnostics=', current);
+
+    Program.TraceText('SECTION trace');
+    var consoleTrace: ITrace := new ConsoleTrace();
+    var fileTrace := new FileTrace('tmp/trace-smoke.log');
+    File.WriteAllText(fileTrace.FilePath, '');
+    var compositeTrace := new CompositeTrace();
+    var traceEntries := new ITrace[2];
+    traceEntries[0] := consoleTrace;
+    traceEntries[1] := fileTrace;
+    compositeTrace.Entries := traceEntries;
+    var traceTargets := new TraceTarget[2];
+    traceTargets[0] := TraceTarget.Console;
+    traceTargets[1] := TraceTarget.File;
+    compositeTrace.Targets := traceTargets;
+    compositeTrace.MinimumLevel := TraceLevel.Debug;
+    Trace.Current := compositeTrace;
+    Trace.Write('TRACE>');
+    Trace.WriteLine('line');
+    Trace.WriteInformation('info');
+    Trace.WriteWarning('warn');
+    Trace.WriteError('error');
+    Trace.WriteDebug('debug');
+
+    var traceText := File.ReadAllText(fileTrace.FilePath);
+    current := current + compositeTrace.Targets.Length;
+    if traceText.Contains('TRACE>') then
+    begin
+      current := current + 1;
+    end;
+    if traceText.Contains('line') then
+    begin
+      current := current + 1;
+    end;
+    if traceText.Contains('[INFO] info') then
+    begin
+      current := current + 1;
+    end;
+    if traceText.Contains('[WARN] warn') then
+    begin
+      current := current + 1;
+    end;
+    if traceText.Contains('[ERROR] error') then
+    begin
+      current := current + 1;
+    end;
+    if traceText.Contains('[DEBUG] debug') then
+    begin
+      current := current + 1;
+    end;
+    var nullTrace: ITrace := new NullTrace();
+    current := current + nullTrace.Targets.Length;
+    Program.Trace('CHECKPOINT trace=', current);
 
     Program.TraceText('SECTION final-state');
     Program.Trace('CHECKPOINT final-before-store=', current);

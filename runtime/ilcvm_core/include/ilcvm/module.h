@@ -23,14 +23,15 @@ enum class HostImportKind : std::uint32_t
     environment_get_temp_directory = 11,
     clock_get_monotonic_milliseconds_text = 12,
     clock_get_wall_milliseconds_text = 13,
-    file_exists = 14,
-    file_read_all_text = 15,
-    file_write_all_text = 16,
-    file_append_all_text = 17,
-    path_combine = 18,
-    path_get_file_name = 19,
-    path_get_directory_name = 20,
-    path_get_extension = 21
+    clock_get_wall_datetime_text = 14,
+    file_exists = 15,
+    file_read_all_text = 16,
+    file_write_all_text = 17,
+    file_append_all_text = 18,
+    path_combine = 19,
+    path_get_file_name = 20,
+    path_get_directory_name = 21,
+    path_get_extension = 22
 };
 
 enum class OpCode : std::uint8_t
@@ -59,6 +60,8 @@ enum class OpCode : std::uint8_t
     cmp_ne_str = 0x1F,
     cmp_eq_ref = 0x20,
     cmp_ne_ref = 0x21,
+    is_type_ref = 0x78,
+    as_type_ref = 0x79,
     concat_str = 0x22,
     starts_with_str = 0x23,
     ends_with_str = 0x24,
@@ -105,7 +108,8 @@ enum class SectionKind : std::uint32_t
     constant_table = 6,
     code_section = 7,
     exception_table = 8,
-    entry_point = 9
+    entry_point = 9,
+    interface_dispatch_table = 10
 };
 
 struct Instruction
@@ -130,10 +134,16 @@ struct SectionDirectoryEntry
 struct Function
 {
     std::uint32_t function_id {};
+    std::uint32_t owner_type_id {};
+    std::uint32_t method_flags {};
     std::string name;
     std::uint16_t register_count {};
     std::uint16_t argument_count {};
     bool returns_value {};
+    bool is_static {};
+    bool is_virtual {};
+    bool is_override {};
+    bool is_extern {};
     HostImportKind host_import_kind { HostImportKind::none };
     std::vector<Instruction> instructions;
     struct ExceptionHandler
@@ -152,6 +162,16 @@ struct Type
 {
     std::uint32_t type_id {};
     std::string name;
+    std::uint16_t kind {};
+    std::uint16_t flags {};
+    std::uint32_t base_type_id {};
+    std::uint32_t first_field_id {};
+    std::uint32_t field_count {};
+    std::uint32_t first_method_id {};
+    std::uint32_t method_count {};
+    bool is_reference_type {};
+    bool is_interface {};
+    bool is_record {};
     std::uint32_t instance_field_count {};
 };
 
@@ -164,6 +184,14 @@ struct Field
     std::uint32_t instance_slot {};
 };
 
+struct InterfaceDispatchEntry
+{
+    std::uint32_t owner_type_id {};
+    std::uint32_t interface_type_id {};
+    std::uint32_t interface_method_id {};
+    std::uint32_t implementation_method_id {};
+};
+
 struct Module
 {
     std::vector<SectionDirectoryEntry> sections;
@@ -171,6 +199,7 @@ struct Module
     std::vector<Type> types;
     std::vector<Field> fields;
     std::vector<Function> functions;
+    std::vector<InterfaceDispatchEntry> interface_dispatch_entries;
     std::uint32_t entry_function_id {};
 };
 

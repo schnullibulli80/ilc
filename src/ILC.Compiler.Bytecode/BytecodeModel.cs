@@ -29,6 +29,8 @@ public enum OpCode : byte
     CmpNeStr = 0x1F,
     CmpEqRef = 0x20,
     CmpNeRef = 0x21,
+    IsTypeRef = 0x78,
+    AsTypeRef = 0x79,
     ConcatStr = 0x22,
     StartsWithStr = 0x23,
     EndsWithStr = 0x24,
@@ -112,7 +114,8 @@ public enum IlbSectionKind : uint
     ConstantTable = 6,
     CodeSection = 7,
     ExceptionTable = 8,
-    EntryPoint = 9
+    EntryPoint = 9,
+    InterfaceDispatchTable = 10
 }
 
 public sealed record IlbSectionDirectoryEntry(
@@ -191,6 +194,7 @@ public sealed class IlbSerializer
         var typesPayload = BuildTypeTableSection(typeList, stringTable, typeIds, fieldList, methodList);
         var fieldsPayload = BuildFieldTableSection(fieldList, typeIds, stringTable);
         var methodsPayload = BuildMethodTableSection(methodList, typeIds, stringTable, blobTable, codeInfo, exceptionInfo, methodIds);
+        var interfaceDispatchPayload = BuildInterfaceDispatchTableSection(types.ToArray(), methodList, typeIds, methodIds);
         var codePayload = codeInfo.SectionBytes;
         var exceptionPayload = exceptionInfo.SectionBytes;
         var entryPayload = BuildEntryPointSection(entryPoint, methodIds);
@@ -208,6 +212,11 @@ public sealed class IlbSerializer
         if (exceptionPayload.Length > 0)
         {
             sections.Add((IlbSectionKind.ExceptionTable, exceptionPayload, (uint)exceptionInfo.RowCount));
+        }
+
+        if (interfaceDispatchPayload.Length > 0)
+        {
+            sections.Add((IlbSectionKind.InterfaceDispatchTable, interfaceDispatchPayload, (uint)(interfaceDispatchPayload.Length / 16)));
         }
 
         if (entryPayload.Length > 0)
@@ -335,7 +344,7 @@ public sealed class IlbSerializer
             writer.Write(strings.GetOrAdd(GetSimpleTypeName(type.Name)));
             writer.Write(GetTypeKind(type));
             writer.Write(GetTypeFlags(type));
-            writer.Write(0u);
+            writer.Write(GetBaseTypeId(type, typeIds));
             writer.Write(0u);
             var ownedFields = fields.Where(field => field.DeclaringTypeName == type.Name).ToArray();
             var ownedMethods = methods.Where(method => method.DeclaringTypeName == type.Name).ToArray();
@@ -436,6 +445,31 @@ public sealed class IlbSerializer
         return stream.ToArray();
     }
 
+    private static byte[] BuildInterfaceDispatchTableSection(
+        IReadOnlyList<TypeSymbol> types,
+        IReadOnlyList<MethodSymbol> methods,
+        IReadOnlyDictionary<string, uint> typeIds,
+        IReadOnlyDictionary<string, uint> methodIds)
+    {
+        var rows = BuildInterfaceDispatchRows(types, methods, typeIds, methodIds).ToArray();
+        if (rows.Length == 0)
+        {
+            return [];
+        }
+
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        foreach (var row in rows)
+        {
+            writer.Write(row.OwnerTypeId);
+            writer.Write(row.InterfaceTypeId);
+            writer.Write(row.InterfaceMethodId);
+            writer.Write(row.ImplementationMethodId);
+        }
+
+        return stream.ToArray();
+    }
+
     private static IlbCodeSectionInfo BuildCodeSection(
         IReadOnlyList<BytecodeFunction> functions,
         IReadOnlyDictionary<uint, IReadOnlyList<uint>> functionStringIds)
@@ -531,12 +565,23 @@ public sealed class IlbSerializer
         {
             "Boolean" or "Char" or "Integer" or "String" or "Nil" => 7,
             _ when type.Name.Contains('[') => 6,
+            _ when type is NamedTypeSymbol { IsInterface: true } => 2,
             _ => 1
         };
 
     private static ushort GetTypeFlags(TypeSymbol type)
     {
         ushort flags = 0;
+        if (type is NamedTypeSymbol { IsRecord: true })
+        {
+            flags |= 1 << 0;
+        }
+
+        if (type is NamedTypeSymbol { IsInterface: true })
+        {
+            flags |= 1 << 1;
+        }
+
         if (type.IsReferenceType)
         {
             flags |= 1 << 6;
@@ -569,6 +614,16 @@ public sealed class IlbSerializer
             flags |= 1u << 4;
         }
 
+        if (method.IsVirtual)
+        {
+            flags |= 1u << 5;
+        }
+
+        if (method.IsOverride)
+        {
+            flags |= 1u << 6;
+        }
+
         if (method.IsExtern)
         {
             flags |= 1u << 16;
@@ -588,6 +643,141 @@ public sealed class IlbSerializer
 
     private static uint GetMethodId(MethodSymbol method, IReadOnlyList<MethodSymbol> methods) =>
         (uint)(Array.IndexOf(methods.ToArray(), method) + 1);
+
+    private static uint GetBaseTypeId(TypeSymbol type, IReadOnlyDictionary<string, uint> typeIds)
+    {
+        if (type is not NamedTypeSymbol { BaseType: { } baseType })
+        {
+            return 0u;
+        }
+
+        return typeIds.TryGetValue(baseType.Name, out var baseTypeId)
+            ? baseTypeId
+            : 0u;
+    }
+
+    private static IEnumerable<IlbInterfaceDispatchRow> BuildInterfaceDispatchRows(
+        IReadOnlyList<TypeSymbol> types,
+        IReadOnlyList<MethodSymbol> methods,
+        IReadOnlyDictionary<string, uint> typeIds,
+        IReadOnlyDictionary<string, uint> methodIds)
+    {
+        var namedTypes = types.OfType<NamedTypeSymbol>().ToArray();
+        var namedTypeLookup = namedTypes.ToDictionary(type => type.Name, StringComparer.Ordinal);
+        var rows = new List<IlbInterfaceDispatchRow>();
+        var seenRows = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var concreteType in namedTypes.Where(type => !type.IsInterface))
+        {
+            foreach (var interfaceType in GetImplementedInterfaces(concreteType, namedTypeLookup))
+            {
+                foreach (var interfaceMethod in interfaceType.Methods.Where(method => !method.IsConstructor))
+                {
+                    var implementationMethod = FindInterfaceImplementation(concreteType, interfaceMethod, namedTypeLookup);
+                    if (implementationMethod is null ||
+                        !typeIds.TryGetValue(concreteType.Name, out var ownerTypeId) ||
+                        !typeIds.TryGetValue(interfaceType.Name, out var interfaceTypeId) ||
+                        !methodIds.TryGetValue(GetMethodKey(interfaceMethod), out var interfaceMethodId) ||
+                        !methodIds.TryGetValue(GetMethodKey(implementationMethod), out var implementationMethodId))
+                    {
+                        continue;
+                    }
+
+                    var rowKey = $"{ownerTypeId}:{interfaceTypeId}:{interfaceMethodId}:{implementationMethodId}";
+                    if (!seenRows.Add(rowKey))
+                    {
+                        continue;
+                    }
+
+                    rows.Add(new IlbInterfaceDispatchRow(ownerTypeId, interfaceTypeId, interfaceMethodId, implementationMethodId));
+                }
+            }
+        }
+
+        return rows;
+    }
+
+    private static IEnumerable<NamedTypeSymbol> GetImplementedInterfaces(
+        NamedTypeSymbol concreteType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypeLookup)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<NamedTypeSymbol>();
+
+        void EnqueueInterface(TypeSymbol interfaceType)
+        {
+            if (namedTypeLookup.TryGetValue(interfaceType.Name, out var resolved) &&
+                resolved.IsInterface &&
+                seen.Add(resolved.Name))
+            {
+                pending.Enqueue(resolved);
+            }
+        }
+
+        NamedTypeSymbol? current = concreteType;
+        while (current is not null)
+        {
+            foreach (var interfaceType in current.InterfaceTypes)
+            {
+                EnqueueInterface(interfaceType);
+            }
+
+            current = current.BaseType is not null && namedTypeLookup.TryGetValue(current.BaseType.Name, out var baseType)
+                ? baseType
+                : null;
+        }
+
+        while (pending.Count > 0)
+        {
+            var interfaceType = pending.Dequeue();
+            yield return interfaceType;
+
+            foreach (var baseInterface in interfaceType.InterfaceTypes)
+            {
+                EnqueueInterface(baseInterface);
+            }
+        }
+    }
+
+    private static MethodSymbol? FindInterfaceImplementation(
+        NamedTypeSymbol concreteType,
+        MethodSymbol interfaceMethod,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypeLookup)
+    {
+        for (NamedTypeSymbol? current = concreteType; current is not null; current = current.BaseType is not null && namedTypeLookup.TryGetValue(current.BaseType.Name, out var baseType) ? baseType : null)
+        {
+            var match = current.Methods.FirstOrDefault(candidate =>
+                !candidate.IsConstructor &&
+                AreMethodSignaturesEquivalent(interfaceMethod, candidate));
+            if (match is not null)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool AreMethodSignaturesEquivalent(MethodSymbol left, MethodSymbol right)
+    {
+        if (!StringComparer.Ordinal.Equals(left.Name, right.Name) ||
+            left.Parameters.Count != right.Parameters.Count ||
+            left.ReturnType.Name != right.ReturnType.Name)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Parameters.Count; index++)
+        {
+            if (left.Parameters[index].Type.Name != right.Parameters[index].Type.Name ||
+                left.Parameters[index].PassingKind != right.Parameters[index].PassingKind)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static string GetMethodKey(MethodSymbol method) =>
         $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}/{method.Parameters.Count}";
@@ -711,6 +901,7 @@ public sealed class IlbSerializer
     private sealed record IlbCodeSectionInfo(byte[] SectionBytes, IReadOnlyDictionary<uint, IlbCodeFunctionInfo> FunctionsById);
     private sealed record IlbFunctionExceptionInfo(uint FunctionId, uint ExceptionStart, uint ExceptionCount);
     private sealed record IlbExceptionSectionInfo(byte[] SectionBytes, IReadOnlyDictionary<uint, IlbFunctionExceptionInfo> FunctionsById, uint RowCount);
+    private sealed record IlbInterfaceDispatchRow(uint OwnerTypeId, uint InterfaceTypeId, uint InterfaceMethodId, uint ImplementationMethodId);
 }
 
 public sealed class BytecodeEmitter
@@ -820,6 +1011,28 @@ public sealed class BytecodeEmitter
                     case IrOpCode.CompareNotEqualReference:
                         instructions.Add(EmitBinaryInstruction(OpCode.CmpNeRef, instruction));
                         break;
+                    case IrOpCode.TypeIsReference:
+                    {
+                        var target = (IrTypeCheckTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.IsTypeRef,
+                            instruction.Destination?.Index ?? 0,
+                            target.Value.Index,
+                            0,
+                            ResolveTypeId(target.TypeName)));
+                        break;
+                    }
+                    case IrOpCode.AsReference:
+                    {
+                        var target = (IrTypeCheckTarget)instruction.Operand!;
+                        instructions.Add(new Instruction(
+                            OpCode.AsTypeRef,
+                            instruction.Destination?.Index ?? 0,
+                            target.Value.Index,
+                            0,
+                            ResolveTypeId(target.TypeName)));
+                        break;
+                    }
                     case IrOpCode.ConcatString:
                         instructions.Add(EmitBinaryInstruction(OpCode.ConcatStr, instruction));
                         break;

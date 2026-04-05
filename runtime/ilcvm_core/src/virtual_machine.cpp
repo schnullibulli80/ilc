@@ -476,6 +476,50 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         return *field_lookup[field_id];
     };
+    const auto resolve_virtual_callee = [&](std::uint32_t callee_id, std::int32_t receiver_handle, std::uint32_t ip) -> std::uint32_t
+    {
+        const auto& declared_callee = find_function(callee_id);
+        if (declared_callee.owner_type_id == 0)
+        {
+            return callee_id;
+        }
+
+        const auto& owner_type = require_type(declared_callee.owner_type_id);
+        if (!owner_type.is_interface)
+        {
+            return callee_id;
+        }
+
+        if (!is_object_handle(receiver_handle))
+        {
+            throw std::runtime_error(
+                "instruction expected an object reference during call_virt at ip=" +
+                std::to_string(ip) +
+                " function=" +
+                std::to_string(callee_id) +
+                " receiver=" +
+                std::to_string(receiver_handle));
+        }
+
+        auto& object = require_object(receiver_handle);
+        for (const auto& entry : module.interface_dispatch_entries)
+        {
+            if (entry.owner_type_id == object.type_id &&
+                entry.interface_type_id == declared_callee.owner_type_id &&
+                entry.interface_method_id == callee_id)
+            {
+                return entry.implementation_method_id;
+            }
+        }
+
+        throw std::runtime_error(
+            "interface dispatch target is not implemented for receiver type at ip=" +
+            std::to_string(ip) +
+            " function=" +
+            std::to_string(callee_id) +
+            " receiverType=" +
+            std::to_string(object.type_id));
+    };
     const auto require_index = [](std::int32_t index, std::size_t length) -> std::size_t
     {
         if (index < 0 || static_cast<std::size_t>(index) >= length)
@@ -512,6 +556,68 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         }
 
         return 0u;
+    };
+    const auto runtime_type_matches = [&](std::int32_t value, std::uint32_t target_type_id) -> bool
+    {
+        if (value == 0 || target_type_id == 0)
+        {
+            return false;
+        }
+
+        const auto& target_type = require_type(target_type_id);
+        if (target_type.name == "Object")
+        {
+            return is_object_handle(value) || is_string_handle(value) || is_array_handle(value);
+        }
+
+        if (is_string_handle(value))
+        {
+            std::uint32_t current_type_id = string_type_id;
+            while (current_type_id != 0)
+            {
+                if (current_type_id == target_type_id)
+                {
+                    return true;
+                }
+
+                current_type_id = require_type(current_type_id).base_type_id;
+            }
+
+            return false;
+        }
+
+        if (!is_object_handle(value))
+        {
+            return false;
+        }
+
+        const auto& object = require_object(value);
+        if (target_type.is_interface)
+        {
+            for (const auto& entry : module.interface_dispatch_entries)
+            {
+                if (entry.owner_type_id == object.type_id &&
+                    entry.interface_type_id == target_type_id)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        std::uint32_t current_type_id = object.type_id;
+        while (current_type_id != 0)
+        {
+            if (current_type_id == target_type_id)
+            {
+                return true;
+            }
+
+            current_type_id = require_type(current_type_id).base_type_id;
+        }
+
+        return false;
     };
 
     const auto execute_leaf_fastpath = [&](const Function& function, const std::int32_t* arguments) -> std::int32_t
@@ -1199,6 +1305,15 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
                     }
                     return encode_string_handle(strings.size() - 1);
+                case HostImportKind::clock_get_wall_datetime_text:
+                    strings.push_back(host_services_.get_wall_datetime_text());
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return encode_string_handle(strings.size() - 1);
                 case HostImportKind::file_exists:
                     if (profile != nullptr)
                     {
@@ -1519,6 +1634,18 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         break;
                     case OpCode::cmp_ne_ref:
                         register_values[instruction.destination] = register_values[instruction.left] != register_values[instruction.right] ? 1 : 0;
+                        ++ip;
+                        break;
+                    case OpCode::is_type_ref:
+                        register_values[instruction.destination] =
+                            runtime_type_matches(register_values[instruction.left], static_cast<std::uint32_t>(instruction.immediate)) ? 1 : 0;
+                        ++ip;
+                        break;
+                    case OpCode::as_type_ref:
+                        register_values[instruction.destination] =
+                            runtime_type_matches(register_values[instruction.left], static_cast<std::uint32_t>(instruction.immediate))
+                                ? register_values[instruction.left]
+                                : 0;
                         ++ip;
                         break;
                     case OpCode::concat_str:
@@ -1853,11 +1980,13 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                                 std::to_string(instruction.immediate));
                         }
 
-                        const auto callee_id = static_cast<std::uint32_t>(instruction.immediate);
-                        if (callee_id >= function_lookup.size() || function_lookup[callee_id] == nullptr)
+                        const auto declared_callee_id = static_cast<std::uint32_t>(instruction.immediate);
+                        if (declared_callee_id >= function_lookup.size() || function_lookup[declared_callee_id] == nullptr)
                         {
                             throw std::runtime_error("call target does not reference a known function");
                         }
+
+                        const auto callee_id = resolve_virtual_callee(declared_callee_id, register_values[instruction.left], ip);
 
                         const bool sample_call_timing =
                             profile != nullptr && (profile->call_virt_count & call_timing_sample_mask) == 0;
@@ -2146,7 +2275,18 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         const auto array_start = sample_array_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
                         if (register_values[instruction.destination] == 0)
                         {
-                            throw std::runtime_error("null reference element access");
+                            throw std::runtime_error(
+                                "null reference element access during st_elem at ip=" +
+                                std::to_string(ip));
+                        }
+
+                        if (!is_array_handle(register_values[instruction.destination]))
+                        {
+                            throw std::runtime_error(
+                                "instruction expected an array reference during st_elem at ip=" +
+                                std::to_string(ip) +
+                                " handle=" +
+                                std::to_string(register_values[instruction.destination]));
                         }
 
                         auto& array = require_array(register_values[instruction.destination]);
@@ -2174,7 +2314,9 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         const auto value = register_values[instruction.left];
                         if (value == 0)
                         {
-                            throw std::runtime_error("null reference length access");
+                            throw std::runtime_error(
+                                "null reference length access during ld_len at ip=" +
+                                std::to_string(ip));
                         }
 
                         if (is_array_handle(value))
@@ -2187,7 +2329,11 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         }
                         else
                         {
-                            throw std::runtime_error("length requested for unsupported value kind");
+                            throw std::runtime_error(
+                                "length requested for unsupported value kind during ld_len at ip=" +
+                                std::to_string(ip) +
+                                " handle=" +
+                                std::to_string(value));
                         }
 
                         if (sample_array_timing)

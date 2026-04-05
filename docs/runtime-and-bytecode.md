@@ -41,13 +41,18 @@ Current section kinds in the emitter:
 - method table
 - code section
 - optional exception table
+- optional interface dispatch table
 - optional entry point
 
 Important implementation facts:
 
 - string and blob tables are serialized as length-prefixed tables with counts;
-- method table rows carry register/argument layout, return type, code offsets and
-  host-import mapping;
+- method table rows carry owner type, method flags, register/argument layout,
+  return type, code offsets and host-import mapping;
+- type table rows retain type kind/flags, base type id, and declared field/method
+  ranges for runtime metadata consumers;
+- interface dispatch rows retain `concrete type -> interface type -> interface method -> implementation method`
+  mappings for later interface-call support;
 - code section stores fixed-size instructions;
 - the method section is referenced by `entry_point` if present;
 - loader validates sizes, alignment, and section bounds before execution;
@@ -145,6 +150,16 @@ Call behavior:
 - `call_virt` goes through virtual dispatch machinery
 - both support return suppression for `void` methods
 - host imports are executed in-process via `StandardHostServices` in CLI mode
+
+Interface dispatch note:
+
+- the ILB/runtime metadata path preserves interface dispatch mappings
+- the VM now uses that table for interface method calls and getter-/setter-backed
+  interface property access through interface-typed receivers
+- inherited interfaces are resolved through the same mapping path, so sub-interface
+  receivers can dispatch base-interface members as well
+- reference `is` / `as` checks now execute in the VM against runtime type metadata
+  instead of degrading to a pure non-`nil` check
 
 ### 6.2 Exceptions
 

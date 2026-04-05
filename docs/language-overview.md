@@ -213,7 +213,11 @@ Call resolution includes:
 
 ## 8) String API surface (compiler-backed)
 
-The compiler exposes compiler-intrinsic string operations:
+The current C#-like string method surface is implemented as built-in compiler/VM
+intrinsics on `String`. These methods are available in normal user code, but
+they are not currently declared through a shipped `System.String` source type.
+
+Supported intrinsic string instance methods:
 
 - `StartsWith`, `EndsWith`, `Contains`
 - `IndexOf`, `LastIndexOf`
@@ -229,9 +233,19 @@ names are rejected by the binder.
 
 The shipped library lives under `libs/shipped` and currently includes:
 
-- `System.Console` (`WriteLine`)
+- `System.Console` (`Write`, `WriteLine`)
 - `System.Environment` (`CommandLineArgs`, `CurrentDirectory`, `Variables[...]`, etc.)
 - `System.Clock`
+- `System.IException`, `System.Exception`, `System.NotSupportedException`
+- `System.Math` (`Min`, `Max`, `Abs`, `Clamp`)
+- `System.Convert` (`ToInteger`, `TryToInteger`, `ToString`, `ToBoolean`)
+- `System.Diagnostics.Stopwatch` (`StartNew`, `Start`, `Stop`, `Restart`, `Reset`, `IsRunning`, `ElapsedMilliseconds`)
+- `System.Diagnostics` tracing types
+  - `TraceLevel`, `TraceTarget`, `ITrace`
+  - `ConsoleTrace`, `FileTrace`, `NullTrace`, `CompositeTrace`
+  - `Trace`
+- `System.Text.Text` (`IsNullOrEmpty`, `NullIfEmpty`, `TrimToNull`, `CollapseWhitespace`, `Indent`, `Join`, `Repeat`, `PadLeft`, `PadRight`, `Center`, `StartsWithIgnoreCase`, `EndsWithIgnoreCase`, `ContainsIgnoreCase`, `Split`, `Lines`)
+- `System.Collections.StringList`
 - `System.File`
 - `System.Path`
 
@@ -242,8 +256,17 @@ All of these are reachable via normal `uses` imports and normal ILC syntax.
 Keep these in mind when evaluating language scope:
 
 - No generic declarations are currently accepted by the parser.
-- Interface declarations and class interface lists are available, but interface
-  dispatch is not yet described as a separate runtime feature.
+- Interface declarations and class interface lists are available.
+- Interface method dispatch through interface-typed receivers is supported in
+  the current bootstrap path.
+- Interface property reads through interface-typed receivers are supported in
+  the current bootstrap path.
+- Interface property writes through interface-typed receivers are supported in
+  the current bootstrap path.
+- Interface inheritance is supported, including dispatch through sub-interface
+  receiver types.
+- `is` / `as` for reference types now use runtime type checks, including
+  interface targets.
 - `and`/`or` are not full logical infix operators yet; only their compound
   assignment forms are part of assignment lowering.
 - The full operator/feature catalog in the product vision is broader than the

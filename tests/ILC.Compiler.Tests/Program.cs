@@ -8,15 +8,24 @@ var failures = new List<string>();
 var debugEnabled = args.Contains("--debug", StringComparer.Ordinal);
 var bootstrapFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "compiler-bootstrap.ilc"));
 var systemFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "system.ilc"));
+var diagnosticsFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "diagnostics.ilc"));
+var textFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "text.ilc"));
+var collectionsFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "collections.ilc"));
 var demoCoreFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "demo-core.ilc"));
 var bootstrapSource = File.ReadAllText(bootstrapFixturePath);
 var systemSource = File.ReadAllText(systemFixturePath);
+var diagnosticsSource = File.ReadAllText(diagnosticsFixturePath);
+var textSource = File.ReadAllText(textFixturePath);
+var collectionsSource = File.ReadAllText(collectionsFixturePath);
 var demoCoreSource = File.ReadAllText(demoCoreFixturePath);
 
 var tree = SyntaxTree.Parse(bootstrapSource);
 var systemTree = SyntaxTree.Parse(systemSource);
+var diagnosticsTree = SyntaxTree.Parse(diagnosticsSource);
+var textTree = SyntaxTree.Parse(textSource);
+var collectionsTree = SyntaxTree.Parse(collectionsSource);
 var demoCoreTree = SyntaxTree.Parse(demoCoreSource);
-var mergedTree = SyntaxTree.Merge(tree, [systemTree, demoCoreTree]);
+var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, collectionsTree, demoCoreTree]);
 
 if (tree.Root.Tokens.Count == 0)
 {
@@ -40,22 +49,25 @@ if (tree.Root.Namespace?.Name.ToDisplayString() != "Demo.App")
     failures.Add("Parser should capture the namespace declaration.");
 }
 
-if (tree.Root.Uses?.Imports.Count != 2)
+if (tree.Root.Uses?.Imports.Count != 5)
 {
     failures.Add("Parser should capture the uses clause.");
 }
 else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" ||
-         tree.Root.Uses.Imports[1].NamespaceName.ToDisplayString() != "Demo.Core")
+         tree.Root.Uses.Imports[1].NamespaceName.ToDisplayString() != "System.Diagnostics" ||
+         tree.Root.Uses.Imports[2].NamespaceName.ToDisplayString() != "System.Text" ||
+         tree.Root.Uses.Imports[3].NamespaceName.ToDisplayString() != "System.Collections" ||
+         tree.Root.Uses.Imports[4].NamespaceName.ToDisplayString() != "Demo.Core")
 {
     failures.Add("Parser should capture imported namespaces.");
 }
 
-if (tree.Root.Members.Count != 6)
+if (tree.Root.Members.Count != 9)
 {
     failures.Add("Parser should capture top-level members.");
 }
 
-if (tree.Root.Members[5] is not ClassDeclarationSyntax classDeclaration)
+if (tree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(member => member.Identifier.Text == "Program") is not ClassDeclarationSyntax classDeclaration)
 {
     failures.Add("Parser should capture a class declaration.");
 }
@@ -166,6 +178,213 @@ var pointType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefau
 if (pointType is null || pointType.Fields.Count != 2 || !pointType.IsReferenceType || !pointType.IsRecord)
 {
     failures.Add("Binder should surface records on the existing object/field path and mark them as records.");
+}
+
+var mathType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Math");
+if (mathType is null || mathType.Methods.Count != 4 || mathType.Methods.Any(method => !method.IsStatic))
+{
+    failures.Add("Binder should surface System.Math with four static Integer helper methods.");
+}
+else if (!mathType.Methods.Any(method => method.Name == "Min" && method.Parameters.Count == 2 && method.ReturnType == TypeSymbol.Integer) ||
+         !mathType.Methods.Any(method => method.Name == "Max" && method.Parameters.Count == 2 && method.ReturnType == TypeSymbol.Integer) ||
+         !mathType.Methods.Any(method => method.Name == "Abs" && method.Parameters.Count == 1 && method.ReturnType == TypeSymbol.Integer) ||
+         !mathType.Methods.Any(method => method.Name == "Clamp" && method.Parameters.Count == 3 && method.ReturnType == TypeSymbol.Integer))
+{
+    failures.Add("Binder should expose the expected System.Math helper signatures.");
+}
+
+var convertType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Convert");
+if (convertType is null || convertType.Methods.Count != 4 || convertType.Methods.Any(method => !method.IsStatic))
+{
+    failures.Add("Binder should surface System.Convert with four static conversion helper methods.");
+}
+else if (!convertType.Methods.Any(method => method.Name == "ToInteger" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Integer) ||
+         !convertType.Methods.Any(method => method.Name == "TryToInteger" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type == TypeSymbol.Integer && method.Parameters[1].PassingKind == ParameterPassingKind.Out && method.ReturnType == TypeSymbol.Boolean) ||
+         !convertType.Methods.Any(method => method.Name == "ToString" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.String) ||
+         !convertType.Methods.Any(method => method.Name == "ToBoolean" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should expose the expected System.Convert helper signatures.");
+}
+
+var fileType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "File");
+if (fileType is null)
+{
+    failures.Add("Binder should surface System.File in the shipped library.");
+}
+else if (!fileType.Methods.Any(method => method.Name == "ReadAllLines" && method.IsStatic && method.Parameters.Count == 1 && method.ReturnType.Name == "String[]") ||
+         !fileType.Methods.Any(method => method.Name == "WriteAllLines" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type.Name == "String[]") ||
+         !fileType.Methods.Any(method => method.Name == "AppendLine" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String)))
+{
+    failures.Add("Binder should expose the expected line-oriented System.File helper signatures.");
+}
+
+var pathType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Path");
+if (pathType is null)
+{
+    failures.Add("Binder should surface System.Path in the shipped library.");
+}
+else if (!pathType.Methods.Any(method => method.Name == "HasExtension" && method.IsStatic && method.Parameters.Count == 1 && method.ReturnType == TypeSymbol.Boolean) ||
+         !pathType.Methods.Any(method => method.Name == "GetFileNameWithoutExtension" && method.IsStatic && method.Parameters.Count == 1 && method.ReturnType == TypeSymbol.String) ||
+         !pathType.Methods.Any(method => method.Name == "ChangeExtension" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String) && method.ReturnType == TypeSymbol.String))
+{
+    failures.Add("Binder should expose the expected higher-level System.Path helper signatures.");
+}
+
+var textType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Text");
+if (textType is null)
+{
+    failures.Add("Binder should surface System.Text.Text in the shipped library.");
+}
+else if (!textType.Methods.Any(method => method.Name == "IsNullOrEmpty" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Boolean) ||
+         !textType.Methods.Any(method => method.Name == "NullIfEmpty" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "TrimToNull" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "CollapseWhitespace" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "Indent" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String) && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "Join" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type.Name == "String[]" && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "Repeat" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "PadLeft" && method.IsStatic && method.Parameters.Count == 3 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type == TypeSymbol.Integer && method.Parameters[2].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "PadRight" && method.IsStatic && method.Parameters.Count == 3 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type == TypeSymbol.Integer && method.Parameters[2].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "Center" && method.IsStatic && method.Parameters.Count == 3 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type == TypeSymbol.Integer && method.Parameters[2].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !textType.Methods.Any(method => method.Name == "StartsWithIgnoreCase" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String) && method.ReturnType == TypeSymbol.Boolean) ||
+         !textType.Methods.Any(method => method.Name == "EndsWithIgnoreCase" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String) && method.ReturnType == TypeSymbol.Boolean) ||
+         !textType.Methods.Any(method => method.Name == "ContainsIgnoreCase" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String) && method.ReturnType == TypeSymbol.Boolean) ||
+         !textType.Methods.Any(method => method.Name == "Split" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters.All(parameter => parameter.Type == TypeSymbol.String) && method.ReturnType.Name == "String[]") ||
+         !textType.Methods.Any(method => method.Name == "Lines" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType.Name == "String[]"))
+{
+    failures.Add("Binder should expose the expected System.Text.Text helper signatures.");
+}
+
+var stringListType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "StringList");
+if (stringListType is null || !stringListType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Collections.StringList as a reference type.");
+}
+else if (!stringListType.Methods.Any(method => method.IsConstructor) ||
+         !stringListType.Methods.Any(method => method.Name == "Add" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String) ||
+         !stringListType.Methods.Any(method => method.Name == "AddRange" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "String[]") ||
+         !stringListType.Methods.Any(method => method.Name == "Clear" && !method.IsStatic) ||
+         !stringListType.Methods.Any(method => method.Name == "Contains" && !method.IsStatic && method.ReturnType == TypeSymbol.Boolean) ||
+         !stringListType.Methods.Any(method => method.Name == "IndexOf" && !method.IsStatic && method.ReturnType == TypeSymbol.Integer) ||
+         !stringListType.Methods.Any(method => method.Name == "ToArray" && !method.IsStatic && method.ReturnType.Name == "String[]") ||
+         !stringListType.Properties.Any(property => property.Name == "Count" && !property.IsStatic && property.Type == TypeSymbol.Integer) ||
+         !stringListType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type == TypeSymbol.String))
+{
+    failures.Add("Binder should expose the expected System.Collections.StringList surface.");
+}
+
+var exceptionInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IException");
+if (exceptionInterfaceType is null || !exceptionInterfaceType.IsInterface)
+{
+    failures.Add("Binder should surface IException as a System interface type.");
+}
+else if (!exceptionInterfaceType.Properties.Any(property => property.Name == "Message" && property.Type == TypeSymbol.String))
+{
+    failures.Add("Binder should expose IException.Message as a String property.");
+}
+
+var exceptionType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Exception");
+if (exceptionType is null || !exceptionType.InterfaceTypes.Any(type => type.Name == "IException"))
+{
+    failures.Add("Binder should surface Exception as an IException implementation.");
+}
+
+var notSupportedExceptionType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "NotSupportedException");
+if (notSupportedExceptionType is null || notSupportedExceptionType.BaseType?.Name != "Exception")
+{
+    failures.Add("Binder should surface NotSupportedException as a System.Exception subtype.");
+}
+
+var stopwatchType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Stopwatch");
+if (stopwatchType is null || !stopwatchType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Diagnostics.Stopwatch as a reference type.");
+}
+else if (!stopwatchType.Methods.Any(method => method.IsConstructor) ||
+         !stopwatchType.Methods.Any(method => method.Name == "StartNew" && method.IsStatic && method.ReturnType.Name == "Stopwatch") ||
+         !stopwatchType.Methods.Any(method => method.Name == "Start" && !method.IsStatic) ||
+         !stopwatchType.Methods.Any(method => method.Name == "Stop" && !method.IsStatic) ||
+         !stopwatchType.Methods.Any(method => method.Name == "Restart" && !method.IsStatic) ||
+         !stopwatchType.Methods.Any(method => method.Name == "Reset" && !method.IsStatic) ||
+         !stopwatchType.Properties.Any(property => property.Name == "IsRunning" && !property.IsStatic && property.Type == TypeSymbol.Boolean) ||
+         !stopwatchType.Properties.Any(property => property.Name == "ElapsedMilliseconds" && !property.IsStatic && property.Type == TypeSymbol.Integer))
+{
+    failures.Add("Binder should expose the expected System.Diagnostics.Stopwatch members.");
+}
+
+var traceLevelType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "TraceLevel");
+if (traceLevelType is null || traceLevelType.IsReferenceType)
+{
+    failures.Add("Binder should surface TraceLevel as a non-reference enum type.");
+}
+
+var traceTargetType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "TraceTarget");
+if (traceTargetType is null || traceTargetType.IsReferenceType)
+{
+    failures.Add("Binder should surface TraceTarget as a non-reference enum type.");
+}
+
+var traceInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ITrace");
+if (traceInterfaceType is null || !traceInterfaceType.IsInterface)
+{
+    failures.Add("Binder should surface ITrace as an interface type.");
+}
+else if (!traceInterfaceType.Properties.Any(property => property.Name == "Targets" && property.Type.Name == "TraceTarget[]") ||
+         !traceInterfaceType.Properties.Any(property => property.Name == "MinimumLevel" && property.Type.Name == "TraceLevel") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "Write") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "WriteLine") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "WriteInformation") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "WriteWarning") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "WriteError") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "WriteDebug") ||
+         !traceInterfaceType.Methods.Any(method => method.Name == "WriteErrorWithStackTrace"))
+{
+    failures.Add("Binder should expose the expected ITrace properties and methods.");
+}
+
+var consoleTraceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ConsoleTrace");
+if (consoleTraceType is null || !consoleTraceType.InterfaceTypes.Any(type => type.Name == "ITrace"))
+{
+    failures.Add("Binder should surface ConsoleTrace as an ITrace implementation.");
+}
+
+var fileTraceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "FileTrace");
+if (fileTraceType is null || !fileTraceType.InterfaceTypes.Any(type => type.Name == "ITrace"))
+{
+    failures.Add("Binder should surface FileTrace as an ITrace implementation.");
+}
+else if (!fileTraceType.Properties.Any(property => property.Name == "FilePath" && property.Type == TypeSymbol.String))
+{
+    failures.Add("Binder should expose FileTrace.FilePath as a String property.");
+}
+
+var nullTraceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "NullTrace");
+if (nullTraceType is null || !nullTraceType.InterfaceTypes.Any(type => type.Name == "ITrace"))
+{
+    failures.Add("Binder should surface NullTrace as an ITrace implementation.");
+}
+
+var compositeTraceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "CompositeTrace");
+if (compositeTraceType is null || !compositeTraceType.InterfaceTypes.Any(type => type.Name == "ITrace"))
+{
+    failures.Add("Binder should surface CompositeTrace as an ITrace implementation.");
+}
+else if (!compositeTraceType.Properties.Any(property => property.Name == "Entries" && property.Type.Name == "ITrace[]"))
+{
+    failures.Add("Binder should expose CompositeTrace.Entries as an ITrace[] property.");
+}
+
+var traceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Trace");
+if (traceType is null ||
+    !traceType.Properties.Any(property => property.Name == "Current" && property.IsStatic && property.Type.Name == "ITrace") ||
+    !traceType.Methods.Any(method => method.Name == "Write" && method.IsStatic) ||
+    !traceType.Methods.Any(method => method.Name == "WriteLine" && method.IsStatic) ||
+    !traceType.Methods.Any(method => method.Name == "WriteInformation" && method.IsStatic) ||
+    !traceType.Methods.Any(method => method.Name == "WriteWarning" && method.IsStatic) ||
+    !traceType.Methods.Any(method => method.Name == "WriteError" && method.IsStatic) ||
+    !traceType.Methods.Any(method => method.Name == "WriteDebug" && method.IsStatic) ||
+    !traceType.Methods.Any(method => method.Name == "WriteErrorWithStackTrace" && method.IsStatic))
+{
+    failures.Add("Binder should expose the expected static System.Diagnostics.Trace facade.");
 }
 
 if (!binding.Compilation.GetAllConstants().Any(constant => constant.DeclaringTypeName == "Mode" && constant.Name == "Busy" && Equals(constant.Value, 1)))
@@ -1161,6 +1380,236 @@ else
     }
 }
 
+var interfaceCompatibilityTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public function Run(value: Integer): Integer;
+end;
+
+public interface IAdvancedWorker: IWorker
+begin
+end;
+
+public class Worker: IAdvancedWorker
+begin
+  public function Run(value: Integer): Integer;
+  begin
+    return value;
+  end;
+end;
+
+public class Program
+begin
+  public static function MatchWorker(worker: Worker): Integer;
+  begin
+    return match worker with
+      IWorker w => 1
+      _ => 0
+    end;
+  end;
+end;
+""");
+
+var interfaceCompatibilityBinding = new Binder().Bind(interfaceCompatibilityTree);
+if (interfaceCompatibilityBinding.HasErrors)
+{
+    failures.Add($"Binder should treat implementing classes as compatible with interface-typed match arms. Actual: {string.Join(", ", interfaceCompatibilityBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+else
+{
+    var interfaceMethods = interfaceCompatibilityBinding.Compilation.GetAllMethods().ToArray();
+    var interfaceFields = interfaceCompatibilityBinding.Compilation.GetAllFields();
+    var interfaceBytecodeModule = new BytecodeModule(
+        interfaceMethods
+            .Select((method, index) => new BytecodeFunction(
+                (uint)(index + 1),
+                method.Name,
+                (ushort)Math.Max(method.Parameters.Count + (method.IsStatic ? 1 : 2), 1),
+                (ushort)(method.Parameters.Count + (method.IsStatic ? 0 : 1)),
+                method.HostImportKind,
+                [new Instruction(OpCode.Ret)],
+                [],
+                [],
+                []))
+            .ToArray(),
+        [],
+        []);
+    var interfaceIlbImage = new IlbSerializer().Serialize(
+        interfaceBytecodeModule,
+        interfaceMethods,
+        interfaceFields,
+        interfaceCompatibilityBinding.Compilation.Types,
+        null);
+    if (!interfaceIlbImage.Sections.Any(section => section.Kind == IlbSectionKind.InterfaceDispatchTable))
+    {
+        failures.Add("ILB serialization should include an interface dispatch table section when interface implementations are present.");
+    }
+}
+
+var interfaceMethodDispatchTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public function Run(value: Integer): Integer;
+end;
+
+public class Worker: IWorker
+begin
+  public function Run(value: Integer): Integer;
+  begin
+    return value + 1;
+  end;
+end;
+
+public class Program
+begin
+  public static function Probe(worker: IWorker): Integer;
+  begin
+    return worker.Run(1);
+  end;
+end;
+""");
+
+var interfaceMethodDispatchBinding = new Binder().Bind(interfaceMethodDispatchTree);
+if (interfaceMethodDispatchBinding.HasErrors)
+{
+    failures.Add($"Binder should allow interface method dispatch through interface-typed receivers. Actual: {string.Join(", ", interfaceMethodDispatchBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+
+var interfacePropertyReadDispatchTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public property Name: String { get; };
+end;
+
+public class Worker: IWorker
+begin
+  public property Name: String
+  begin
+    get
+    begin
+      return 'demo';
+    end;
+  end;
+end;
+
+public class Program
+begin
+  public static function Probe(worker: IWorker): Integer;
+  begin
+    if worker.Name = 'demo' then
+    begin
+      return worker.Name.Length;
+    end;
+
+    return 0;
+  end;
+end;
+""");
+
+var interfacePropertyReadDispatchBinding = new Binder().Bind(interfacePropertyReadDispatchTree);
+if (interfacePropertyReadDispatchBinding.HasErrors)
+{
+    failures.Add($"Binder should allow interface property reads through interface-typed receivers. Actual: {string.Join(", ", interfacePropertyReadDispatchBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+
+var interfacePropertyWriteDispatchTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public property Name: String { get; set; };
+end;
+
+public class Worker: IWorker
+begin
+  public property Name: String
+  begin
+    get
+    begin
+      return 'start';
+    end;
+
+    set(value)
+    begin
+    end;
+  end;
+end;
+
+public class Program
+begin
+  public static function Probe(worker: IWorker): Integer;
+  begin
+    worker.Name := 'demo';
+    return worker.Name.Length;
+  end;
+end;
+""");
+
+var interfacePropertyWriteDispatchBinding = new Binder().Bind(interfacePropertyWriteDispatchTree);
+if (interfacePropertyWriteDispatchBinding.HasErrors)
+{
+    failures.Add($"Binder should allow interface property writes through interface-typed receivers. Actual: {string.Join(", ", interfacePropertyWriteDispatchBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+
+var inheritedInterfaceDispatchTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public function Boost(value: Integer): Integer;
+  public property Name: String { get; set; };
+end;
+
+public interface IAdvancedWorker: IWorker
+begin
+  public function Bonus(): Integer;
+end;
+
+public class Worker: IAdvancedWorker
+begin
+  private var NameValue: String;
+
+  public property Name: String
+  begin
+    get
+    begin
+      return NameValue;
+    end;
+
+    set(value)
+    begin
+      NameValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    NameValue := 'worker';
+  end;
+
+  public function Boost(value: Integer): Integer;
+  begin
+    return value + 4;
+  end;
+
+  public function Bonus(): Integer;
+  begin
+    return 7;
+  end;
+end;
+
+public class Program
+begin
+  public static function Probe(worker: IAdvancedWorker): Integer;
+  begin
+    worker.Name := 'advanced';
+    return worker.Bonus() + worker.Boost(3) + worker.Name.Length;
+  end;
+end;
+""");
+
+var inheritedInterfaceDispatchBinding = new Binder().Bind(inheritedInterfaceDispatchTree);
+if (inheritedInterfaceDispatchBinding.HasErrors)
+{
+    failures.Add($"Binder should allow inherited interface method and property dispatch through sub-interface receivers. Actual: {string.Join(", ", inheritedInterfaceDispatchBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+
 var invalidInheritanceTree = SyntaxTree.Parse("""
 public enum Value
 begin
@@ -1300,7 +1749,13 @@ begin
   begin
     return 1;
   end;
-  public property Name: String { get; };
+  public property Name: String
+  begin
+    get
+    begin
+      return 'demo';
+    end;
+  end;
 end;
 
 public interface IRequired
@@ -1368,7 +1823,7 @@ if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC
 
 if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2208"))
 {
-    failures.Add("Binder should report interface properties with bodies or auto-implementation blocks.");
+    failures.Add("Binder should report interface properties with bodies.");
 }
 
 if (!invalidInterfaceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2209"))
@@ -1707,6 +2162,7 @@ uses Sys = System;
 
 public class Console
 begin
+  public static extern method Write(text: String);
   public static extern method WriteLine(text: String);
 end;
 
@@ -1787,6 +2243,7 @@ public class Clock
 begin
   private static extern function GetMonotonicMillisecondsTextCore: String;
   private static extern function GetWallMillisecondsTextCore: String;
+  private static extern function GetWallDateTimeTextCore: String;
 
   public static property MonotonicMillisecondsText: String
   begin
@@ -1801,6 +2258,14 @@ begin
     get
     begin
       return GetWallMillisecondsTextCore();
+    end;
+  end;
+
+  public static property WallDateTimeText: String
+  begin
+    get
+    begin
+      return GetWallDateTimeTextCore();
     end;
   end;
 end;
@@ -1865,6 +2330,7 @@ public class Program
 begin
   public static function Main: Integer;
   begin
+    Sys.Console.Write('HELLO>');
     Sys.Console.WriteLine('Hello World');
     Sys.Console.WriteLine('ARGS=' + Sys.Environment.CommandLineArgs.Length.ToString());
     Sys.Console.WriteLine('CWD=' + Sys.Environment.CurrentDirectory);
@@ -1898,6 +2364,12 @@ if (externBinding.Diagnostics.Count > 0)
 else
 {
     var externConsole = externBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Console");
+    var externWrite = externConsole?.Methods.FirstOrDefault(method => method.Name == "Write");
+    if (externWrite is null || !externWrite.IsExtern || externWrite.HostImportKind != HostImportKind.ConsoleWrite)
+    {
+        failures.Add("Binder should mark Console.Write(String) as an extern host import.");
+    }
+
     var externWriteLine = externConsole?.Methods.FirstOrDefault(method => method.Name == "WriteLine");
     if (externWriteLine is null || !externWriteLine.IsExtern || externWriteLine.HostImportKind != HostImportKind.ConsoleWriteLine)
     {
@@ -1967,6 +2439,12 @@ else
             failures.Add("Binder should mark Clock.GetWallMillisecondsTextCore() as an extern host import.");
         }
 
+        var externGetWallDateTimeText = externClock?.Methods.FirstOrDefault(method => method.Name == "GetWallDateTimeTextCore");
+        if (externGetWallDateTimeText is null || !externGetWallDateTimeText.IsExtern || externGetWallDateTimeText.HostImportKind != HostImportKind.ClockGetWallDateTimeText)
+        {
+            failures.Add("Binder should mark Clock.GetWallDateTimeTextCore() as an extern host import.");
+        }
+
         if (!(externEnvironment?.Properties.Any(property => property.Name == "CommandLineArgs" && property.IsStatic) ?? false))
         {
             failures.Add("Binder should expose Environment.CommandLineArgs as a static property.");
@@ -1985,6 +2463,10 @@ else
         if (!(externClock?.Properties.Any(property => property.Name == "MonotonicMillisecondsText" && property.IsStatic) ?? false))
         {
             failures.Add("Binder should expose Clock.MonotonicMillisecondsText as a static property.");
+        }
+        else if (!(externClock?.Properties.Any(property => property.Name == "WallDateTimeText" && property.IsStatic) ?? false))
+        {
+            failures.Add("Binder should expose Clock.WallDateTimeText as a static property.");
         }
 
         var externFile = externBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "File");
@@ -2041,6 +2523,11 @@ else
         var externMain = externProgram.Methods.First(method => method.Name == "Main");
         var externLowerer = new Lowerer(externBinding.Compilation.GetAllMethods(), externBinding.Compilation.GetAllFields(), externBinding.Compilation.Types, externBinding.Compilation.GetAllProperties(), externBinding.Compilation.GetAllConstants());
         var externModule = new BytecodeEmitter().EmitModule(externBinding.Compilation.GetAllMethods(), externBinding.Compilation.GetAllFields(), externBinding.Compilation.Types, externLowerer);
+        var importedWriteFunction = externModule.Functions.FirstOrDefault(function => function.Name == "Write");
+        if (importedWriteFunction is null || importedWriteFunction.HostImportKind != HostImportKind.ConsoleWrite)
+        {
+            failures.Add("Bytecode emission should preserve host import metadata for Console.Write(String).");
+        }
         var importedFunction = externModule.Functions.FirstOrDefault(function => function.Name == "WriteLine");
         if (importedFunction is null || importedFunction.HostImportKind != HostImportKind.ConsoleWriteLine)
         {
@@ -2085,6 +2572,10 @@ else
         else if (externModule.Functions.FirstOrDefault(function => function.Name == "GetWallMillisecondsTextCore")?.HostImportKind != HostImportKind.ClockGetWallMillisecondsText)
         {
             failures.Add("Bytecode emission should preserve host import metadata for Clock.GetWallMillisecondsTextCore().");
+        }
+        else if (externModule.Functions.FirstOrDefault(function => function.Name == "GetWallDateTimeTextCore")?.HostImportKind != HostImportKind.ClockGetWallDateTimeText)
+        {
+            failures.Add("Bytecode emission should preserve host import metadata for Clock.GetWallDateTimeTextCore().");
         }
         else if (externModule.Functions.FirstOrDefault(function => function.Name == "ExistsCore")?.HostImportKind != HostImportKind.FileExists)
         {

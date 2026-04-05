@@ -1,0 +1,385 @@
+namespace System.Text;
+uses System;
+
+public class Text
+begin
+  private static function NewLine: String;
+  begin
+    return '
+';
+  end;
+
+  private static function NormalizeLineEndings(text: String): String;
+  begin
+    return text.Replace('
+', NewLine());
+  end;
+
+  private static function CountLines(text: String): Integer;
+  begin
+    if text = '' then
+    begin
+      return 0;
+    end;
+
+    var newline := NewLine();
+    var count := 0;
+    var lineStart := 0;
+    var index := 0;
+    while index < text.Length do
+    begin
+      if text.Substring(index, 1) = newline then
+      begin
+        count := count + 1;
+        lineStart := index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    if lineStart < text.Length then
+    begin
+      count := count + 1;
+    end;
+
+    return count;
+  end;
+
+  private static function CountSplitParts(value: String; separator: String): Integer;
+  begin
+    if value = '' then
+    begin
+      return 1;
+    end;
+
+    if separator = '' then
+    begin
+      return 1;
+    end;
+
+    var count := 1;
+    var index := 0;
+    while index <= value.Length - separator.Length do
+    begin
+      if value.Substring(index, separator.Length) = separator then
+      begin
+        count := count + 1;
+        index := index + separator.Length;
+      end
+      else
+      begin
+        index := index + 1;
+      end;
+    end;
+
+    return count;
+  end;
+
+  public static function IsNullOrEmpty(value: String): Boolean;
+  begin
+    return value = nil or value = '';
+  end;
+
+  public static function NullIfEmpty(value: String): String;
+  begin
+    if IsNullOrEmpty(value) then
+    begin
+      return nil;
+    end;
+
+    return value;
+  end;
+
+  public static function TrimToNull(value: String): String;
+  begin
+    if value = nil then
+    begin
+      return nil;
+    end;
+
+    return NullIfEmpty(value.Trim());
+  end;
+
+  public static function Join(separator: String; values: array of String): String;
+  begin
+    var result := '';
+    var index := 0;
+    while index < values.Length do
+    begin
+      if index > 0 then
+      begin
+        result := result + separator;
+      end;
+
+      result := result + values[index];
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+
+  public static function Repeat(value: String; count: Integer): String;
+  begin
+    if value = nil or count <= 0 then
+    begin
+      return '';
+    end;
+
+    var result := '';
+    var index := 0;
+    while index < count do
+    begin
+      result := result + value;
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+
+  public static function PadLeft(value: String; totalWidth: Integer; padding: String): String;
+  begin
+    var source := value;
+    if source = nil then
+    begin
+      source := '';
+    end;
+
+    var pad := padding;
+    if pad = nil or pad = '' then
+    begin
+      pad := ' ';
+    end;
+
+    if source.Length >= totalWidth then
+    begin
+      return source;
+    end;
+
+    return Repeat(pad, totalWidth - source.Length) + source;
+  end;
+
+  public static function PadRight(value: String; totalWidth: Integer; padding: String): String;
+  begin
+    var source := value;
+    if source = nil then
+    begin
+      source := '';
+    end;
+
+    var pad := padding;
+    if pad = nil or pad = '' then
+    begin
+      pad := ' ';
+    end;
+
+    if source.Length >= totalWidth then
+    begin
+      return source;
+    end;
+
+    return source + Repeat(pad, totalWidth - source.Length);
+  end;
+
+  public static function Center(value: String; totalWidth: Integer; padding: String): String;
+  begin
+    var source := value;
+    if source = nil then
+    begin
+      source := '';
+    end;
+
+    var pad := padding;
+    if pad = nil or pad = '' then
+    begin
+      pad := ' ';
+    end;
+
+    if source.Length >= totalWidth then
+    begin
+      return source;
+    end;
+
+    var missing := totalWidth - source.Length;
+    var leftWidth := missing div 2;
+    var rightWidth := missing - leftWidth;
+    return Repeat(pad, leftWidth) + source + Repeat(pad, rightWidth);
+  end;
+
+  private static function IsWhitespaceChar(value: String): Boolean;
+  begin
+    return value = ' ' or value = NewLine() or value = '	';
+  end;
+
+  public static function CollapseWhitespace(value: String): String;
+  begin
+    if value = nil then
+    begin
+      return '';
+    end;
+
+    var normalized := NormalizeLineEndings(value);
+    var result := '';
+    var sawWhitespace := false;
+    var index := 0;
+    while index < normalized.Length do
+    begin
+      var current := normalized.Substring(index, 1);
+      if IsWhitespaceChar(current) then
+      begin
+        sawWhitespace := result <> '';
+      end
+      else
+      begin
+        if sawWhitespace then
+        begin
+          result := result + ' ';
+          sawWhitespace := false;
+        end;
+
+        result := result + current;
+      end;
+
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+
+  public static function Indent(value: String; prefix: String): String;
+  begin
+    if value = nil then
+    begin
+      return '';
+    end;
+
+    var effectivePrefix := prefix;
+    if effectivePrefix = nil then
+    begin
+      effectivePrefix := '';
+    end;
+
+    var lines := Lines(value);
+    var indented := new String[lines.Length];
+    var index := 0;
+    while index < lines.Length do
+    begin
+      indented[index] := effectivePrefix + lines[index];
+      index := index + 1;
+    end;
+
+    return Join(NewLine(), indented);
+  end;
+
+  public static function StartsWithIgnoreCase(value: String; prefix: String): Boolean;
+  begin
+    if value = nil or prefix = nil then
+    begin
+      return false;
+    end;
+
+    return value.ToLower().StartsWith(prefix.ToLower());
+  end;
+
+  public static function EndsWithIgnoreCase(value: String; suffix: String): Boolean;
+  begin
+    if value = nil or suffix = nil then
+    begin
+      return false;
+    end;
+
+    return value.ToLower().EndsWith(suffix.ToLower());
+  end;
+
+  public static function ContainsIgnoreCase(value: String; part: String): Boolean;
+  begin
+    if value = nil or part = nil then
+    begin
+      return false;
+    end;
+
+    return value.ToLower().Contains(part.ToLower());
+  end;
+
+  public static function Split(value: String; separator: String): array of String;
+  begin
+    if value = nil then
+    begin
+      return new String[0];
+    end;
+
+    if separator = '' then
+    begin
+      var single := new String[1];
+      single[0] := value;
+      return single;
+    end;
+
+    var partCount := CountSplitParts(value, separator);
+    var parts := new String[partCount];
+
+    var partStart := 0;
+    var partIndex := 0;
+    var index := 0;
+    while index <= value.Length - separator.Length do
+    begin
+      if value.Substring(index, separator.Length) = separator then
+      begin
+        parts[partIndex] := value.Substring(partStart, index - partStart);
+        partIndex := partIndex + 1;
+        partStart := index + separator.Length;
+        index := partStart;
+      end
+      else
+      begin
+        index := index + 1;
+      end;
+    end;
+
+    if partIndex < partCount then
+    begin
+      parts[partIndex] := value.Substring(partStart, value.Length - partStart);
+    end;
+
+    return parts;
+  end;
+
+  public static function Lines(value: String): array of String;
+  begin
+    if value = nil then
+    begin
+      return new String[0];
+    end;
+
+    var normalized := NormalizeLineEndings(value);
+    var lineCount := CountLines(normalized);
+    var lines := new String[lineCount];
+    var newline := NewLine();
+
+    if lineCount = 0 then
+    begin
+      return lines;
+    end;
+
+    var lineStart := 0;
+    var lineIndex := 0;
+    var index := 0;
+    while index < normalized.Length do
+    begin
+      if normalized.Substring(index, 1) = newline then
+      begin
+        lines[lineIndex] := normalized.Substring(lineStart, index - lineStart);
+        lineIndex := lineIndex + 1;
+        lineStart := index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    if lineStart < normalized.Length and lineIndex < lineCount then
+    begin
+      lines[lineIndex] := normalized.Substring(lineStart, normalized.Length - lineStart);
+    end;
+
+    return lines;
+  end;
+end;

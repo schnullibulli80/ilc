@@ -23,6 +23,8 @@ public enum IrOpCode
     CompareNotEqualString,
     CompareEqualReference,
     CompareNotEqualReference,
+    TypeIsReference,
+    AsReference,
     CompareLess,
     CompareLessOrEqual,
     CompareGreater,
@@ -78,6 +80,7 @@ public sealed record IrStringReplaceTarget(IrValue Source, IrValue OldValue, IrV
 public sealed record IrStringInsertTarget(IrValue Source, IrValue Index, IrValue Value);
 public sealed record IrStringRemoveTarget(IrValue Source, IrValue Index, IrValue Length);
 public sealed record IrStringTryParseTarget(IrValue Source, IrValue ParsedValue);
+public sealed record IrTypeCheckTarget(IrValue Value, string TypeName);
 
 public sealed record IrInstruction(IrOpCode OpCode, IrValue? Destination, object? Operand);
 
@@ -1981,23 +1984,21 @@ public sealed class Lowerer
         var expressionType = SemanticFacts.InferExpressionType(typeTest.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
         var targetType = ResolveTypeTestTarget(typeTest.TypeName);
 
-        if (!SemanticFacts.IsCompatibleReferenceType(expressionType, targetType) && expressionType.Name != targetType.Name)
-        {
-            instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 0));
-            return;
-        }
-
         if (!targetType.IsReferenceType)
         {
             instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 1));
             return;
         }
 
-        var valueRegister = AllocateTemp(targetType, registers);
+        if (!expressionType.IsReferenceType && expressionType != TypeSymbol.Nil)
+        {
+            instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 0));
+            return;
+        }
+
+        var valueRegister = AllocateTemp(expressionType, registers);
         LowerExpressionInto(typeTest.Expression, valueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-        var nilRegister = AllocateTemp(TypeSymbol.Nil, registers);
-        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, nilRegister, 0));
-        instructions.Add(new IrInstruction(IrOpCode.CompareNotEqualReference, destination, (valueRegister, nilRegister)));
+        instructions.Add(new IrInstruction(IrOpCode.TypeIsReference, destination, new IrTypeCheckTarget(valueRegister, targetType.Name)));
     }
 
     private void LowerAsExpressionInto(
@@ -2019,13 +2020,15 @@ public sealed class Lowerer
             return;
         }
 
-        if (SemanticFacts.IsCompatibleReferenceType(expressionType, targetType) || expressionType.Name == targetType.Name)
+        if (!targetType.IsReferenceType)
         {
-            LowerExpressionInto(asExpression.Expression, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 0));
             return;
         }
 
-        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 0));
+        var valueRegister = AllocateTemp(expressionType, registers);
+        LowerExpressionInto(asExpression.Expression, valueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(IrOpCode.AsReference, destination, new IrTypeCheckTarget(valueRegister, targetType.Name)));
     }
 
     private TypeSymbol GetComparisonOperandType(
@@ -2238,16 +2241,20 @@ public sealed class Lowerer
         List<IrInstruction> instructions)
     {
         var targetType = ResolveTypeTestTarget(typeName);
-        if (!SemanticFacts.IsCompatibleReferenceType(expressionType, targetType) && expressionType.Name != targetType.Name)
+        if (!targetType.IsReferenceType)
         {
             instructions.Add(new IrInstruction(IrOpCode.Branch, null, failureLabel));
             return;
         }
 
-        var nilRegister = AllocateTemp(TypeSymbol.Nil, registers);
-        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, nilRegister, 0));
+        if (!expressionType.IsReferenceType && expressionType != TypeSymbol.Nil)
+        {
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, failureLabel));
+            return;
+        }
+
         var comparisonRegister = AllocateTemp(TypeSymbol.Boolean, registers);
-        instructions.Add(new IrInstruction(IrOpCode.CompareNotEqualReference, comparisonRegister, (matchRegister, nilRegister)));
+        instructions.Add(new IrInstruction(IrOpCode.TypeIsReference, comparisonRegister, new IrTypeCheckTarget(matchRegister, targetType.Name)));
         instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, comparisonRegister, failureLabel));
         instructions.Add(new IrInstruction(IrOpCode.Branch, null, successLabel));
     }
@@ -3627,7 +3634,9 @@ public sealed class Lowerer
 
         if (receiver.SourceExpression is not null)
         {
-            return ResolveReceiverExpression(receiver.SourceExpression, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            var temp = AllocateTemp(receiver.Type, registers);
+            LowerExpressionInto(receiver.SourceExpression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            return temp;
         }
 
         return null;
@@ -4045,9 +4054,31 @@ public sealed class Lowerer
         List<IrValue> registers,
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod) =>
-        target.Parts.Count > 1
-            ? ResolveMemberReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
-            : ResolveReceiverValue(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        registerByName.TryGetValue(target.ToDisplayString(), out var existing)
+            ? existing
+            : LoadIndexedTargetValue(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+    private IrValue? LoadIndexedTargetValue(
+        QualifiedNameSyntax target,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var targetType = SemanticFacts.InferExpressionType(
+            new NameExpressionSyntax(target),
+            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+            _knownMethods,
+            _knownFields,
+            _knownConstants,
+            _knownProperties,
+            currentMethod,
+            _knownTypes);
+        var temp = AllocateTemp(targetType, registers);
+        LowerNameReferenceInto(target, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        return temp;
+    }
 
     private IrValue? ResolveCallReceiver(
         ExpressionSyntax target,

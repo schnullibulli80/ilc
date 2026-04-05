@@ -76,6 +76,7 @@ public enum HostImportKind
     EnvironmentGetTempDirectory,
     ClockGetMonotonicMillisecondsText,
     ClockGetWallMillisecondsText,
+    ClockGetWallDateTimeText,
     FileExists,
     FileReadAllText,
     FileWriteAllText,
@@ -802,7 +803,10 @@ public sealed class Binder
                         DiagnosticSeverity.Error,
                         method.Keyword.Span);
                     break;
-                case PropertyDeclarationSyntax property when property.BeginKeyword is not null || property.OpenBraceToken is not null:
+                case PropertyDeclarationSyntax property when
+                    property.BeginKeyword is not null ||
+                    property.GetterBody is not null ||
+                    property.SetterBody is not null:
                     diagnostics.Report(
                         "ILC2208",
                         $"Interface property '{interfaceDeclaration.Identifier.Text}.{property.Identifier.Text}' must be declaration-only.",
@@ -1212,12 +1216,15 @@ public sealed class Binder
                     break;
                 case MatchStatementSyntax matchStatement:
                     ValidateExpression(matchStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var matchExpressionType = SemanticFacts.InferExpressionType(matchStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-                    if (matchExpressionType != TypeSymbol.Integer && matchExpressionType != TypeSymbol.String && !SemanticFacts.IsEnumType(matchExpressionType))
+                    var matchExpressionType = SemanticFacts.InferExpressionType(matchStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (matchExpressionType != TypeSymbol.Integer &&
+                        matchExpressionType != TypeSymbol.String &&
+                        !SemanticFacts.IsEnumType(matchExpressionType) &&
+                        !matchExpressionType.IsReferenceType)
                     {
                         diagnostics.Report(
                             "ILC2175",
-                            $"Match expression '{SemanticFacts.GetExpressionDisplayName(matchStatement.Expression)}' must be Integer, String or Enum in the current bootstrap compiler.",
+                            $"Match expression '{SemanticFacts.GetExpressionDisplayName(matchStatement.Expression)}' must be Integer, String, Enum or reference-typed in the current bootstrap compiler.",
                             DiagnosticSeverity.Error,
                             GetExpressionDiagnosticSpan(matchStatement.Expression, knownTypes));
                     }
@@ -1244,7 +1251,7 @@ public sealed class Binder
                                     DiagnosticSeverity.Error,
                                     GetReferenceDiagnosticSpan(arm.TypeName, knownTypes));
                             }
-                            else if (!SemanticFacts.IsCompatibleReferenceType(matchExpressionType, armType))
+                            else if (!SemanticFacts.IsCompatibleReferenceType(matchExpressionType, armType, knownTypes))
                             {
                                 diagnostics.Report(
                                     "ILC2178",
@@ -1979,12 +1986,15 @@ public sealed class Binder
                 break;
             case MatchExpressionSyntax matchExpression:
                 ValidateExpression(matchExpression.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var matchedExpressionType = SemanticFacts.InferExpressionType(matchExpression.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-                if (matchedExpressionType != TypeSymbol.Integer && matchedExpressionType != TypeSymbol.String && !SemanticFacts.IsEnumType(matchedExpressionType))
+                var matchedExpressionType = SemanticFacts.InferExpressionType(matchExpression.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (matchedExpressionType != TypeSymbol.Integer &&
+                    matchedExpressionType != TypeSymbol.String &&
+                    !SemanticFacts.IsEnumType(matchedExpressionType) &&
+                    !matchedExpressionType.IsReferenceType)
                 {
                     diagnostics.Report(
                         "ILC2175",
-                        $"Match expression '{SemanticFacts.GetExpressionDisplayName(matchExpression.Expression)}' must be Integer, String or Enum in the current bootstrap compiler.",
+                        $"Match expression '{SemanticFacts.GetExpressionDisplayName(matchExpression.Expression)}' must be Integer, String, Enum or reference-typed in the current bootstrap compiler.",
                         DiagnosticSeverity.Error,
                         GetExpressionDiagnosticSpan(matchExpression.Expression, knownTypes));
                 }
@@ -2017,7 +2027,7 @@ public sealed class Binder
                                 DiagnosticSeverity.Error,
                                 GetReferenceDiagnosticSpan(arm.TypeName, knownTypes));
                         }
-                        else if (!SemanticFacts.IsCompatibleReferenceType(matchedExpressionType, typedArmType))
+                        else if (!SemanticFacts.IsCompatibleReferenceType(matchedExpressionType, typedArmType, knownTypes))
                         {
                             diagnostics.Report(
                                 "ILC2178",
@@ -2172,7 +2182,7 @@ public sealed class Binder
                 break;
             case ArrayLengthExpressionSyntax arrayLength:
                 ValidateNameReference(arrayLength.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var lengthTargetType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(arrayLength.Target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                var lengthTargetType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(arrayLength.Target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (!SemanticFacts.HasLengthProperty(lengthTargetType))
                 {
                     diagnostics.Report(
@@ -3339,6 +3349,67 @@ public sealed class Binder
         return false;
     }
 
+    private static bool TryReportUnsupportedInterfacePropertyAccess(
+        QualifiedNameSyntax name,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        var receiverType = SemanticFacts.TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (receiverType is null ||
+            SemanticFacts.ResolveTypeReference(receiverType.Name, knownTypes) is not NamedTypeSymbol { IsInterface: true } interfaceType)
+        {
+            return false;
+        }
+
+        if (SemanticFacts.ResolvePropertyReference(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is null)
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2211",
+            $"Interface property access through receiver type '{interfaceType.Name}' is not yet supported in the current bootstrap compiler.",
+            DiagnosticSeverity.Error,
+            name.Parts[^1].Span);
+        return true;
+    }
+
+    private static bool TryReportUnsupportedInterfacePropertyAccess(
+        MemberAccessExpressionSyntax memberAccess,
+        MemberResolution memberResolution,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (memberResolution.Property is null)
+        {
+            return false;
+        }
+
+        var receiverType = SemanticFacts.InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (SemanticFacts.ResolveTypeReference(receiverType.Name, knownTypes) is not NamedTypeSymbol { IsInterface: true } interfaceType)
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2211",
+            $"Interface property access through receiver type '{interfaceType.Name}' is not yet supported in the current bootstrap compiler.",
+            DiagnosticSeverity.Error,
+            memberAccess.MemberName.Span);
+        return true;
+    }
+
     private static TextSpan GetReferenceDiagnosticSpan(
         QualifiedNameSyntax name,
         IReadOnlyList<TypeSymbol> knownTypes)
@@ -3438,9 +3509,8 @@ public sealed class Binder
         });
 
     private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
-        type is NamedTypeSymbol namedType
-            ? namedType
-            : knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name);
+        knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name) ??
+        (type as NamedTypeSymbol);
 
     private static bool CreatesTypeCycle(string declaredTypeName, TypeSymbol baseType, IReadOnlyList<TypeSymbol> knownTypes)
     {
@@ -3496,6 +3566,30 @@ public sealed class Binder
                     pending.Enqueue(nextInterface);
                 }
             }
+        }
+    }
+
+    private static IEnumerable<NamedTypeSymbol> GetReceiverTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
+    {
+        var resolvedType = ResolveNamedType(type ?? TypeSymbol.Object, knownTypes);
+        if (resolvedType is null)
+        {
+            yield break;
+        }
+
+        if (resolvedType.IsInterface)
+        {
+            foreach (var interfaceType in GetInterfaceHierarchy(resolvedType, knownTypes))
+            {
+                yield return interfaceType;
+            }
+
+            yield break;
+        }
+
+        foreach (var candidate in GetTypeHierarchy(resolvedType, knownTypes))
+        {
+            yield return candidate;
         }
     }
 
@@ -4043,6 +4137,13 @@ public sealed class Binder
             {
                 return HostImportKind.ClockGetWallMillisecondsText;
             }
+
+            if (methodName == "GetWallDateTimeTextCore" &&
+                returnType == TypeSymbol.String &&
+                parameters.Count == 0)
+            {
+                return HostImportKind.ClockGetWallDateTimeText;
+            }
         }
 
         if (declaringTypeName == "File" && isStatic)
@@ -4123,6 +4224,8 @@ public sealed class Binder
 
     private static PropertySymbol BindProperty(PropertyDeclarationSyntax propertyDeclaration, string declaringTypeName, IReadOnlyList<FieldSymbol> fields, IReadOnlyList<TypeSymbol> knownTypes)
     {
+        var declaringType = knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == declaringTypeName);
+        var synthesizeDeclarationOnlyAccessorMethods = declaringType?.IsInterface == true;
         var isStatic = propertyDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword);
         var isGetterPrivate = propertyDeclaration.GetterModifiers.Any(modifier => modifier.Kind == SyntaxKind.PrivateKeyword)
             || propertyDeclaration.GetterBlockModifiers.Any(modifier => modifier.Kind == SyntaxKind.PrivateKeyword);
@@ -4144,12 +4247,16 @@ public sealed class Binder
             : propertyDeclaration.WriteTarget is null
                 ? null
                 : BindPropertyFieldReference(propertyDeclaration.WriteTarget, declaringTypeName, fields);
-        var getterMethod = propertyDeclaration.GetterBody is null
+        var getterMethod = propertyDeclaration.GetKeyword is null && propertyDeclaration.GetterBody is null
             ? null
-            : BindMethod(CreateGetterAccessorDeclaration(propertyDeclaration), declaringTypeName, knownTypes);
-        var setterMethod = propertyDeclaration.SetterBody is null
+            : propertyDeclaration.GetterBody is not null || synthesizeDeclarationOnlyAccessorMethods
+                ? BindMethod(CreateGetterAccessorDeclaration(propertyDeclaration), declaringTypeName, knownTypes)
+                : null;
+        var setterMethod = propertyDeclaration.SetKeyword is null && propertyDeclaration.InitKeyword is null && propertyDeclaration.SetterBody is null
             ? null
-            : BindMethod(CreateSetterAccessorDeclaration(propertyDeclaration), declaringTypeName, knownTypes);
+            : propertyDeclaration.SetterBody is not null || synthesizeDeclarationOnlyAccessorMethods
+                ? BindMethod(CreateSetterAccessorDeclaration(propertyDeclaration), declaringTypeName, knownTypes)
+                : null;
         var indexParameter = propertyDeclaration.IndexParameter is null
             ? null
             : new ParameterSymbol(
@@ -4205,7 +4312,7 @@ public sealed class Binder
             null,
             null,
             propertyDeclaration.GetterBody,
-            propertyDeclaration.GetterBody!.SemicolonToken);
+            propertyDeclaration.GetterBody?.SemicolonToken ?? propertyDeclaration.SemicolonToken);
 
     private static MethodDeclarationSyntax CreateSetterAccessorDeclaration(PropertyDeclarationSyntax propertyDeclaration)
     {
@@ -4235,7 +4342,7 @@ public sealed class Binder
             null,
             null,
             propertyDeclaration.SetterBody,
-            propertyDeclaration.SetterBody!.SemicolonToken);
+            propertyDeclaration.SetterBody?.SemicolonToken ?? propertyDeclaration.SemicolonToken);
     }
 
     private static FieldSymbol BindPropertyFieldReference(QualifiedNameSyntax target, string declaringTypeName, IReadOnlyList<FieldSymbol> fields)
@@ -4252,9 +4359,8 @@ public sealed class Binder
 public static class SemanticFacts
 {
     private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
-        type is NamedTypeSymbol namedType
-            ? namedType
-            : knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name);
+        knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name) ??
+        (type as NamedTypeSymbol);
 
     private static IEnumerable<NamedTypeSymbol> GetTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
     {
@@ -4265,6 +4371,58 @@ public static class SemanticFacts
         {
             yield return current;
             current = ResolveNamedType(current.BaseType ?? TypeSymbol.Object, knownTypes);
+        }
+    }
+
+    private static IEnumerable<NamedTypeSymbol> GetInterfaceHierarchy(TypeSymbol interfaceType, IEnumerable<TypeSymbol> knownTypes)
+    {
+        var pending = new Queue<NamedTypeSymbol>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        if (ResolveNamedType(interfaceType, knownTypes) is { IsInterface: true } rootInterface)
+        {
+            pending.Enqueue(rootInterface);
+        }
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            if (!visited.Add(current.Name))
+            {
+                continue;
+            }
+
+            yield return current;
+            foreach (var inheritedInterface in current.InterfaceTypes)
+            {
+                if (ResolveNamedType(inheritedInterface, knownTypes) is { IsInterface: true } nextInterface)
+                {
+                    pending.Enqueue(nextInterface);
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<NamedTypeSymbol> GetReceiverTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
+    {
+        var resolvedType = ResolveNamedType(type ?? TypeSymbol.Object, knownTypes);
+        if (resolvedType is null)
+        {
+            yield break;
+        }
+
+        if (resolvedType.IsInterface)
+        {
+            foreach (var interfaceType in GetInterfaceHierarchy(resolvedType, knownTypes))
+            {
+                yield return interfaceType;
+            }
+
+            yield break;
+        }
+
+        foreach (var candidate in GetTypeHierarchy(resolvedType, knownTypes))
+        {
+            yield return candidate;
         }
     }
 
@@ -4532,7 +4690,7 @@ public static class SemanticFacts
             return new MemberResolution(displayName, TypeSymbol.Integer);
         }
 
-        var typeHierarchy = GetTypeHierarchy(receiverType, knownTypes ?? []);
+        var typeHierarchy = GetReceiverTypeHierarchy(receiverType, knownTypes ?? []);
         var property = typeHierarchy
             .SelectMany(knownType => knownProperties.Where(candidate =>
                 !candidate.IsStatic &&
@@ -4647,7 +4805,7 @@ public static class SemanticFacts
             return new InvocationResolution(intrinsic, receiverType, true);
         }
 
-        var method = GetTypeHierarchy(receiverType, knownTypes)
+        var method = GetReceiverTypeHierarchy(receiverType, knownTypes)
             .SelectMany(knownType => knownMethods.Where(candidate =>
                 candidate.DeclaringTypeName == knownType.Name &&
                 candidate.Name == memberAccess.MemberName.Text &&
@@ -4659,7 +4817,12 @@ public static class SemanticFacts
             return null;
         }
 
-        return new InvocationResolution(method, receiverType, method.IsVirtual || method.IsOverride);
+        return new InvocationResolution(
+            method,
+            receiverType,
+            method.IsVirtual ||
+            method.IsOverride ||
+            ResolveTypeReference(receiverType.Name, knownTypes) is NamedTypeSymbol { IsInterface: true });
     }
 
     private static MethodSymbol? TryResolveIntrinsic(TypeSymbol receiverType, string name, int argumentCount)
@@ -5068,7 +5231,12 @@ public static class SemanticFacts
                 .FirstOrDefault();
             if (instanceMethod is not null)
             {
-                return new InvocationResolution(instanceMethod, valueReceiverType, instanceMethod.IsVirtual || instanceMethod.IsOverride);
+                return new InvocationResolution(
+                    instanceMethod,
+                    valueReceiverType,
+                    instanceMethod.IsVirtual ||
+                    instanceMethod.IsOverride ||
+                    ResolveTypeReference(valueReceiverType.Name, knownTypes) is NamedTypeSymbol { IsInterface: true });
             }
         }
 
@@ -5150,7 +5318,7 @@ public static class SemanticFacts
         var valueReceiverType = TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var method = GetTypeHierarchy(valueReceiverType, knownTypes)
+            var method = GetReceiverTypeHierarchy(valueReceiverType, knownTypes)
                 .SelectMany(knownType => knownMethods.Where(candidate =>
                     candidate.DeclaringTypeName == knownType.Name &&
                     candidate.Name == target.Parts[^1].Text &&
@@ -5220,7 +5388,7 @@ public static class SemanticFacts
         var receiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (receiverType is not null)
         {
-            var hierarchy = GetTypeHierarchy(receiverType, knownTypes);
+            var hierarchy = GetReceiverTypeHierarchy(receiverType, knownTypes);
             var instanceField = hierarchy
                 .SelectMany(receiver => knownFields.Where(field =>
                     field.DeclaringTypeName == receiver.Name &&
@@ -6163,10 +6331,59 @@ public static class SemanticFacts
         return TypeSymbol.BuiltInTypes.FirstOrDefault(type => type.Name == typeName);
     }
 
-    public static bool IsCompatibleReferenceType(TypeSymbol sourceType, TypeSymbol targetType) =>
-        targetType.IsReferenceType &&
-        sourceType.IsReferenceType &&
-        (targetType.Name == TypeSymbol.Object.Name || sourceType.Name == targetType.Name);
+    public static bool IsCompatibleReferenceType(TypeSymbol sourceType, TypeSymbol targetType, IReadOnlyList<TypeSymbol>? knownTypes = null)
+    {
+        if (sourceType == TypeSymbol.Nil)
+        {
+            return targetType.IsReferenceType;
+        }
+
+        if (!targetType.IsReferenceType || !sourceType.IsReferenceType)
+        {
+            return false;
+        }
+
+        if (targetType.Name == TypeSymbol.Object.Name || sourceType.Name == targetType.Name)
+        {
+            return true;
+        }
+
+        var resolvedTypes = knownTypes ?? [];
+        var resolvedSourceType = ResolveNamedType(sourceType, resolvedTypes);
+        var resolvedTargetType = ResolveNamedType(targetType, resolvedTypes);
+        if (resolvedSourceType is null || resolvedTargetType is null)
+        {
+            return false;
+        }
+
+        if (resolvedTargetType.IsInterface)
+        {
+            if (resolvedSourceType.IsInterface)
+            {
+                return GetInterfaceHierarchy(resolvedSourceType, resolvedTypes).Any(candidate => candidate.Name == resolvedTargetType.Name);
+            }
+
+            foreach (var candidateType in GetTypeHierarchy(resolvedSourceType, resolvedTypes))
+            {
+                if (candidateType.Name == resolvedTargetType.Name)
+                {
+                    return true;
+                }
+
+                foreach (var implementedInterface in candidateType.InterfaceTypes)
+                {
+                    if (GetInterfaceHierarchy(implementedInterface, resolvedTypes).Any(candidate => candidate.Name == resolvedTargetType.Name))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        return GetTypeHierarchy(resolvedSourceType, resolvedTypes).Any(candidate => candidate.Name == resolvedTargetType.Name);
+    }
 
     private static FieldSymbol? ResolveFieldReference(
         QualifiedNameSyntax name,
@@ -6290,7 +6507,7 @@ public static class SemanticFacts
         var valueReceiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, properties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            return GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+            return GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => properties.Where(property =>
                     property.DeclaringTypeName == knownType.Name &&
                     property.Name == name.Parts[^1].Text &&
@@ -6347,7 +6564,7 @@ public static class SemanticFacts
         var valueReceiverType = TryResolveValueReceiverType(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var instanceConstant = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+            var instanceConstant = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => constants.Where(constant =>
                     constant.DeclaringTypeName == knownType.Name &&
                     constant.Name == name.Parts[^1].Text &&
@@ -6544,7 +6761,7 @@ public static class SemanticFacts
         var valueReceiverType = TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            var instanceProperty = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+            var instanceProperty = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => knownProperties.Where(property =>
                     property.DeclaringTypeName == knownType.Name &&
                     property.Name == name.Parts[^1].Text &&
@@ -6555,7 +6772,7 @@ public static class SemanticFacts
                 return instanceProperty.Type;
             }
 
-            var instanceField = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
+            var instanceField = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => knownFields.Where(field =>
                     field.DeclaringTypeName == knownType.Name &&
                     field.Name == name.Parts[^1].Text &&

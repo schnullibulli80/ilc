@@ -46,6 +46,11 @@ public:
         return 2;
     }
 
+    [[nodiscard]] std::string get_wall_datetime_text() const override
+    {
+        return "2000-01-02 03:04:05";
+    }
+
     [[nodiscard]] std::string get_current_working_directory() const override
     {
         return "/test";
@@ -185,6 +190,7 @@ void emit_instruction(
 
 void emit_method_row(
     std::vector<std::uint8_t>& bytes,
+    std::uint32_t owner_type_id,
     std::uint32_t name_string_id,
     std::uint32_t flags,
     std::uint16_t register_count,
@@ -194,7 +200,7 @@ void emit_method_row(
     std::uint32_t code_offset,
     std::uint32_t code_size)
 {
-    write_u32(bytes, 0);
+    write_u32(bytes, owner_type_id);
     write_u32(bytes, name_string_id);
     write_u32(bytes, 0);
     write_u32(bytes, flags);
@@ -233,6 +239,9 @@ void emit_field_row(
 void emit_type_row(
     std::vector<std::uint8_t>& bytes,
     std::uint32_t simple_name_string_id,
+    std::uint16_t kind,
+    std::uint16_t flags,
+    std::uint32_t base_type_id,
     std::uint32_t first_field_id,
     std::uint32_t field_count,
     std::uint32_t first_method_id,
@@ -240,9 +249,9 @@ void emit_type_row(
 {
     write_u32(bytes, 0);
     write_u32(bytes, simple_name_string_id);
-    write_u16(bytes, 1);
-    write_u16(bytes, 1u << 6);
-    write_u32(bytes, 0);
+    write_u16(bytes, kind);
+    write_u16(bytes, flags);
+    write_u32(bytes, base_type_id);
     write_u32(bytes, 0);
     write_u32(bytes, first_field_id);
     write_u32(bytes, field_count);
@@ -254,6 +263,19 @@ void emit_type_row(
     write_u32(bytes, 0);
     write_u32(bytes, 0);
     write_u32(bytes, 0);
+}
+
+void emit_interface_dispatch_row(
+    std::vector<std::uint8_t>& bytes,
+    std::uint32_t owner_type_id,
+    std::uint32_t interface_type_id,
+    std::uint32_t interface_method_id,
+    std::uint32_t implementation_method_id)
+{
+    write_u32(bytes, owner_type_id);
+    write_u32(bytes, interface_type_id);
+    write_u32(bytes, interface_method_id);
+    write_u32(bytes, implementation_method_id);
 }
 
 std::vector<std::uint8_t> make_test_ilb()
@@ -301,9 +323,9 @@ std::vector<std::uint8_t> make_test_ilb()
     emit_instruction(code, ilcvm::OpCode::ret, 0, 0, 0, 0);
 
     std::vector<std::uint8_t> methods;
-    emit_method_row(methods, 2, 1u << 4, 3, 2, 0, 1, 0, 22);
-    emit_method_row(methods, 3, 0, 3, 1, 0, 1, 22, 22);
-    emit_method_row(methods, 4, (1u << 12) | (1u << 4), 13, 0, 12, 1, 44, 187);
+    emit_method_row(methods, 0, 2, 1u << 4, 3, 2, 0, 1, 0, 22);
+    emit_method_row(methods, 0, 3, 0, 3, 1, 0, 1, 22, 22);
+    emit_method_row(methods, 0, 4, (1u << 12) | (1u << 4), 13, 0, 12, 1, 44, 187);
 
     std::vector<std::uint8_t> entry;
     write_u32(entry, 3);
@@ -382,7 +404,7 @@ std::vector<std::uint8_t> make_object_test_ilb()
     strings.insert(strings.end(), { 'M', 'a', 'i', 'n' });
 
     std::vector<std::uint8_t> types;
-    emit_type_row(types, 1, 1, 1, 1, 4);
+    emit_type_row(types, 1, 1, 1u << 6, 0, 1, 1, 1, 4);
 
     std::vector<std::uint8_t> fields;
     emit_field_row(fields, 1, 2, 0);
@@ -405,10 +427,10 @@ std::vector<std::uint8_t> make_object_test_ilb()
     emit_instruction(code, ilcvm::OpCode::ret, 0, 0, 0, 0);
 
     std::vector<std::uint8_t> methods;
-    emit_method_row(methods, 3, 0, 2, 1, 0, 0, 0, 22);
-    emit_method_row(methods, 4, 0, 4, 1, 1, 0, 22, 44);
-    emit_method_row(methods, 5, 0, 2, 0, 0, 1, 66, 22);
-    emit_method_row(methods, 6, (1u << 12) | (1u << 4), 3, 0, 2, 1, 88, 77);
+    emit_method_row(methods, 1, 3, 0, 2, 1, 0, 0, 0, 22);
+    emit_method_row(methods, 1, 4, 0, 4, 1, 1, 0, 22, 44);
+    emit_method_row(methods, 1, 5, 0, 2, 0, 0, 1, 66, 22);
+    emit_method_row(methods, 0, 6, (1u << 12) | (1u << 4), 3, 0, 2, 1, 88, 77);
 
     std::vector<std::uint8_t> entry;
     write_u32(entry, 4);
@@ -465,6 +487,98 @@ std::vector<std::uint8_t> make_object_test_ilb()
     std::copy(methods.begin(), methods.end(), bytes.begin() + method_offset);
     std::copy(code.begin(), code.end(), bytes.begin() + code_offset);
     std::copy(entry.begin(), entry.end(), bytes.begin() + entry_offset);
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_interface_dispatch_test_ilb()
+{
+    constexpr std::uint32_t header_size = 64;
+    constexpr std::uint32_t directory_entry_size = 24;
+    constexpr std::uint32_t section_count = 6;
+    const std::uint32_t directory_offset = header_size;
+
+    std::vector<std::uint8_t> strings;
+    write_u32(strings, 4);
+    write_u32(strings, 7);
+    strings.insert(strings.end(), { 'I', 'W', 'o', 'r', 'k', 'e', 'r' });
+    write_u32(strings, 6);
+    strings.insert(strings.end(), { 'W', 'o', 'r', 'k', 'e', 'r' });
+    write_u32(strings, 3);
+    strings.insert(strings.end(), { 'R', 'u', 'n' });
+    write_u32(strings, 4);
+    strings.insert(strings.end(), { 'M', 'a', 'i', 'n' });
+
+    std::vector<std::uint8_t> types;
+    emit_type_row(types, 1, 2, (1u << 1) | (1u << 6), 0, 0, 0, 1, 1);
+    emit_type_row(types, 2, 1, 1u << 6, 0, 0, 0, 2, 1);
+
+    std::vector<std::uint8_t> methods;
+    emit_method_row(methods, 1, 3, 0, 1, 0, 0, 0, 0, 11);
+    emit_method_row(methods, 2, 3, 0, 1, 0, 0, 0, 11, 11);
+    emit_method_row(methods, 0, 4, (1u << 12) | (1u << 4), 1, 0, 0, 1, 22, 11);
+
+    std::vector<std::uint8_t> interface_dispatch;
+    emit_interface_dispatch_row(interface_dispatch, 2, 1, 1, 2);
+
+    std::vector<std::uint8_t> code;
+    emit_instruction(code, ilcvm::OpCode::ld_i32, 0, 0, 0, 0);
+    emit_instruction(code, ilcvm::OpCode::ret, 0, 0, 0, 0);
+    emit_instruction(code, ilcvm::OpCode::ld_i32, 0, 0, 0, 1);
+    emit_instruction(code, ilcvm::OpCode::ret, 0, 0, 0, 0);
+    emit_instruction(code, ilcvm::OpCode::ld_i32, 0, 0, 0, 0);
+    emit_instruction(code, ilcvm::OpCode::ret, 0, 0, 0, 0);
+
+    const auto align = [](std::uint32_t value) { return (value + 7u) / 8u * 8u; };
+    auto payload_offset = align(header_size + section_count * directory_entry_size);
+    const auto string_offset = payload_offset;
+    payload_offset = align(payload_offset + static_cast<std::uint32_t>(strings.size()));
+    const auto type_offset = payload_offset;
+    payload_offset = align(payload_offset + static_cast<std::uint32_t>(types.size()));
+    const auto method_offset = payload_offset;
+    payload_offset = align(payload_offset + static_cast<std::uint32_t>(methods.size()));
+    const auto interface_dispatch_offset = payload_offset;
+    payload_offset = align(payload_offset + static_cast<std::uint32_t>(interface_dispatch.size()));
+    const auto code_offset = payload_offset;
+    payload_offset = align(payload_offset + static_cast<std::uint32_t>(code.size()));
+    const auto entry_offset = payload_offset;
+    payload_offset = align(payload_offset + 8u);
+
+    std::vector<std::uint8_t> bytes(payload_offset, 0);
+    bytes[0] = 'I';
+    bytes[1] = 'L';
+    bytes[2] = 'B';
+    bytes[3] = '1';
+    bytes[4] = 1;
+    bytes[8] = static_cast<std::uint8_t>(header_size);
+    bytes[12] = static_cast<std::uint8_t>(section_count);
+    bytes[16] = static_cast<std::uint8_t>(directory_offset);
+    bytes[20] = static_cast<std::uint8_t>(payload_offset & 0xFF);
+    bytes[21] = static_cast<std::uint8_t>((payload_offset >> 8) & 0xFF);
+
+    auto write_directory = [&bytes](std::size_t offset, ilcvm::SectionKind kind, std::uint32_t section_offset, std::uint32_t size, std::uint32_t count)
+    {
+        bytes[offset + 0] = static_cast<std::uint8_t>(static_cast<std::uint32_t>(kind) & 0xFF);
+        bytes[offset + 4] = static_cast<std::uint8_t>(section_offset & 0xFF);
+        bytes[offset + 5] = static_cast<std::uint8_t>((section_offset >> 8) & 0xFF);
+        bytes[offset + 8] = static_cast<std::uint8_t>(size & 0xFF);
+        bytes[offset + 9] = static_cast<std::uint8_t>((size >> 8) & 0xFF);
+        bytes[offset + 12] = static_cast<std::uint8_t>(count & 0xFF);
+        bytes[offset + 16] = 8;
+    };
+
+    write_directory(directory_offset + 0 * directory_entry_size, ilcvm::SectionKind::string_table, string_offset, static_cast<std::uint32_t>(strings.size()), 4);
+    write_directory(directory_offset + 1 * directory_entry_size, ilcvm::SectionKind::type_table, type_offset, static_cast<std::uint32_t>(types.size()), 2);
+    write_directory(directory_offset + 2 * directory_entry_size, ilcvm::SectionKind::method_table, method_offset, static_cast<std::uint32_t>(methods.size()), 3);
+    write_directory(directory_offset + 3 * directory_entry_size, ilcvm::SectionKind::interface_dispatch_table, interface_dispatch_offset, static_cast<std::uint32_t>(interface_dispatch.size()), 1);
+    write_directory(directory_offset + 4 * directory_entry_size, ilcvm::SectionKind::code_section, code_offset, static_cast<std::uint32_t>(code.size()), 3);
+    write_directory(directory_offset + 5 * directory_entry_size, ilcvm::SectionKind::entry_point, entry_offset, 8u, 1);
+
+    std::copy(strings.begin(), strings.end(), bytes.begin() + string_offset);
+    std::copy(types.begin(), types.end(), bytes.begin() + type_offset);
+    std::copy(methods.begin(), methods.end(), bytes.begin() + method_offset);
+    std::copy(interface_dispatch.begin(), interface_dispatch.end(), bytes.begin() + interface_dispatch_offset);
+    std::copy(code.begin(), code.end(), bytes.begin() + code_offset);
+    bytes[entry_offset + 0] = 3;
     return bytes;
 }
 
@@ -553,7 +667,7 @@ std::vector<std::uint8_t> make_string_test_ilb()
     emit_instruction(code, ilcvm::OpCode::ret, 0, 0, 0, 0);
 
     std::vector<std::uint8_t> methods;
-    emit_method_row(methods, 1, (1u << 12) | (1u << 4), 54, 0, 53, 1, 0, 594);
+    emit_method_row(methods, 0, 1, (1u << 12) | (1u << 4), 54, 0, 53, 1, 0, 594);
 
     std::vector<std::uint8_t> entry;
     write_u32(entry, 1);
@@ -690,6 +804,15 @@ int main()
         return EXIT_FAILURE;
     }
 
+    if (!ilb_module.functions[0].is_static ||
+        ilb_module.functions[1].is_static ||
+        ilb_module.functions[0].owner_type_id != 0 ||
+        ilb_module.functions[2].owner_type_id != 0)
+    {
+        std::cerr << "FAIL: ilb loader did not preserve method owner/static metadata\n";
+        return EXIT_FAILURE;
+    }
+
     const auto ilb_result = vm.execute(ilb_module);
     if (ilb_result != 26)
     {
@@ -774,10 +897,50 @@ int main()
         return EXIT_FAILURE;
     }
 
+    if (!object_ilb_module.types[0].is_reference_type ||
+        object_ilb_module.types[0].is_interface ||
+        object_ilb_module.types[0].first_field_id != 1 ||
+        object_ilb_module.types[0].field_count != 1 ||
+        object_ilb_module.types[0].first_method_id != 1 ||
+        object_ilb_module.types[0].method_count != 4 ||
+        object_ilb_module.functions[0].owner_type_id != 1 ||
+        object_ilb_module.functions[1].owner_type_id != 1 ||
+        object_ilb_module.functions[2].owner_type_id != 1 ||
+        object_ilb_module.functions[3].owner_type_id != 0 ||
+        object_ilb_module.functions[3].is_static != true)
+    {
+        std::cerr << "FAIL: object ilb loader did not preserve type/method metadata\n";
+        return EXIT_FAILURE;
+    }
+
     const auto object_ilb_result = vm.execute(object_ilb_module);
     if (object_ilb_result != 8)
     {
         std::cerr << "FAIL: vm returned " << object_ilb_result << " for object ilb-loaded module\n";
+        return EXIT_FAILURE;
+    }
+
+    const auto interface_dispatch_ilb_module = ilcvm::load_module_from_ilb_bytes(make_interface_dispatch_test_ilb());
+    if (interface_dispatch_ilb_module.types.size() != 2 ||
+        interface_dispatch_ilb_module.functions.size() != 3 ||
+        interface_dispatch_ilb_module.interface_dispatch_entries.size() != 1)
+    {
+        std::cerr << "FAIL: interface dispatch ilb loader did not recover metadata\n";
+        return EXIT_FAILURE;
+    }
+
+    const auto& interface_type = interface_dispatch_ilb_module.types[0];
+    const auto& worker_type = interface_dispatch_ilb_module.types[1];
+    const auto& dispatch_entry = interface_dispatch_ilb_module.interface_dispatch_entries[0];
+    if (!interface_type.is_interface ||
+        interface_type.kind != 2 ||
+        worker_type.is_interface ||
+        dispatch_entry.owner_type_id != 2 ||
+        dispatch_entry.interface_type_id != 1 ||
+        dispatch_entry.interface_method_id != 1 ||
+        dispatch_entry.implementation_method_id != 2)
+    {
+        std::cerr << "FAIL: interface dispatch metadata was not preserved correctly\n";
         return EXIT_FAILURE;
     }
 

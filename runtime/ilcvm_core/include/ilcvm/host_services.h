@@ -17,6 +17,7 @@ public:
     [[nodiscard]] virtual std::string console_read_line() const = 0;
     [[nodiscard]] virtual std::uint64_t get_monotonic_timestamp_ms() const = 0;
     [[nodiscard]] virtual std::uint64_t get_wall_timestamp_ms() const = 0;
+    [[nodiscard]] virtual std::string get_wall_datetime_text() const = 0;
     [[nodiscard]] virtual std::string get_current_working_directory() const = 0;
     [[nodiscard]] virtual std::string get_user_name() const = 0;
     [[nodiscard]] virtual std::string get_machine_name() const = 0;

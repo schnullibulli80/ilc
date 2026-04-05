@@ -95,6 +95,8 @@ std::vector<std::string> read_string_table(const std::vector<std::uint8_t>& byte
 
 Function decode_function(
     std::uint32_t function_id,
+    std::uint32_t owner_type_id,
+    std::uint32_t method_flags,
     std::string name,
     std::uint16_t register_count,
     std::uint16_t argument_count,
@@ -112,10 +114,16 @@ Function decode_function(
 
     Function function;
     function.function_id = function_id;
+    function.owner_type_id = owner_type_id;
+    function.method_flags = method_flags;
     function.name = std::move(name);
     function.register_count = register_count;
     function.argument_count = argument_count;
     function.returns_value = returns_value;
+    function.is_static = (method_flags & (1u << 4)) != 0;
+    function.is_virtual = (method_flags & (1u << 5)) != 0;
+    function.is_override = (method_flags & (1u << 6)) != 0;
+    function.is_extern = (method_flags & (1u << 16)) != 0;
     function.host_import_kind = host_import_kind;
     function.exception_handlers = std::move(exception_handlers);
 
@@ -213,13 +221,29 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
         std::size_t type_cursor = type_table->offset;
         for (std::uint32_t type_index = 1; type_index <= type_table->element_count; ++type_index)
         {
+            const auto type_kind = read_u16(bytes, type_cursor + 8);
+            const auto type_flags = read_u16(bytes, type_cursor + 10);
+            const auto base_type_id = read_u32(bytes, type_cursor + 12);
             const auto name_string_id = read_u32(bytes, type_cursor + 4);
-            const auto declared_field_count = read_u32(bytes, type_cursor + 20);
+            const auto first_field_id = read_u32(bytes, type_cursor + 20);
+            const auto field_count = read_u32(bytes, type_cursor + 24);
+            const auto first_method_id = read_u32(bytes, type_cursor + 28);
+            const auto method_count = read_u32(bytes, type_cursor + 32);
             const auto name = name_string_id < strings.size() ? strings[name_string_id] : std::string();
             module.types.push_back(Type {
                 .type_id = type_index,
                 .name = name,
-                .instance_field_count = declared_field_count
+                .kind = type_kind,
+                .flags = type_flags,
+                .base_type_id = base_type_id,
+                .first_field_id = first_field_id,
+                .field_count = field_count,
+                .first_method_id = first_method_id,
+                .method_count = method_count,
+                .is_reference_type = (type_flags & (1u << 6)) != 0,
+                .is_interface = (type_flags & (1u << 1)) != 0,
+                .is_record = (type_flags & (1u << 0)) != 0,
+                .instance_field_count = field_count
             });
             type_cursor += type_row_size;
         }
@@ -262,6 +286,28 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
             {
                 type.instance_field_count = it->second;
             }
+        }
+    }
+
+    if (const auto* interface_dispatch_table = find_section(module.sections, SectionKind::interface_dispatch_table))
+    {
+        validate_section_bounds(bytes, *interface_dispatch_table);
+        const auto interface_dispatch_row_size = static_cast<std::size_t>(16);
+        if (interface_dispatch_table->size % interface_dispatch_row_size != 0)
+        {
+            throw std::runtime_error("invalid interface dispatch table size");
+        }
+
+        std::size_t interface_dispatch_cursor = interface_dispatch_table->offset;
+        for (std::uint32_t index = 0; index < interface_dispatch_table->element_count; ++index)
+        {
+            module.interface_dispatch_entries.push_back(InterfaceDispatchEntry {
+                .owner_type_id = read_u32(bytes, interface_dispatch_cursor + 0),
+                .interface_type_id = read_u32(bytes, interface_dispatch_cursor + 4),
+                .interface_method_id = read_u32(bytes, interface_dispatch_cursor + 8),
+                .implementation_method_id = read_u32(bytes, interface_dispatch_cursor + 12)
+            });
+            interface_dispatch_cursor += interface_dispatch_row_size;
         }
     }
 
@@ -315,6 +361,7 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
     std::size_t cursor = method_table.offset;
     for (std::uint32_t method_index = 1; method_index <= method_table.element_count; ++method_index)
     {
+        const auto owner_type_id = read_u32(bytes, cursor + 0);
         const auto name_string_id = read_u32(bytes, cursor + 4);
         const auto method_flags = read_u32(bytes, cursor + 12);
         const auto register_count = read_u16(bytes, cursor + 16);
@@ -350,6 +397,8 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
 
         module.functions.push_back(decode_function(
             method_index,
+            owner_type_id,
+            method_flags,
             name,
             register_count,
             argument_count,

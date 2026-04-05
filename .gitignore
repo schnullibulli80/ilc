@@ -69,3 +69,4 @@ ilc_uint128_implementation_plan.md
 docs/bound-semantics-design.md
 docs/compiler-stabilization-plan.md
 .codex
+docs/generics-and-collections-plan.md
