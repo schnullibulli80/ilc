@@ -1,16 +1,91 @@
 namespace System.Collections;
 uses System;
 
-public class StringList
+public interface IEnumerator<T>
 begin
-  private var Items: array of String;
+  property Current: T { get; };
+  function MoveNext(): Boolean;
+  method Reset;
+end;
+
+public interface IEnumerable<T>
+begin
+  function GetEnumerator(): IEnumerator<T>;
+end;
+
+public interface IReadOnlyList<T>
+begin
+  property Count: Integer { get; };
+  default property Item[index: Integer]: T { get; };
+end;
+
+public interface ICollection<T>: IEnumerable<T>
+begin
+  property Count: Integer { get; };
+  method Add(value: T);
+  method Clear;
+  function Contains(value: T): Boolean;
+end;
+
+public interface IList<T>: IReadOnlyList<T>, ICollection<T>
+begin
+  method AddRange(values: array of T);
+  function IndexOf(value: T): Integer;
+  function ToArray: array of T;
+end;
+
+public class StringList: List<String>
+begin
+end;
+
+public class ListEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceItems: array of T;
+  private var SourceCount: Integer;
+  private var Index: Integer;
+
+  public constructor(items: array of T; count: Integer);
+  begin
+    SourceItems := items;
+    SourceCount := count;
+    Index := -1;
+  end;
+
+  public property Current: T
+  begin
+    get
+    begin
+      return SourceItems[Index];
+    end;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    if Index + 1 >= SourceCount then
+    begin
+      return false;
+    end;
+
+    Index := Index + 1;
+    return true;
+  end;
+
+  public method Reset;
+  begin
+    Index := -1;
+  end;
+end;
+
+public class List<T>: IList<T>
+begin
+  private var Items: array of T;
   private var CountValue: Integer;
 
   private method EnsureCapacity(minimum: Integer);
   begin
     if Items = nil then
     begin
-      Items := new String[4];
+      Items := new T[4];
     end;
 
     if Items.Length >= minimum then
@@ -29,7 +104,7 @@ begin
       capacity := capacity * 2;
     end;
 
-    var resized := new String[capacity];
+    var resized := new T[capacity];
     var index := 0;
     while index < CountValue do
     begin
@@ -40,9 +115,14 @@ begin
     Items := resized;
   end;
 
+  private function CreateEnumerator(): ListEnumerator<T>;
+  begin
+    return new ListEnumerator<T>(Items, CountValue);
+  end;
+
   public constructor;
   begin
-    Items := new String[4];
+    Items := new T[4];
     CountValue := 0;
   end;
 
@@ -54,7 +134,7 @@ begin
     end;
   end;
 
-  public default property Item[index: Integer]: String
+  public default property Item[index: Integer]: T
   begin
     get
     begin
@@ -67,14 +147,14 @@ begin
     end;
   end;
 
-  public method Add(value: String);
+  public method Add(value: T);
   begin
     EnsureCapacity(CountValue + 1);
     Items[CountValue] := value;
     CountValue := CountValue + 1;
   end;
 
-  public method AddRange(values: array of String);
+  public method AddRange(values: array of T);
   begin
     var index := 0;
     while index < values.Length do
@@ -86,16 +166,16 @@ begin
 
   public method Clear;
   begin
-    Items := new String[4];
+    Items := new T[4];
     CountValue := 0;
   end;
 
-  public function Contains(value: String): Boolean;
+  public function Contains(value: T): Boolean;
   begin
     return IndexOf(value) >= 0;
   end;
 
-  public function IndexOf(value: String): Integer;
+  public function IndexOf(value: T): Integer;
   begin
     var index := 0;
     while index < CountValue do
@@ -111,9 +191,9 @@ begin
     return -1;
   end;
 
-  public function ToArray: array of String;
+  public function ToArray: array of T;
   begin
-    var result := new String[CountValue];
+    var result := new T[CountValue];
     var index := 0;
     while index < CountValue do
     begin
@@ -122,5 +202,139 @@ begin
     end;
 
     return result;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return CreateEnumerator();
+  end;
+end;
+
+public class Dictionary<TKey, TValue>
+begin
+  private var Keys: array of TKey;
+  private var Values: array of TValue;
+  private var CountValue: Integer;
+
+  private method EnsureCapacity(minimum: Integer);
+  begin
+    if Keys = nil then
+    begin
+      Keys := new TKey[4];
+      Values := new TValue[4];
+    end;
+
+    if Keys.Length >= minimum then
+    begin
+      return;
+    end;
+
+    var capacity := Keys.Length;
+    if capacity <= 0 then
+    begin
+      capacity := 4;
+    end;
+
+    while capacity < minimum do
+    begin
+      capacity := capacity * 2;
+    end;
+
+    var resizedKeys := new TKey[capacity];
+    var resizedValues := new TValue[capacity];
+    var index := 0;
+    while index < CountValue do
+    begin
+      resizedKeys[index] := Keys[index];
+      resizedValues[index] := Values[index];
+      index := index + 1;
+    end;
+
+    Keys := resizedKeys;
+    Values := resizedValues;
+  end;
+
+  private function IndexOfKey(key: TKey): Integer;
+  begin
+    var index := 0;
+    while index < CountValue do
+    begin
+      if Keys[index] = key then
+      begin
+        return index;
+      end;
+
+      index := index + 1;
+    end;
+
+    return -1;
+  end;
+
+  public constructor;
+  begin
+    Keys := new TKey[4];
+    Values := new TValue[4];
+    CountValue := 0;
+  end;
+
+  public property Count: Integer
+  begin
+    get
+    begin
+      return CountValue;
+    end;
+  end;
+
+  public default property Item[key: TKey]: TValue
+  begin
+    get
+    begin
+      var index := IndexOfKey(key);
+      return Values[index];
+    end;
+
+    set(value)
+    begin
+      var index := IndexOfKey(key);
+      if index >= 0 then
+      begin
+        Values[index] := value;
+        return;
+      end;
+
+      EnsureCapacity(CountValue + 1);
+      Keys[CountValue] := key;
+      Values[CountValue] := value;
+      CountValue := CountValue + 1;
+    end;
+  end;
+
+  public method Add(key: TKey; value: TValue);
+  begin
+    Item[key] := value;
+  end;
+
+  public function ContainsKey(key: TKey): Boolean;
+  begin
+    return IndexOfKey(key) >= 0;
+  end;
+
+  public function TryGetValue(key: TKey; out value: TValue): Boolean;
+  begin
+    var index := IndexOfKey(key);
+    if index < 0 then
+    begin
+      return false;
+    end;
+
+    value := Values[index];
+    return true;
+  end;
+
+  public method Clear;
+  begin
+    Keys := new TKey[4];
+    Values := new TValue[4];
+    CountValue := 0;
   end;
 end;

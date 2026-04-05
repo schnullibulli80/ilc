@@ -194,7 +194,7 @@ public sealed class IlbSerializer
         var typesPayload = BuildTypeTableSection(typeList, stringTable, typeIds, fieldList, methodList);
         var fieldsPayload = BuildFieldTableSection(fieldList, typeIds, stringTable);
         var methodsPayload = BuildMethodTableSection(methodList, typeIds, stringTable, blobTable, codeInfo, exceptionInfo, methodIds);
-        var interfaceDispatchPayload = BuildInterfaceDispatchTableSection(types.ToArray(), methodList, typeIds, methodIds);
+        var interfaceDispatchPayload = BuildInterfaceDispatchTableSection(typeList, methodList, typeIds, methodIds);
         var codePayload = codeInfo.SectionBytes;
         var exceptionPayload = exceptionInfo.SectionBytes;
         var entryPayload = BuildEntryPointSection(entryPoint, methodIds);
@@ -276,28 +276,79 @@ public sealed class IlbSerializer
         var types = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
         foreach (var type in declaredTypes)
         {
-            types[type.Name] = type;
+            AddOrPreferRicherType(types, type);
         }
 
         foreach (var field in fields)
         {
-            types[field.Type.Name] = field.Type;
+            AddOrPreferRicherType(types, field.Type);
         }
 
         foreach (var method in methods)
         {
             if (method.ReturnType != TypeSymbol.Void)
             {
-                types[method.ReturnType.Name] = method.ReturnType;
+                AddOrPreferRicherType(types, method.ReturnType);
             }
 
             foreach (var parameter in method.Parameters)
             {
-                types[parameter.Type.Name] = parameter.Type;
+                AddOrPreferRicherType(types, parameter.Type);
             }
         }
 
         return types.Values.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray();
+    }
+
+    private static void AddOrPreferRicherType(IDictionary<string, TypeSymbol> types, TypeSymbol candidate)
+    {
+        if (!types.TryGetValue(candidate.Name, out var existing))
+        {
+            types[candidate.Name] = candidate;
+            return;
+        }
+
+        if (IsRicherType(candidate, existing))
+        {
+            types[candidate.Name] = candidate;
+        }
+    }
+
+    private static bool IsRicherType(TypeSymbol candidate, TypeSymbol existing)
+    {
+        if (candidate is NamedTypeSymbol && existing is not NamedTypeSymbol)
+        {
+            return true;
+        }
+
+        if (candidate is not NamedTypeSymbol candidateNamed || existing is not NamedTypeSymbol existingNamed)
+        {
+            return false;
+        }
+
+        if (candidateNamed.GenericDefinition is not null && existingNamed.GenericDefinition is null)
+        {
+            return true;
+        }
+
+        var candidateScore =
+            candidateNamed.Methods.Count +
+            candidateNamed.Fields.Count +
+            candidateNamed.Properties.Count +
+            candidateNamed.InterfaceTypes.Count +
+            (candidateNamed.BaseType is null ? 0 : 1) +
+            (candidateNamed.GenericParameters?.Count ?? 0) +
+            (candidateNamed.TypeArguments?.Count ?? 0);
+        var existingScore =
+            existingNamed.Methods.Count +
+            existingNamed.Fields.Count +
+            existingNamed.Properties.Count +
+            existingNamed.InterfaceTypes.Count +
+            (existingNamed.BaseType is null ? 0 : 1) +
+            (existingNamed.GenericParameters?.Count ?? 0) +
+            (existingNamed.TypeArguments?.Count ?? 0);
+
+        return candidateScore > existingScore;
     }
 
     private static byte[] BuildStringTableSection(IlbStringTableBuilder strings)
@@ -667,7 +718,7 @@ public sealed class IlbSerializer
         var rows = new List<IlbInterfaceDispatchRow>();
         var seenRows = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var concreteType in namedTypes.Where(type => !type.IsInterface))
+        foreach (var concreteType in namedTypes.Where(type => !type.IsInterface && IsRuntimeConcreteType(type)))
         {
             foreach (var interfaceType in GetImplementedInterfaces(concreteType, namedTypeLookup))
             {
@@ -695,6 +746,21 @@ public sealed class IlbSerializer
         }
 
         return rows;
+    }
+
+    private static bool IsRuntimeConcreteType(NamedTypeSymbol type)
+    {
+        if (SemanticFacts.IsOpenGenericDefinition(type))
+        {
+            return false;
+        }
+
+        if (type.TypeArguments is null || type.TypeArguments.Count == 0)
+        {
+            return true;
+        }
+
+        return type.TypeArguments.All(argument => argument is not TypeParameterSymbol);
     }
 
     private static IEnumerable<NamedTypeSymbol> GetImplementedInterfaces(
@@ -748,7 +814,7 @@ public sealed class IlbSerializer
         {
             var match = current.Methods.FirstOrDefault(candidate =>
                 !candidate.IsConstructor &&
-                AreMethodSignaturesEquivalent(interfaceMethod, candidate));
+                AreInterfaceImplementationCompatible(interfaceMethod, candidate, namedTypeLookup));
             if (match is not null)
             {
                 return match;
@@ -756,6 +822,34 @@ public sealed class IlbSerializer
         }
 
         return null;
+    }
+
+    private static bool AreInterfaceImplementationCompatible(
+        MethodSymbol contractMethod,
+        MethodSymbol implementationMethod,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypeLookup)
+    {
+        if (!StringComparer.Ordinal.Equals(contractMethod.Name, implementationMethod.Name) ||
+            contractMethod.Parameters.Count != implementationMethod.Parameters.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < contractMethod.Parameters.Count; index++)
+        {
+            if (contractMethod.Parameters[index].Type.Name != implementationMethod.Parameters[index].Type.Name ||
+                contractMethod.Parameters[index].PassingKind != implementationMethod.Parameters[index].PassingKind)
+            {
+                return false;
+            }
+        }
+
+        if (contractMethod.ReturnType.Name == implementationMethod.ReturnType.Name)
+        {
+            return true;
+        }
+
+        return IsCompatibleReferenceType(implementationMethod.ReturnType.Name, contractMethod.ReturnType.Name, namedTypeLookup);
     }
 
     private static bool AreMethodSignaturesEquivalent(MethodSymbol left, MethodSymbol right)
@@ -777,6 +871,43 @@ public sealed class IlbSerializer
         }
 
         return true;
+    }
+
+    private static bool IsCompatibleReferenceType(
+        string sourceTypeName,
+        string targetTypeName,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypeLookup)
+    {
+        if (sourceTypeName == targetTypeName || targetTypeName == "Object")
+        {
+            return true;
+        }
+
+        if (!namedTypeLookup.TryGetValue(sourceTypeName, out var sourceType) ||
+            !namedTypeLookup.TryGetValue(targetTypeName, out var targetType))
+        {
+            return false;
+        }
+
+        if (targetType.IsInterface)
+        {
+            if (sourceType.IsInterface)
+            {
+                return GetImplementedInterfaces(sourceType, namedTypeLookup).Any(candidate => candidate.Name == targetTypeName);
+            }
+
+            return GetImplementedInterfaces(sourceType, namedTypeLookup).Any(candidate => candidate.Name == targetTypeName);
+        }
+
+        for (NamedTypeSymbol? current = sourceType; current is not null; current = current.BaseType is not null && namedTypeLookup.TryGetValue(current.BaseType.Name, out var baseType) ? baseType : null)
+        {
+            if (current.Name == targetTypeName)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string GetMethodKey(MethodSymbol method) =>
@@ -1353,6 +1484,11 @@ public sealed class BytecodeEmitter
             return 0;
         }
 
+        if (AreContiguous(arguments))
+        {
+            return arguments[0].Index;
+        }
+
         var firstRegister = (ushort)nextScratchRegister;
         for (var index = 0; index < arguments.Count; index++)
         {
@@ -1379,6 +1515,16 @@ public sealed class BytecodeEmitter
             return EmitPackedArguments(instructions, arguments, ref nextScratchRegister);
         }
 
+        if (arguments.Count == 0)
+        {
+            return receiver.Index;
+        }
+
+        if (AreContiguousCallFrame(receiver, arguments))
+        {
+            return receiver.Index;
+        }
+
         var baseRegister = (ushort)nextScratchRegister;
         instructions.Add(new Instruction(
             OpCode.Mov,
@@ -1401,6 +1547,29 @@ public sealed class BytecodeEmitter
         nextScratchRegister += arguments.Count;
         return baseRegister;
     }
+
+    private static bool AreContiguous(IReadOnlyList<IrValue> values)
+    {
+        if (values.Count == 0)
+        {
+            return false;
+        }
+
+        for (var index = 1; index < values.Count; index++)
+        {
+            if (values[index].Index != values[index - 1].Index + 1)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AreContiguousCallFrame(IrValue receiver, IReadOnlyList<IrValue> arguments) =>
+        arguments.Count == 0
+            ? true
+            : receiver.Index + 1 == arguments[0].Index && AreContiguous(arguments);
 
     private static Instruction EmitBinaryInstruction(OpCode opCode, IrInstruction instruction)
     {

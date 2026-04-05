@@ -81,6 +81,7 @@ public sealed record IrStringInsertTarget(IrValue Source, IrValue Index, IrValue
 public sealed record IrStringRemoveTarget(IrValue Source, IrValue Index, IrValue Length);
 public sealed record IrStringTryParseTarget(IrValue Source, IrValue ParsedValue);
 public sealed record IrTypeCheckTarget(IrValue Value, string TypeName);
+public sealed record PreparedCallFrame(IReadOnlyList<IrValue> Arguments, IReadOnlyList<(ExpressionSyntax Target, IrValue Source)> CopyBacks, IrValue? Receiver = null);
 
 public sealed record IrInstruction(IrOpCode OpCode, IrValue? Destination, object? Operand);
 
@@ -587,11 +588,13 @@ public sealed class Lowerer
                 _knownFields,
                 _knownConstants,
                 _knownProperties,
-                currentMethod);
+                currentMethod,
+                _knownTypes);
             var itemType = collectionTypeForDeclaration == TypeSymbol.String
                 ? TypeSymbol.Char
                 : SemanticFacts.GetElementType(collectionTypeForDeclaration)
                     ?? SemanticFacts.GetSetElementType(collectionTypeForDeclaration)
+                    ?? SemanticFacts.ResolveEnumerablePattern(collectionTypeForDeclaration, _knownTypes)?.ElementType
                     ?? throw new InvalidOperationException($"Expression '{SemanticFacts.GetExpressionDisplayName(foreachStatement.Collection)}' is not enumerable.");
             itemRegister = new IrValue($"r{registers.Count}", itemType, (ushort)registers.Count);
             registers.Add(itemRegister);
@@ -607,7 +610,8 @@ public sealed class Lowerer
             _knownFields,
             _knownConstants,
             _knownProperties,
-            currentMethod);
+            currentMethod,
+            _knownTypes);
         var collectionRegister = AllocateTemp(collectionType, registers);
         LowerExpressionInto(foreachStatement.Collection, collectionRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
 
@@ -617,6 +621,32 @@ public sealed class Lowerer
                 foreachStatement,
                 itemRegister,
                 collectionRegister,
+                registerByName,
+                localTypes,
+                arrayShapesByName,
+                registers,
+                instructions,
+                returnRegister,
+                exceptionHandlers,
+                inExceptionHandler,
+                currentMethod);
+
+            if (createdItemRegister)
+            {
+                registerByName.Remove(foreachStatement.Identifier.Text);
+                localTypes.Remove(foreachStatement.Identifier.Text);
+            }
+
+            return;
+        }
+
+        if (SemanticFacts.ResolveEnumerablePattern(collectionType, _knownTypes) is { } enumerablePattern)
+        {
+            LowerForeachEnumerableStatement(
+                foreachStatement,
+                itemRegister,
+                collectionRegister,
+                enumerablePattern,
                 registerByName,
                 localTypes,
                 arrayShapesByName,
@@ -733,6 +763,74 @@ public sealed class Lowerer
         instructions.Add(new IrInstruction(IrOpCode.Add, indexRegister, (indexRegister, skipStepRegister)));
         instructions.Add(new IrInstruction(IrOpCode.Branch, null, loopLabel));
 
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
+    }
+
+    private void LowerForeachEnumerableStatement(
+        ForeachStatementSyntax foreachStatement,
+        IrValue itemRegister,
+        IrValue collectionRegister,
+        EnumerablePatternResolution enumerablePattern,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, TypeSymbol> localTypes,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        IrValue? returnRegister,
+        List<IrExceptionHandler> exceptionHandlers,
+        bool inExceptionHandler,
+        MethodSymbol? currentMethod)
+    {
+        var enumeratorRegister = AllocateTemp(enumerablePattern.EnumeratorType, registers);
+        instructions.Add(new IrInstruction(
+            enumerablePattern.GetEnumeratorMethod.IsVirtual || collectionRegister.Type.Name.StartsWith("IEnumerable", StringComparison.Ordinal)
+                ? IrOpCode.CallVirtual
+                : IrOpCode.Call,
+            enumeratorRegister,
+            new IrCallTarget(
+                enumerablePattern.GetEnumeratorMethod,
+                $"{enumerablePattern.GetEnumeratorMethod.DeclaringTypeName}.{enumerablePattern.GetEnumeratorMethod.Name}",
+                [],
+                collectionRegister,
+                enumerablePattern.GetEnumeratorMethod.IsVirtual || collectionRegister.Type.Name.StartsWith("IEnumerable", StringComparison.Ordinal))));
+
+        var loopLabel = AllocateLabel("foreach_enumerable");
+        var endLabel = AllocateLabel("endforeach_enumerable");
+        var continueLabel = AllocateLabel("foreach_enumerable_continue");
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, loopLabel));
+
+        var conditionRegister = AllocateTemp(TypeSymbol.Boolean, registers);
+        instructions.Add(new IrInstruction(
+            enumerablePattern.MoveNextMethod.IsVirtual || enumeratorRegister.Type.Name.StartsWith("IEnumerator", StringComparison.Ordinal)
+                ? IrOpCode.CallVirtual
+                : IrOpCode.Call,
+            conditionRegister,
+            new IrCallTarget(
+                enumerablePattern.MoveNextMethod,
+                $"{enumerablePattern.MoveNextMethod.DeclaringTypeName}.{enumerablePattern.MoveNextMethod.Name}",
+                [],
+                enumeratorRegister,
+                enumerablePattern.MoveNextMethod.IsVirtual || enumeratorRegister.Type.Name.StartsWith("IEnumerator", StringComparison.Ordinal))));
+        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, conditionRegister, endLabel));
+
+        instructions.Add(new IrInstruction(
+            enumerablePattern.CurrentGetterMethod.IsVirtual || enumeratorRegister.Type.Name.StartsWith("IEnumerator", StringComparison.Ordinal)
+                ? IrOpCode.CallVirtual
+                : IrOpCode.Call,
+            itemRegister,
+            new IrCallTarget(
+                enumerablePattern.CurrentGetterMethod,
+                $"{enumerablePattern.CurrentGetterMethod.DeclaringTypeName}.{enumerablePattern.CurrentGetterMethod.Name}",
+                [],
+                enumeratorRegister,
+                enumerablePattern.CurrentGetterMethod.IsVirtual || enumeratorRegister.Type.Name.StartsWith("IEnumerator", StringComparison.Ordinal))));
+
+        _loopLabels.Push((endLabel, continueLabel));
+        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        _loopLabels.Pop();
+
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
+        instructions.Add(new IrInstruction(IrOpCode.Branch, null, loopLabel));
         instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
     }
 
@@ -1391,6 +1489,33 @@ public sealed class Lowerer
         LowerExpressionInto(expression, returnRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
     }
 
+    private void ValidateConstructedObjectType(
+        NewExpressionSyntax newExpression,
+        TypeSymbol constructedObjectType,
+        MethodSymbol? currentMethod)
+    {
+        if (currentMethod?.DeclaringTypeName is null)
+        {
+            return;
+        }
+
+        if (SemanticFacts.ResolveTypeReference(currentMethod.DeclaringTypeName, _knownTypes) is not NamedTypeSymbol currentDeclaringType ||
+            currentDeclaringType.GenericDefinition?.GenericParameters is not { Count: > 0 } genericParameters ||
+            currentDeclaringType.TypeArguments is not { Count: > 0 })
+        {
+            return;
+        }
+
+        if (!genericParameters.Any(parameter =>
+                constructedObjectType.Name.Contains(parameter.Name, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Generic new-expression was not specialized: syntax='{newExpression.TypeName.ToDisplayString()}', inferred='{constructedObjectType.Name}', method='{currentMethod.Name}', declaringType='{currentMethod.DeclaringTypeName}'.");
+    }
+
     private void LowerExpressionInto(
         ExpressionSyntax expression,
         IrValue? destination,
@@ -1427,17 +1552,40 @@ public sealed class Lowerer
                         new IrArrayShape(GetShapeRegisters(newArrayExpression.LengthExpressions, arrayShapesByName, registerByName, registers, instructions, currentMethod)))));
                 return;
             case NewExpressionSyntax newExpression:
-                instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, newExpression.TypeName.ToDisplayString()));
+                var constructedObjectType = SemanticFacts.InferExpressionType(
+                    newExpression,
+                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                    _knownMethods,
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod,
+                    _knownTypes);
+                ValidateConstructedObjectType(newExpression, constructedObjectType, currentMethod);
+                instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, constructedObjectType.Name));
                 var constructorArgs = new List<IrValue>();
                 foreach (var argument in newExpression.Arguments)
                 {
-                    var argumentType = SemanticFacts.InferExpressionType(argument.Expression, new Dictionary<string, TypeSymbol>(), _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+                    var argumentType = SemanticFacts.InferExpressionType(
+                        argument.Expression,
+                        registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                        _knownMethods,
+                        _knownFields,
+                        _knownConstants,
+                        _knownProperties,
+                        currentMethod,
+                        _knownTypes);
                     var temp = AllocateTemp(argumentType, registers);
                     constructorArgs.Add(temp);
                     LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 }
 
-                var constructor = SemanticFacts.ResolveConstructor(newExpression.TypeName, constructorArgs.Count, _knownTypes, _knownMethods);
+                var constructor = constructedObjectType is NamedTypeSymbol namedConstructedType
+                    ? namedConstructedType.Methods.FirstOrDefault(method =>
+                        method.IsConstructor &&
+                        method.DeclaringTypeName == constructedObjectType.Name &&
+                        method.Parameters.Count == constructorArgs.Count)
+                    : SemanticFacts.ResolveConstructor(newExpression.TypeName, constructorArgs.Count, _knownTypes, _knownMethods);
                 if (constructor is not null)
                 {
                     instructions.Add(new IrInstruction(
@@ -1621,8 +1769,19 @@ public sealed class Lowerer
                     return;
                 }
 
-                var argumentTemps = LowerCallArguments(
+                if (TryLowerConvertTryToIntegerCall(call, invocation, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+                {
+                    return;
+                }
+
+                if (TryLowerDictionaryTryGetValueCall(call, boundCall, invocation, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+                {
+                    return;
+                }
+
+                var preparedCallFrame = PrepareCallFrame(
                     call,
+                    boundCall,
                     invocation.Method,
                     registerByName,
                     arrayShapesByName,
@@ -1630,7 +1789,7 @@ public sealed class Lowerer
                     instructions,
                     currentMethod);
 
-                if (TryLowerStringIntrinsicCall(invocation, call.Target, argumentTemps, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+                if (TryLowerStringIntrinsicCall(invocation, call.Target, preparedCallFrame.Arguments, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
                 {
                     return;
                 }
@@ -1641,14 +1800,111 @@ public sealed class Lowerer
                     new IrCallTarget(
                         boundCall.Method,
                         boundCall.DisplayName,
-                        argumentTemps,
-                        ResolveBoundCallReceiver(boundCall, call.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                        preparedCallFrame.Arguments,
+                        preparedCallFrame.Receiver ?? ResolveBoundCallReceiver(boundCall, call.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod),
                         boundCall.Kind == BoundCallKind.Virtual)));
+
+                foreach (var (target, source) in preparedCallFrame.CopyBacks)
+                {
+                    StoreValueIntoTarget(target, source, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                }
                 return;
             default:
                 throw new InvalidOperationException(
                     $"Cannot lower expression kind '{expression.Kind}' display='{GetExpressionDisplayName(expression)}' currentMethod='{(currentMethod?.DeclaringTypeName is null ? currentMethod?.Name : $"{currentMethod.DeclaringTypeName}.{currentMethod.Name}")}'.");
         }
+    }
+
+    private PreparedCallFrame PrepareCallFrame(
+        CallExpressionSyntax call,
+        BoundCall boundCall,
+        MethodSymbol method,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var hasByRef = method.Parameters.Any(parameter =>
+            parameter.PassingKind == ParameterPassingKind.Out || parameter.PassingKind == ParameterPassingKind.Ref);
+        if (!hasByRef)
+        {
+            return new PreparedCallFrame(
+                LowerCallArguments(call, method, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+                []);
+        }
+
+        var localTypes = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        var hasParams = method.Parameters.Count > 0 && method.Parameters[^1].PassingKind == ParameterPassingKind.Params;
+        var fixedParameterCount = hasParams ? method.Parameters.Count - 1 : method.Parameters.Count;
+        var evaluatedArguments = new List<IrValue>();
+        var copyBacks = new List<(ExpressionSyntax Target, IrValue Source)>();
+
+        for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
+        {
+            if (hasParams && argumentIndex >= fixedParameterCount)
+            {
+                break;
+            }
+
+            var argument = call.Arguments[argumentIndex];
+            var parameter = method.Parameters[argumentIndex];
+            var temp = AllocateTemp(parameter.Type, registers);
+            evaluatedArguments.Add(temp);
+
+            switch (parameter.PassingKind)
+            {
+                case ParameterPassingKind.Out:
+                    instructions.Add(new IrInstruction(IrOpCode.LoadConstant, temp, 0));
+                    break;
+                case ParameterPassingKind.Ref:
+                    LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                    break;
+                default:
+                    LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                    break;
+            }
+        }
+
+        if (hasParams)
+        {
+            evaluatedArguments.Add(LowerParamsArgumentArray(
+                call,
+                method.Parameters[^1],
+                fixedParameterCount,
+                registerByName,
+                arrayShapesByName,
+                registers,
+                instructions,
+                currentMethod));
+        }
+
+        IrValue? packedReceiver = null;
+        if (!method.IsStatic &&
+            ResolveBoundCallReceiver(boundCall, call.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } receiver)
+        {
+            packedReceiver = AllocateTemp(receiver.Type, registers);
+            instructions.Add(new IrInstruction(IrOpCode.Copy, packedReceiver, receiver));
+        }
+
+        var packedArguments = new List<IrValue>(evaluatedArguments.Count);
+        for (var argumentIndex = 0; argumentIndex < evaluatedArguments.Count; argumentIndex++)
+        {
+            var packedArgument = AllocateTemp(evaluatedArguments[argumentIndex].Type, registers);
+            instructions.Add(new IrInstruction(IrOpCode.Copy, packedArgument, evaluatedArguments[argumentIndex]));
+            packedArguments.Add(packedArgument);
+
+            if (argumentIndex < fixedParameterCount)
+            {
+                var parameter = method.Parameters[argumentIndex];
+                if (parameter.PassingKind == ParameterPassingKind.Out || parameter.PassingKind == ParameterPassingKind.Ref)
+                {
+                    copyBacks.Add((call.Arguments[argumentIndex].Expression, packedArgument));
+                }
+            }
+        }
+
+        return new PreparedCallFrame(packedArguments, copyBacks, packedReceiver);
     }
 
     private List<IrValue> LowerCallArguments(
@@ -1673,6 +1929,14 @@ public sealed class Lowerer
             }
 
             var argument = call.Arguments[argumentIndex];
+            var parameter = argumentIndex < method.Parameters.Count ? method.Parameters[argumentIndex] : null;
+            if (parameter is not null &&
+                (parameter.PassingKind == ParameterPassingKind.Out || parameter.PassingKind == ParameterPassingKind.Ref))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot lower by-reference call '{SemanticFacts.GetExpressionDisplayName(call.Target)}' without a dedicated intrinsic or runtime byref support.");
+            }
+
             var argumentType = SemanticFacts.InferExpressionType(argument.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
             var temp = AllocateTemp(argumentType, registers);
             argumentTemps.Add(temp);
@@ -1773,7 +2037,7 @@ public sealed class Lowerer
     {
         if (declarator.TypeName is null)
         {
-            return SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            return SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
         }
 
         return SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
@@ -1787,7 +2051,7 @@ public sealed class Lowerer
     {
         if (declarator.TypeName is null)
         {
-            return SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            return SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
         }
 
         return SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
@@ -2758,6 +3022,131 @@ public sealed class Lowerer
         StoreValueIntoTarget(call.Arguments[1].Expression, parsedRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
         return true;
     }
+
+    private bool TryLowerDictionaryTryGetValueCall(
+        CallExpressionSyntax call,
+        BoundCall boundCall,
+        InvocationResolution invocation,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (invocation.Method.Name != "TryGetValue" ||
+            invocation.Method.IsStatic ||
+            invocation.Method.Parameters.Count != 2 ||
+            invocation.Method.Parameters[1].PassingKind != ParameterPassingKind.Out ||
+            call.Arguments.Count != 2 ||
+            !IsDictionaryType(invocation.ReceiverType ?? boundCall.Receiver?.Type))
+        {
+            return false;
+        }
+
+        var receiver = ResolveBoundCallReceiver(boundCall, call.Target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+            ?? throw new InvalidOperationException($"Cannot lower dictionary receiver for '{SemanticFacts.GetExpressionDisplayName(call.Target)}'.");
+        var receiverType = invocation.ReceiverType ?? boundCall.Receiver?.Type
+            ?? throw new InvalidOperationException($"Cannot resolve dictionary receiver type for '{SemanticFacts.GetExpressionDisplayName(call.Target)}'.");
+        var keyType = invocation.Method.Parameters[0].Type;
+        var valueType = invocation.Method.Parameters[1].Type;
+
+        var keyRegister = AllocateTemp(keyType, registers);
+        LowerExpressionInto(call.Arguments[0].Expression, keyRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        var indexOfKeyMethod = _knownMethods.FirstOrDefault(method =>
+            method.DeclaringTypeName == receiverType.Name &&
+            method.Name == "IndexOfKey" &&
+            !method.IsStatic &&
+            method.Parameters.Count == 1 &&
+            method.Parameters[0].Type.Name == keyType.Name);
+        if (indexOfKeyMethod is null)
+        {
+            throw new InvalidOperationException($"Cannot lower dictionary TryGetValue without '{receiverType.Name}.IndexOfKey'.");
+        }
+
+        var valuesField = _knownFields.FirstOrDefault(field =>
+            field.DeclaringTypeName == receiverType.Name &&
+            field.Name == "Values" &&
+            !field.IsStatic);
+        if (valuesField is null)
+        {
+            throw new InvalidOperationException($"Cannot lower dictionary TryGetValue without '{receiverType.Name}.Values'.");
+        }
+
+        var indexRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(
+            IrOpCode.Call,
+            indexRegister,
+            new IrCallTarget(indexOfKeyMethod, $"{receiverType.Name}.{indexOfKeyMethod.Name}", [keyRegister], receiver)));
+
+        var zeroRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, zeroRegister, 0));
+
+        var missingRegister = AllocateTemp(TypeSymbol.Boolean, registers);
+        instructions.Add(new IrInstruction(IrOpCode.CompareLess, missingRegister, (indexRegister, zeroRegister)));
+
+        var hitLabel = AllocateLabel("dict_try_get_hit");
+        var endLabel = AllocateLabel("dict_try_get_end");
+        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, missingRegister, hitLabel));
+
+        var defaultValueRegister = AllocateTemp(valueType, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, defaultValueRegister, 0));
+        StoreValueIntoTarget(call.Arguments[1].Expression, defaultValueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 0));
+        instructions.Add(new IrInstruction(IrOpCode.Branch, null, endLabel));
+
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, hitLabel));
+        var valuesRegister = AllocateTemp(valuesField.Type, registers);
+        instructions.Add(new IrInstruction(
+            IrOpCode.LoadField,
+            valuesRegister,
+            new IrFieldTarget(valuesField, $"{receiverType.Name}.{valuesField.Name}", receiver)));
+
+        var valueRegister = AllocateTemp(valueType, registers);
+        instructions.Add(new IrInstruction(
+            IrOpCode.LoadElement,
+            valueRegister,
+            new IrArrayTarget(valuesRegister, indexRegister)));
+        StoreValueIntoTarget(call.Arguments[1].Expression, valueRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, destination, 1));
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
+        return true;
+    }
+
+    private bool TryLowerConvertTryToIntegerCall(
+        CallExpressionSyntax call,
+        InvocationResolution invocation,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (invocation.Method.Name != "TryToInteger" ||
+            invocation.Method.DeclaringTypeName != "Convert" ||
+            !invocation.Method.IsStatic ||
+            invocation.Method.Parameters.Count != 2 ||
+            invocation.Method.Parameters[1].PassingKind != ParameterPassingKind.Out ||
+            call.Arguments.Count != 2)
+        {
+            return false;
+        }
+
+        var sourceRegister = AllocateTemp(TypeSymbol.String, registers);
+        LowerExpressionInto(call.Arguments[0].Expression, sourceRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        var parsedRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.TryParseStringToInteger, destination, new IrStringTryParseTarget(sourceRegister, parsedRegister)));
+        StoreValueIntoTarget(call.Arguments[1].Expression, parsedRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        return true;
+    }
+
+    private static bool IsDictionaryType(TypeSymbol? type) =>
+        type is NamedTypeSymbol namedType
+            ? namedType.Name == "Dictionary" || namedType.GenericDefinition?.Name == "Dictionary"
+            : type?.Name == "Dictionary" || (type?.Name?.StartsWith("Dictionary<", StringComparison.Ordinal) ?? false);
 
     private void StoreValueIntoTarget(
         ExpressionSyntax target,

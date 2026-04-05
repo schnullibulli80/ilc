@@ -476,6 +476,21 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         return *field_lookup[field_id];
     };
+    const auto is_instance_of_type = [&require_type](std::uint32_t actual_type_id, std::uint32_t expected_type_id) -> bool
+    {
+        auto current_type_id = actual_type_id;
+        while (current_type_id != 0)
+        {
+            if (current_type_id == expected_type_id)
+            {
+                return true;
+            }
+
+            current_type_id = require_type(current_type_id).base_type_id;
+        }
+
+        return false;
+    };
     const auto resolve_virtual_callee = [&](std::uint32_t callee_id, std::int32_t receiver_handle, std::uint32_t ip) -> std::uint32_t
     {
         const auto& declared_callee = find_function(callee_id);
@@ -512,13 +527,50 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             }
         }
 
+        std::string receiver_rows;
+        for (const auto& entry : module.interface_dispatch_entries)
+        {
+            if (entry.owner_type_id != object.type_id)
+            {
+                continue;
+            }
+
+            if (!receiver_rows.empty())
+            {
+                receiver_rows += " | ";
+            }
+
+            const auto interface_method_name = entry.interface_method_id > 0 &&
+                entry.interface_method_id <= module.functions.size()
+                    ? module.functions[static_cast<std::size_t>(entry.interface_method_id - 1)].name
+                    : std::to_string(entry.interface_method_id);
+            const auto implementation_method_name = entry.implementation_method_id > 0 &&
+                entry.implementation_method_id <= module.functions.size()
+                    ? module.functions[static_cast<std::size_t>(entry.implementation_method_id - 1)].name
+                    : std::to_string(entry.implementation_method_id);
+
+            receiver_rows +=
+                "iface=" + require_type(entry.interface_type_id).name +
+                " method=" + interface_method_name +
+                " impl=" + implementation_method_name;
+        }
+
         throw std::runtime_error(
             "interface dispatch target is not implemented for receiver type at ip=" +
             std::to_string(ip) +
             " function=" +
             std::to_string(callee_id) +
+            " functionName=" +
+            declared_callee.name +
+            " ownerType=" +
+            owner_type.name +
             " receiverType=" +
-            std::to_string(object.type_id));
+            std::to_string(object.type_id) +
+            " receiverTypeName=" +
+            require_type(object.type_id).name +
+            " receiverDispatchRows=[" +
+            receiver_rows +
+            "]");
     };
     const auto require_index = [](std::int32_t index, std::size_t length) -> std::size_t
     {
@@ -777,7 +829,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             auto& object = require_object(arguments[0]);
             const auto owner_type_id = function_leaf_fastpath_owner_type_id[function.function_id];
             const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[function.function_id]);
-            if (object.type_id != owner_type_id || instance_slot >= object.fields.size())
+            if (!is_instance_of_type(object.type_id, owner_type_id) || instance_slot >= object.fields.size())
             {
                 throw std::runtime_error("specialized leaf fastpath receiver mismatch");
             }
@@ -1027,9 +1079,25 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                     }
 
                     auto& object = require_object(registers[instruction.left]);
-                    if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
+                    if (!is_instance_of_type(object.type_id, field.owner_type_id) || field.instance_slot >= object.fields.size())
                     {
-                        throw std::runtime_error("field load targets the wrong receiver type");
+                        throw std::runtime_error(
+                            "field load targets the wrong receiver type in function '" +
+                            function.name +
+                            "' at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                            std::to_string(instruction.immediate) +
+                            " receiver=" +
+                            std::to_string(registers[instruction.left]) +
+                            " actual_type=" +
+                            std::to_string(object.type_id) +
+                            " expected_type=" +
+                            std::to_string(field.owner_type_id) +
+                            " field_slot=" +
+                            std::to_string(field.instance_slot) +
+                            " field_count=" +
+                            std::to_string(object.fields.size()));
                     }
 
                     registers[instruction.destination] = object.fields[field.instance_slot];
@@ -1066,9 +1134,25 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                     }
 
                     auto& object = require_object(registers[instruction.destination]);
-                    if (object.type_id != field.owner_type_id || field.instance_slot >= object.fields.size())
+                    if (!is_instance_of_type(object.type_id, field.owner_type_id) || field.instance_slot >= object.fields.size())
                     {
-                        throw std::runtime_error("field store targets the wrong receiver type");
+                        throw std::runtime_error(
+                            "field store targets the wrong receiver type in function '" +
+                            function.name +
+                            "' at ip=" +
+                            std::to_string(ip) +
+                            " field=" +
+                            std::to_string(instruction.immediate) +
+                            " receiver=" +
+                            std::to_string(registers[instruction.destination]) +
+                            " actual_type=" +
+                            std::to_string(object.type_id) +
+                            " expected_type=" +
+                            std::to_string(field.owner_type_id) +
+                            " field_slot=" +
+                            std::to_string(field.instance_slot) +
+                            " field_count=" +
+                            std::to_string(object.fields.size()));
                     }
 
                     object.fields[field.instance_slot] = registers[instruction.left];
@@ -1157,8 +1241,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
     std::vector<std::vector<std::int32_t>> register_pool;
 
-    std::function<std::int32_t(const Function&, const std::int32_t*, std::size_t, std::size_t)> execute_function;
-    execute_function = [&](const Function& function, const std::int32_t* arguments, std::size_t argument_count, std::size_t call_depth) -> std::int32_t
+    std::function<std::int32_t(const Function&, std::int32_t*, std::size_t, std::size_t)> execute_function;
+    execute_function = [&](const Function& function, std::int32_t* arguments, std::size_t argument_count, std::size_t call_depth) -> std::int32_t
     {
         if (profile != nullptr)
         {
@@ -1403,6 +1487,19 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         {
             registers[index] = arguments[index];
         }
+
+        auto copy_back_arguments = [&]()
+        {
+            if (arguments == nullptr)
+            {
+                return;
+            }
+
+            for (std::size_t index = 0; index < argument_count; ++index)
+            {
+                arguments[index] = register_values[index];
+            }
+        };
 
         std::size_t ip = 0;
         while (ip < function.instructions.size())
@@ -1914,7 +2011,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
                             auto& object = objects[object_id];
                             const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[callee_id]);
-                            if (object.type_id != function_leaf_fastpath_owner_type_id[callee_id] ||
+                            if (!is_instance_of_type(object.type_id, function_leaf_fastpath_owner_type_id[callee_id]) ||
                                 instance_slot >= object.fields.size())
                             {
                                 throw std::runtime_error("specialized leaf fastpath receiver mismatch");
@@ -2015,7 +2112,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
                             auto& object = objects[object_id];
                             const auto instance_slot = static_cast<std::size_t>(function_leaf_fastpath_instance_slot[callee_id]);
-                            if (object.type_id != function_leaf_fastpath_owner_type_id[callee_id] ||
+                            if (!is_instance_of_type(object.type_id, function_leaf_fastpath_owner_type_id[callee_id]) ||
                                 instance_slot >= object.fields.size())
                             {
                                 throw std::runtime_error("specialized leaf fastpath receiver mismatch");
@@ -2101,8 +2198,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                                 " field=" +
                                 std::to_string(instruction.immediate));
                     }
-                    if (!is_object_handle(register_values[instruction.left]))
-                    {
+                        if (!is_object_handle(register_values[instruction.left]))
+                        {
                         throw std::runtime_error(
                             "instruction expected an object reference during ld_field at ip=" +
                             std::to_string(ip) +
@@ -2113,9 +2210,19 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                     }
 
                     auto& object = require_object(register_values[instruction.left]);
-                        if (object.type_id != field.owner_type_id)
+                        if (!is_instance_of_type(object.type_id, field.owner_type_id))
                         {
-                            throw std::runtime_error("field load targets the wrong receiver type");
+                            throw std::runtime_error(
+                                "field load targets the wrong receiver type at ip=" +
+                                std::to_string(ip) +
+                                " field=" +
+                                std::to_string(instruction.immediate) +
+                                " receiver=" +
+                                std::to_string(register_values[instruction.left]) +
+                                " actual_type=" +
+                                std::to_string(object.type_id) +
+                                " expected_type=" +
+                                std::to_string(field.owner_type_id));
                         }
 
                         if (field.instance_slot >= object.fields.size())
@@ -2155,9 +2262,19 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                     }
 
                     auto& object = require_object(register_values[instruction.destination]);
-                        if (object.type_id != field.owner_type_id)
+                        if (!is_instance_of_type(object.type_id, field.owner_type_id))
                         {
-                            throw std::runtime_error("field store targets the wrong receiver type");
+                            throw std::runtime_error(
+                                "field store targets the wrong receiver type at ip=" +
+                                std::to_string(ip) +
+                                " field=" +
+                                std::to_string(instruction.immediate) +
+                                " receiver=" +
+                                std::to_string(register_values[instruction.destination]) +
+                                " actual_type=" +
+                                std::to_string(object.type_id) +
+                                " expected_type=" +
+                                std::to_string(field.owner_type_id));
                         }
 
                         if (field.instance_slot >= object.fields.size())
@@ -2403,6 +2520,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
                         break;
                     case OpCode::ret:
+                        copy_back_arguments();
                         if (!function.returns_value)
                         {
                             return 0;
@@ -2444,6 +2562,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             }
         }
 
+        copy_back_arguments();
         return 0;
     };
 

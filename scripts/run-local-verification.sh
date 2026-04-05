@@ -7,6 +7,7 @@ tmp_dir="$repo_root/tmp"
 bootstrap_fixture="$repo_root/tests/fixtures/compiler-bootstrap.ilc"
 bootstrap_runtime_source="$tmp_dir/compiler-bootstrap-runtime.ilc"
 bootstrap_runtime_ilb="$tmp_dir/compiler-bootstrap-runtime.ilb"
+system_fixture="$repo_root/libs/shipped/system.ilc"
 diagnostics_fixture="$repo_root/libs/shipped/diagnostics.ilc"
 text_fixture="$repo_root/libs/shipped/text.ilc"
 collections_fixture="$repo_root/libs/shipped/collections.ilc"
@@ -113,7 +114,7 @@ run_step \
 run_step \
     "Compile runtime smoke" \
     "$tmp_dir/compiler-runtime-cli-local.log" \
-    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" "$bootstrap_runtime_source" "$repo_root/libs/shipped/system.ilc" "$diagnostics_fixture" "$text_fixture" "$collections_fixture" "$demo_core_fixture"
+    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" "$bootstrap_runtime_source" "$system_fixture" "$diagnostics_fixture" "$text_fixture" "$collections_fixture" "$demo_core_fixture"
 
 run_step \
     "Build runtime" \

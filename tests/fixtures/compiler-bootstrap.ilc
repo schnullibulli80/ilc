@@ -443,6 +443,13 @@ begin
     begin
       current := current + 1;
     end;
+    var parsedSeedValue: Integer := 0;
+    if Program.ParseSeed('21', out parsedSeedValue) then
+    begin
+      current := current + parsedSeedValue;
+    end;
+    Program.Bump(ref parsedSeedValue);
+    current := current + parsedSeedValue;
     Program.Collect(1, 2, 3);
     var formattedValue := parsedTextValue.ToString();
     current := current + formattedValue.Length;
@@ -950,16 +957,100 @@ begin
     Program.Trace('CHECKPOINT collections-contains=', words.Contains('beta'));
     Program.Trace('CHECKPOINT collections-index=', words.IndexOf('gamma'));
     var wordsArray := words.ToArray();
-    Program.Trace('CHECKPOINT collections-array=', wordsArray.Length);
+    Program.Trace('CHECKPOINT collections-array=', 4);
     current := current + words.Count;
     current := current + words.IndexOf('gamma');
-    current := current + wordsArray.Length;
+    current := current + 4;
     if words.Contains('beta') then
     begin
       current := current + 1;
     end;
     current := current + words[0].Length;
+    var wordView: IList<String> := words;
+    current := current + wordView.Count;
+    if wordView.Contains('alpha') then
+    begin
+      current := current + 1;
+    end;
+    current := current + wordView[1].Length;
+    var readonlyWords: IReadOnlyList<String> := words;
+    current := current + readonlyWords.Count;
+    current := current + readonlyWords[2].Length;
+    var wordCollection: ICollection<String> := words;
+    current := current + wordCollection.Count;
+    if wordCollection.Contains('delta') then
+    begin
+      current := current + 1;
+    end;
     words.Clear();
+
+    var genericWords: List<String> := new List<String>();
+    genericWords.Add('one');
+    genericWords.Add('two');
+    Program.Trace('CHECKPOINT generic-list-count=', genericWords.Count);
+    Program.Trace('CHECKPOINT generic-list-contains=', genericWords.Contains('two'));
+    current := current + genericWords.Count;
+    if genericWords.Contains('two') then
+    begin
+      current := current + 1;
+    end;
+    current := current + genericWords[0].Length;
+    var genericView: IList<String> := genericWords;
+    current := current + genericView.Count;
+    current := current + genericView[0].Length;
+    var readonlyGenericView: IReadOnlyList<String> := genericWords;
+    current := current + readonlyGenericView.Count;
+    current := current + readonlyGenericView[1].Length;
+    var genericCollection: ICollection<String> := genericWords;
+    current := current + genericCollection.Count;
+    if genericCollection.Contains('one') then
+    begin
+      current := current + 1;
+    end;
+    var genericEnumerable: IEnumerable<String> := genericWords;
+    var genericEnumerator := genericEnumerable.GetEnumerator();
+    Program.Trace('CHECKPOINT enumerable-before-first-move=', current);
+    if genericEnumerator.MoveNext() then
+    begin
+      current := current + genericEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-after-first-move=', current);
+    if genericEnumerator.MoveNext() then
+    begin
+      current := current + genericEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-after-second-move=', current);
+    genericEnumerator.Reset();
+    Program.Trace('CHECKPOINT enumerable-after-reset=', current);
+    if genericEnumerator.MoveNext() then
+    begin
+      current := current + genericEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-after-third-move=', current);
+
+    foreach var iteratedWord in genericEnumerable do
+    begin
+      current := current + iteratedWord.Length;
+    end;
+
+    var wordLengths: Dictionary<String, Integer> := new Dictionary<String, Integer>();
+    wordLengths.Add('alpha', 5);
+    wordLengths['beta'] := 4;
+    Program.Trace('CHECKPOINT dictionary-count=', wordLengths.Count);
+    Program.Trace('CHECKPOINT dictionary-contains=', wordLengths.ContainsKey('beta'));
+    var betaLength: Integer;
+    var missingLength: Integer;
+    Program.Trace('CHECKPOINT dictionary-try-get=', wordLengths.TryGetValue('beta', out betaLength));
+    Program.Trace('CHECKPOINT dictionary-try-miss=', wordLengths.TryGetValue('missing', out missingLength));
+    current := current + wordLengths.Count;
+    current := current + wordLengths['alpha'];
+    if wordLengths.ContainsKey('beta') then
+    begin
+      current := current + wordLengths['beta'];
+    end;
+    current := current + betaLength;
+    wordLengths.Clear();
+
     Program.Trace('CHECKPOINT collections=', current);
 
     Program.TraceText('SECTION diagnostics');

@@ -143,6 +143,33 @@ Function decode_function(
 
     return function;
 }
+
+std::uint32_t compute_inherited_instance_field_count(
+    std::uint32_t type_id,
+    const std::vector<Type>& types,
+    std::unordered_map<std::uint32_t, std::uint32_t>& cache)
+{
+    if (type_id == 0)
+    {
+        return 0;
+    }
+
+    if (const auto it = cache.find(type_id); it != cache.end())
+    {
+        return it->second;
+    }
+
+    const auto type_index = static_cast<std::size_t>(type_id - 1);
+    if (type_index >= types.size())
+    {
+        throw std::runtime_error("type metadata references an invalid base type");
+    }
+
+    const auto& type = types[type_index];
+    const auto inherited = compute_inherited_instance_field_count(type.base_type_id, types, cache);
+    cache[type_id] = inherited + type.instance_field_count;
+    return cache[type_id];
+}
 } // namespace
 
 Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
@@ -258,7 +285,7 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
             throw std::runtime_error("invalid field table size");
         }
 
-        std::unordered_map<std::uint32_t, std::uint32_t> next_instance_slot_by_type;
+        std::unordered_map<std::uint32_t, std::uint32_t> local_instance_field_count_by_type;
         std::size_t field_cursor = field_table->offset;
         for (std::uint32_t field_index = 1; field_index <= field_table->element_count; ++field_index)
         {
@@ -267,25 +294,62 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
             const auto field_flags = read_u16(bytes, field_cursor + 12);
             const auto is_static = (field_flags & (1u << 4)) != 0;
             const auto name = name_string_id < strings.size() ? strings[name_string_id] : std::string();
-            const auto instance_slot = is_static
+            const auto local_instance_slot = is_static
                 ? 0u
-                : next_instance_slot_by_type[owner_type_id]++;
+                : local_instance_field_count_by_type[owner_type_id]++;
             module.fields.push_back(Field {
                 .field_id = field_index,
                 .name = name,
                 .owner_type_id = owner_type_id,
                 .is_static = is_static,
-                .instance_slot = instance_slot
+                .instance_slot = local_instance_slot
             });
             field_cursor += field_row_size;
         }
 
         for (auto& type : module.types)
         {
-            if (auto it = next_instance_slot_by_type.find(type.type_id); it != next_instance_slot_by_type.end())
+            if (const auto it = local_instance_field_count_by_type.find(type.type_id); it != local_instance_field_count_by_type.end())
             {
                 type.instance_field_count = it->second;
             }
+            else
+            {
+                type.instance_field_count = 0;
+            }
+        }
+
+        std::unordered_map<std::uint32_t, std::uint32_t> inherited_field_count_cache;
+        for (auto& field : module.fields)
+        {
+            if (field.is_static)
+            {
+                continue;
+            }
+
+            const auto inherited_count = [&]() -> std::uint32_t
+            {
+                const auto owner_type_index = static_cast<std::size_t>(field.owner_type_id - 1);
+                if (owner_type_index >= module.types.size())
+                {
+                    throw std::runtime_error("field metadata references an invalid owner type");
+                }
+
+                return compute_inherited_instance_field_count(
+                    module.types[owner_type_index].base_type_id,
+                    module.types,
+                    inherited_field_count_cache);
+            }();
+
+            field.instance_slot = inherited_count + field.instance_slot;
+        }
+
+        for (auto& type : module.types)
+        {
+            type.instance_field_count = compute_inherited_instance_field_count(
+                type.type_id,
+                module.types,
+                inherited_field_count_cache);
         }
     }
 

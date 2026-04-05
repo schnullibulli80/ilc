@@ -131,12 +131,22 @@ if (debugEnabled && binding.Diagnostics.Count > 0)
 }
 if (binding.HasErrors)
 {
-    failures.Add("Valid fixture code should not produce binding errors.");
+    failures.Add(
+        "Valid fixture code should not produce binding errors. Diagnostics: " +
+        string.Join(
+            " | ",
+            binding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
 }
 
 if (binding.Diagnostics.Any(diagnostic => diagnostic.Id is "ILC2100" or "ILC2101" or "ILC2102" or "ILC2103" or "ILC2104" or "ILC2105" or "ILC2106"))
 {
-    failures.Add("Valid fixture code should not produce bootstrap name or assignment diagnostics.");
+    failures.Add(
+        "Valid fixture code should not produce bootstrap name or assignment diagnostics. Diagnostics: " +
+        string.Join(
+            " | ",
+            binding.Diagnostics
+                .Where(diagnostic => diagnostic.Id is "ILC2100" or "ILC2101" or "ILC2102" or "ILC2103" or "ILC2104" or "ILC2105" or "ILC2106")
+                .Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
 }
 
 if (binding.Diagnostics.Any(diagnostic => diagnostic.Id is "ILC2151" or "ILC2152" or "ILC2153" or "ILC2154" or "ILC2155" or "ILC2156" or "ILC2157"))
@@ -259,17 +269,135 @@ if (stringListType is null || !stringListType.IsReferenceType)
 {
     failures.Add("Binder should surface System.Collections.StringList as a reference type.");
 }
-else if (!stringListType.Methods.Any(method => method.IsConstructor) ||
-         !stringListType.Methods.Any(method => method.Name == "Add" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String) ||
-         !stringListType.Methods.Any(method => method.Name == "AddRange" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "String[]") ||
-         !stringListType.Methods.Any(method => method.Name == "Clear" && !method.IsStatic) ||
-         !stringListType.Methods.Any(method => method.Name == "Contains" && !method.IsStatic && method.ReturnType == TypeSymbol.Boolean) ||
-         !stringListType.Methods.Any(method => method.Name == "IndexOf" && !method.IsStatic && method.ReturnType == TypeSymbol.Integer) ||
-         !stringListType.Methods.Any(method => method.Name == "ToArray" && !method.IsStatic && method.ReturnType.Name == "String[]") ||
-         !stringListType.Properties.Any(property => property.Name == "Count" && !property.IsStatic && property.Type == TypeSymbol.Integer) ||
-         !stringListType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type == TypeSymbol.String))
+else if (stringListType.BaseType?.Name != "List<String>")
 {
-    failures.Add("Binder should expose the expected System.Collections.StringList surface.");
+    failures.Add("Binder should model System.Collections.StringList as a thin subclass of List<String>.");
+}
+
+var listInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IList");
+if (listInterfaceType is null || !listInterfaceType.IsInterface || listInterfaceType.GenericArity != 1 || listInterfaceType.GenericParameters?.Count != 1 || listInterfaceType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.IList<T> as a generic interface definition.");
+}
+else if (!listInterfaceType.InterfaceTypes.Any(type => type.Name == "IReadOnlyList<T>"))
+{
+    failures.Add("Binder should model System.Collections.IList<T> as an IReadOnlyList<T> implementation.");
+}
+else if (!listInterfaceType.InterfaceTypes.Any(type => type.Name == "ICollection<T>"))
+{
+    failures.Add("Binder should model System.Collections.IList<T> as an ICollection<T> implementation.");
+}
+else if (!listInterfaceType.Methods.Any(method => method.Name == "AddRange" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T[]") ||
+         !listInterfaceType.Methods.Any(method => method.Name == "IndexOf" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T" && method.ReturnType == TypeSymbol.Integer) ||
+         !listInterfaceType.Methods.Any(method => method.Name == "ToArray" && method.Parameters.Count == 0 && method.ReturnType.Name == "T[]"))
+{
+    failures.Add("Binder should expose the expected System.Collections.IList<T> generic surface.");
+}
+
+var readOnlyListInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IReadOnlyList");
+if (readOnlyListInterfaceType is null || !readOnlyListInterfaceType.IsInterface || readOnlyListInterfaceType.GenericArity != 1 || readOnlyListInterfaceType.GenericParameters?.Count != 1 || readOnlyListInterfaceType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.IReadOnlyList<T> as a generic interface definition.");
+}
+else if (!readOnlyListInterfaceType.Properties.Any(property => property.Name == "Count" && property.Type == TypeSymbol.Integer) ||
+         !readOnlyListInterfaceType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type.Name == "T" && property.SetterMethod is null && property.WriteField is null))
+{
+    failures.Add("Binder should expose the expected System.Collections.IReadOnlyList<T> generic surface.");
+}
+
+var enumeratorInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IEnumerator");
+if (enumeratorInterfaceType is null || !enumeratorInterfaceType.IsInterface || enumeratorInterfaceType.GenericArity != 1 || enumeratorInterfaceType.GenericParameters?.Count != 1 || enumeratorInterfaceType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.IEnumerator<T> as a generic interface definition.");
+}
+else if (!enumeratorInterfaceType.Properties.Any(property => property.Name == "Current" && property.Type.Name == "T" && property.SetterMethod is null && property.WriteField is null) ||
+         !enumeratorInterfaceType.Methods.Any(method => method.Name == "MoveNext" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean) ||
+         !enumeratorInterfaceType.Methods.Any(method => method.Name == "Reset" && method.Parameters.Count == 0))
+{
+    failures.Add("Binder should expose the expected System.Collections.IEnumerator<T> generic surface.");
+}
+
+var enumerableInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IEnumerable");
+if (enumerableInterfaceType is null || !enumerableInterfaceType.IsInterface || enumerableInterfaceType.GenericArity != 1 || enumerableInterfaceType.GenericParameters?.Count != 1 || enumerableInterfaceType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.IEnumerable<T> as a generic interface definition.");
+}
+else if (!enumerableInterfaceType.Methods.Any(method => method.Name == "GetEnumerator" && method.Parameters.Count == 0 && method.ReturnType.Name == "IEnumerator<T>"))
+{
+    failures.Add("Binder should expose the expected System.Collections.IEnumerable<T> generic surface.");
+}
+
+var collectionInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ICollection");
+if (collectionInterfaceType is null || !collectionInterfaceType.IsInterface || collectionInterfaceType.GenericArity != 1 || collectionInterfaceType.GenericParameters?.Count != 1 || collectionInterfaceType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.ICollection<T> as a generic interface definition.");
+}
+else if (!collectionInterfaceType.InterfaceTypes.Any(type => type.Name == "IEnumerable<T>"))
+{
+    failures.Add("Binder should model System.Collections.ICollection<T> as an IEnumerable<T> implementation.");
+}
+else if (!collectionInterfaceType.Properties.Any(property => property.Name == "Count" && property.Type == TypeSymbol.Integer) ||
+         !collectionInterfaceType.Methods.Any(method => method.Name == "Add" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T") ||
+         !collectionInterfaceType.Methods.Any(method => method.Name == "Clear" && method.Parameters.Count == 0) ||
+         !collectionInterfaceType.Methods.Any(method => method.Name == "Contains" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T" && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should expose the expected System.Collections.ICollection<T> generic surface.");
+}
+
+var listDefinitionType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "List");
+if (listDefinitionType is null || !listDefinitionType.IsReferenceType || listDefinitionType.GenericArity != 1 || listDefinitionType.GenericParameters?.Count != 1 || listDefinitionType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.List<T> as a generic reference type definition.");
+}
+else if (!listDefinitionType.InterfaceTypes.Any(type => type.Name == "IList<T>"))
+{
+    failures.Add("Binder should model System.Collections.List<T> as an IList<T> implementation.");
+}
+else if (!listDefinitionType.Methods.Any(method => method.IsConstructor) ||
+         !listDefinitionType.Methods.Any(method => method.Name == "GetEnumerator" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType.Name == "IEnumerator<T>") ||
+         !listDefinitionType.Methods.Any(method => method.Name == "Add" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T") ||
+         !listDefinitionType.Methods.Any(method => method.Name == "AddRange" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T[]") ||
+         !listDefinitionType.Methods.Any(method => method.Name == "Contains" && !method.IsStatic && method.ReturnType == TypeSymbol.Boolean && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T") ||
+         !listDefinitionType.Methods.Any(method => method.Name == "IndexOf" && !method.IsStatic && method.ReturnType == TypeSymbol.Integer && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T") ||
+         !listDefinitionType.Methods.Any(method => method.Name == "ToArray" && !method.IsStatic && method.ReturnType.Name == "T[]") ||
+         !listDefinitionType.Properties.Any(property => property.Name == "Count" && !property.IsStatic && property.Type == TypeSymbol.Integer) ||
+         !listDefinitionType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type.Name == "T"))
+{
+    failures.Add("Binder should expose the expected System.Collections.List<T> generic surface.");
+}
+
+var listEnumeratorType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ListEnumerator");
+if (listEnumeratorType is null || !listEnumeratorType.IsReferenceType || listEnumeratorType.GenericArity != 1 || listEnumeratorType.GenericParameters?.Count != 1 || listEnumeratorType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.ListEnumerator<T> as a generic reference type definition.");
+}
+else if (!listEnumeratorType.InterfaceTypes.Any(type => type.Name == "IEnumerator<T>"))
+{
+    failures.Add("Binder should model System.Collections.ListEnumerator<T> as an IEnumerator<T> implementation.");
+}
+else if (!listEnumeratorType.Methods.Any(method => method.IsConstructor && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "T[]" && method.Parameters[1].Type == TypeSymbol.Integer) ||
+         !listEnumeratorType.Methods.Any(method => method.Name == "MoveNext" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean) ||
+         !listEnumeratorType.Methods.Any(method => method.Name == "Reset" && !method.IsStatic && method.Parameters.Count == 0) ||
+         !listEnumeratorType.Properties.Any(property => property.Name == "Current" && property.Type.Name == "T"))
+{
+    failures.Add("Binder should expose the expected System.Collections.ListEnumerator<T> generic surface.");
+}
+
+var dictionaryType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Dictionary");
+if (dictionaryType is null || !dictionaryType.IsReferenceType || dictionaryType.GenericArity != 2 || dictionaryType.GenericParameters?.Count != 2 ||
+    dictionaryType.GenericParameters[0].Name != "TKey" || dictionaryType.GenericParameters[1].Name != "TValue")
+{
+    failures.Add("Binder should surface System.Collections.Dictionary<TKey, TValue> as a generic reference type definition.");
+}
+else if (!dictionaryType.Methods.Any(method => method.IsConstructor && method.Parameters.Count == 0) ||
+         !dictionaryType.Methods.Any(method => method.Name == "Add" && !method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "TKey" && method.Parameters[1].Type.Name == "TValue") ||
+         !dictionaryType.Methods.Any(method => method.Name == "ContainsKey" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TKey" && method.ReturnType == TypeSymbol.Boolean) ||
+         !dictionaryType.Methods.Any(method => method.Name == "TryGetValue" && !method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "TKey" && method.Parameters[1].Type.Name == "TValue" && method.Parameters[1].PassingKind == ParameterPassingKind.Out && method.ReturnType == TypeSymbol.Boolean) ||
+         !dictionaryType.Methods.Any(method => method.Name == "Clear" && !method.IsStatic && method.Parameters.Count == 0) ||
+         !dictionaryType.Properties.Any(property => property.Name == "Count" && !property.IsStatic && property.Type == TypeSymbol.Integer) ||
+         !dictionaryType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type.Name == "TValue" && property.IndexParameter?.Type.Name == "TKey"))
+{
+    failures.Add("Binder should expose the expected System.Collections.Dictionary<TKey, TValue> generic surface.");
 }
 
 var exceptionInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IException");
@@ -639,7 +767,8 @@ var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilatio
                         instruction.Destination >= callVirt.Left &&
                         instruction.Destination < callVirt.Left + expectedFrameSize)
                     .ToArray();
-                if (stagedVirtualMoves.Length != expectedFrameSize)
+                var frameAlreadyContiguous = stagedVirtualMoves.Length == 0;
+                if (!frameAlreadyContiguous && stagedVirtualMoves.Length != expectedFrameSize)
                 {
                     failures.Add("Virtual calls should stage receiver and arguments into a contiguous call frame.");
                 }
@@ -702,13 +831,15 @@ var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilatio
                         failures.Add("Params calls should pack each trailing argument into the synthetic Collect array.");
                     }
 
-                    if (!mainBytecode.Instructions
-                            .Skip(paramsArrayAllocation.index + 1)
-                            .Take(collectCallIndex - paramsArrayAllocation.index - 1)
-                            .Any(instruction =>
-                                instruction.OpCode == OpCode.Mov &&
-                                instruction.Destination == collectCall.Left &&
-                                instruction.Left == paramsArrayRegister))
+                    var packedArrayMovedIntoFrame = mainBytecode.Instructions
+                        .Skip(paramsArrayAllocation.index + 1)
+                        .Take(collectCallIndex - paramsArrayAllocation.index - 1)
+                        .Any(instruction =>
+                            instruction.OpCode == OpCode.Mov &&
+                            instruction.Destination == collectCall.Left &&
+                            instruction.Left == paramsArrayRegister);
+                    var packedArrayAlreadyAtFrameBase = collectCall.Left == paramsArrayRegister;
+                    if (!packedArrayMovedIntoFrame && !packedArrayAlreadyAtFrameBase)
                     {
                         failures.Add("Params calls should stage the packed array into the Collect call frame.");
                     }
@@ -1440,9 +1571,120 @@ else
         interfaceFields,
         interfaceCompatibilityBinding.Compilation.Types,
         null);
-    if (!interfaceIlbImage.Sections.Any(section => section.Kind == IlbSectionKind.InterfaceDispatchTable))
+if (!interfaceIlbImage.Sections.Any(section => section.Kind == IlbSectionKind.InterfaceDispatchTable))
     {
         failures.Add("ILB serialization should include an interface dispatch table section when interface implementations are present.");
+    }
+}
+
+var genericBindingTree = SyntaxTree.Parse("""
+public class Box<T>
+begin
+  private var Value: T;
+
+  public property Item: T
+  begin
+    get
+    begin
+      return Value;
+    end;
+
+    set
+    begin
+      Value := value;
+    end;
+  end;
+end;
+
+public class Program
+begin
+  public static var LastBox: Box<String>;
+
+  public static function Echo(box: Box<String>): Box<String>;
+  begin
+    return box;
+  end;
+end;
+""");
+
+if (genericBindingTree.Root.Members[0] is not ClassDeclarationSyntax parsedGenericClass ||
+    parsedGenericClass.Identifier.Text != "Box" ||
+    parsedGenericClass.TypeParameters?.Parameters.Count != 1 ||
+    parsedGenericClass.TypeParameters.Parameters[0].Text != "T")
+{
+    failures.Add("Parser should capture generic class type parameters.");
+}
+
+var genericBinding = new Binder().Bind(genericBindingTree);
+if (genericBinding.HasErrors)
+{
+    failures.Add($"Binder should accept generic type declarations and closed generic references. Actual: {string.Join(", ", genericBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+else
+{
+    var boxDefinition = genericBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Box");
+    var genericProgramType = genericBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Program");
+    if (debugEnabled)
+    {
+        Console.Error.WriteLine(
+            "debug.generics.types=" +
+            string.Join(
+                " | ",
+                genericBinding.Compilation.Types
+                    .OfType<NamedTypeSymbol>()
+                    .Select(type => $"{type.Name}#arity={type.GenericArity}#args={(type.TypeArguments is null ? "-" : string.Join(",", type.TypeArguments.Select(argument => argument.Name)))}#fields={type.Fields.Count}#properties={type.Properties.Count}")));
+
+        var debugLastBoxField = genericProgramType?.Fields.FirstOrDefault(field => field.Name == "LastBox");
+        var debugEchoMethod = genericProgramType?.Methods.FirstOrDefault(method => method.Name == "Echo");
+        Console.Error.WriteLine($"debug.generics.lastBoxFieldType={debugLastBoxField?.Type.Name ?? "<null>"}");
+        Console.Error.WriteLine($"debug.generics.lastBoxFieldRuntimeType={debugLastBoxField?.Type.GetType().Name ?? "<null>"}");
+        Console.Error.WriteLine($"debug.generics.echoReturnType={debugEchoMethod?.ReturnType.Name ?? "<null>"}");
+        Console.Error.WriteLine($"debug.generics.echoParamType={(debugEchoMethod is null || debugEchoMethod.Parameters.Count == 0 ? "<null>" : debugEchoMethod.Parameters[0].Type.Name)}");
+    }
+
+    if (boxDefinition is null || boxDefinition.GenericArity != 1 || boxDefinition.GenericParameters?.Count != 1 || boxDefinition.GenericParameters[0].Name != "T")
+    {
+        failures.Add("Binder should expose generic type definitions with their declared type parameters.");
+    }
+    else if (boxDefinition.Fields.Count != 1 || boxDefinition.Fields[0].Type.Name != "T" ||
+             !boxDefinition.Properties.Any(property => property.Name == "Item" && property.Type.Name == "T"))
+    {
+        failures.Add("Binder should keep generic member signatures on the open generic definition.");
+    }
+
+    if (genericProgramType is null)
+    {
+        failures.Add("Binder should surface Program in the generic fixture.");
+    }
+    else
+    {
+        var lastBoxField = genericProgramType.Fields.FirstOrDefault(field => field.Name == "LastBox");
+        var echoMethod = genericProgramType.Methods.FirstOrDefault(method => method.Name == "Echo");
+        if (lastBoxField?.Type is not NamedTypeSymbol lastBoxType ||
+            lastBoxType.Name != "Box<String>" ||
+            lastBoxType.GenericDefinition?.Name != "Box" ||
+            lastBoxType.TypeArguments?.Count != 1 ||
+            lastBoxType.TypeArguments[0] != TypeSymbol.String)
+        {
+            failures.Add("Binder should construct closed generic type instances for field references like Box<String>.");
+        }
+        else if (lastBoxType.Fields.Count != 1 || lastBoxType.Fields[0].Type != TypeSymbol.String ||
+                 !lastBoxType.Properties.Any(property => property.Name == "Item" && property.Type == TypeSymbol.String))
+        {
+            failures.Add("Binder should substitute generic members on closed generic type instances.");
+        }
+
+        if (echoMethod is null ||
+            echoMethod.ReturnType is not NamedTypeSymbol echoReturnType ||
+            echoMethod.Parameters.Count != 1 ||
+            echoMethod.Parameters[0].Type is not NamedTypeSymbol echoParameterType ||
+            echoReturnType.Name != "Box<String>" ||
+            echoParameterType.Name != "Box<String>" ||
+            echoReturnType.TypeArguments?.Count != 1 ||
+            echoReturnType.TypeArguments[0] != TypeSymbol.String)
+        {
+            failures.Add("Binder should propagate closed generic type instances through method signatures.");
+        }
     }
 }
 

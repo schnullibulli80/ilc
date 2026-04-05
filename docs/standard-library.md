@@ -56,6 +56,13 @@ Current shipped types:
 - `System.Diagnostics.CompositeTrace`
 - `System.Diagnostics.Trace`
 - `System.Text.Text`
+- `System.Collections.IEnumerator<T>`
+- `System.Collections.IEnumerable<T>`
+- `System.Collections.IReadOnlyList<T>`
+- `System.Collections.ICollection<T>`
+- `System.Collections.IList<T>`
+- `System.Collections.ListEnumerator<T>`
+- `System.Collections.List<T>`
 - `System.Collections.StringList`
 
 The current shipped file does **not** define a `System.String` class. String
@@ -139,6 +146,10 @@ Current shipped conversion helpers:
 `System.Convert` is currently implemented entirely in ILC source and layers over
 existing language/compiler intrinsics such as `Integer.Parse`, `Integer.TryParse`,
 `Integer.ToString()`, and Integer comparison.
+
+More generally, `out` / `ref` calls now work for normal declared methods through
+the current VM call frame. The runtime uses copy-in / copy-out behavior for
+these arguments rather than a separate address/reference object model.
 
 ## 3) `libs/shipped/diagnostics.ilc`
 
@@ -241,23 +252,110 @@ the existing `String` intrinsic surface.
 
 ## 5) `libs/shipped/collections.ilc`
 
-### 5.1 `System.Collections.StringList`
+### 5.1 `System.Collections.IEnumerator<T>`
 
-Current shipped first collection type:
+Current shipped generic enumerator view:
 
-- `StringList()`
+- `Current: T`
+- `MoveNext(): Boolean`
+- `Reset()`
+
+### 5.2 `System.Collections.IEnumerable<T>`
+
+Current shipped generic enumerable view:
+
+- `GetEnumerator(): IEnumerator<T>`
+
+In the current bootstrap this is available as a collection API surface and for
+manual enumerator-driven iteration. It is now also wired into generic `foreach`
+lowering.
+
+### 5.3 `System.Collections.IReadOnlyList<T>`
+
+Current shipped read-only generic list view:
+
 - `Count: Integer`
-- default indexer `Item[index: Integer]: String`
-- `Add(value: String)`
-- `AddRange(values: array of String)`
-- `Clear()`
-- `Contains(value: String): Boolean`
-- `IndexOf(value: String): Integer`
-- `ToArray(): array of String`
+- default indexer `Item[index: Integer]: T` (get)
 
-`System.Collections.StringList` is currently implemented entirely in ILC source
-as a simple dynamically growing string-backed list. It is a pragmatic bootstrap
-step ahead of generic collections.
+This is the smallest generic collection abstraction currently shipped and is
+intended for APIs that want indexed read access without mutation.
+
+### 5.4 `System.Collections.ICollection<T>`
+
+Current shipped mutable generic collection view:
+
+- `Count: Integer`
+- `Add(value: T)`
+- `Clear()`
+- `Contains(value: T): Boolean`
+
+This is the current minimal mutable collection abstraction beneath list-shaped
+APIs.
+
+### 5.5 `System.Collections.IList<T>`
+
+Current shipped mutable generic list view:
+
+- inherits `IReadOnlyList<T>`
+- inherits `ICollection<T>`
+- `AddRange(values: array of T)`
+- `IndexOf(value: T): Integer`
+- `ToArray(): array of T`
+
+### 5.6 `System.Collections.StringList`
+
+`System.Collections.StringList` is now a thin compatibility subclass of:
+
+- `List<String>`
+
+It remains available for bootstrap code, but the real long-term collection
+surface now starts at the generic `IEnumerator<T>` / `IEnumerable<T>` / `IReadOnlyList<T>` / `ICollection<T>` / `IList<T>` / `List<T>` set.
+
+### 5.7 `System.Collections.ListEnumerator<T>`
+
+Current shipped generic list enumerator:
+
+- `ListEnumerator<T>(items: array of T; count: Integer)`
+- `Current: T`
+- `MoveNext(): Boolean`
+- `Reset()`
+
+### 5.8 `System.Collections.List<T>`
+
+Current shipped first generic collection type:
+
+- `List<T>()`
+- `IEnumerable<T>`
+- `IReadOnlyList<T>`
+- `ICollection<T>`
+- `IList<T>`
+- `GetEnumerator(): IEnumerator<T>`
+- `Count: Integer`
+- default indexer `Item[index: Integer]: T`
+- `Add(value: T)`
+- `AddRange(values: array of T)`
+- `Clear()`
+- `Contains(value: T): Boolean`
+- `IndexOf(value: T): Integer`
+- `ToArray(): array of T`
+
+### 5.9 `System.Collections.Dictionary<TKey, TValue>`
+
+Current shipped generic dictionary surface:
+
+- `Dictionary<TKey, TValue>()`
+- `Count: Integer`
+- default indexer `Item[key: TKey]: TValue`
+- `Add(key: TKey; value: TValue)`
+- `ContainsKey(key: TKey): Boolean`
+- `TryGetValue(key: TKey; out value: TValue): Boolean`
+- `Clear()`
+
+The current implementation is intentionally simple and bootstrap-oriented:
+
+- keys and values are stored in parallel arrays
+- lookup is linear
+- the API surface is ahead of any hash-based optimization work
 
 ## 6) Binding and Host Mapping
 
@@ -317,6 +415,10 @@ the VM.
 - `Integer.Parse(value: String): Integer`
 - `Integer.TryParse(value: String; out result: Integer): Boolean`
 - `value.ToString(): String` for `Integer`
+
+`Integer.TryParse(...)`, `System.Convert.TryToInteger(...)`, and
+`Dictionary<TKey, TValue>.TryGetValue(...)` all now exercise the same general
+`out` argument call path rather than isolated ad-hoc lowering behavior.
 
 ## 8) Runtime Semantics and Limits
 

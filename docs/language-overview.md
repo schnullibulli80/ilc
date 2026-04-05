@@ -89,6 +89,14 @@ Parameters support:
 - passing modes: `out`, `ref`, `in`, `params`
 - procedure/function/constructor return type optionality follows `method`/`function`/`procedure`
 
+Current call behavior for passing modes:
+
+- `out` and `ref` are supported for normal declared methods
+- `out` arguments must be writable targets
+- `ref` arguments use the current runtime call frame with copy-in / copy-out behavior
+- `in` is accepted by the front-end and currently behaves like a normal value argument at runtime
+- `params` is lowered into a synthetic packed array argument
+
 ## 3) Type system (bootstrap)
 
 Built-in types available in symbol resolution today:
@@ -183,6 +191,13 @@ Supported statement forms in the bootstrap compiler:
 `with` is implemented as a compile-time rewrite that scopes member access to the
 active receiver.
 
+`foreach` currently supports:
+
+- `String`
+- arrays
+- sets
+- generic `IEnumerable<T>` through `GetEnumerator()` / `MoveNext()` / `Current`
+
 ## 6) Pattern matching and branching
 
 Pattern support in this stage includes:
@@ -245,7 +260,7 @@ The shipped library lives under `libs/shipped` and currently includes:
   - `ConsoleTrace`, `FileTrace`, `NullTrace`, `CompositeTrace`
   - `Trace`
 - `System.Text.Text` (`IsNullOrEmpty`, `NullIfEmpty`, `TrimToNull`, `CollapseWhitespace`, `Indent`, `Join`, `Repeat`, `PadLeft`, `PadRight`, `Center`, `StartsWithIgnoreCase`, `EndsWithIgnoreCase`, `ContainsIgnoreCase`, `Split`, `Lines`)
-- `System.Collections.StringList`
+- `System.Collections.IEnumerator<T>`, `System.Collections.IEnumerable<T>`, `System.Collections.IReadOnlyList<T>`, `System.Collections.ICollection<T>`, `System.Collections.IList<T>`, `System.Collections.ListEnumerator<T>`, `System.Collections.List<T>`, `System.Collections.StringList`, `System.Collections.Dictionary<TKey, TValue>`
 - `System.File`
 - `System.Path`
 
@@ -255,7 +270,14 @@ All of these are reachable via normal `uses` imports and normal ILC syntax.
 
 Keep these in mind when evaluating language scope:
 
-- No generic declarations are currently accepted by the parser.
+- Generic class/interface declarations and closed generic type references are
+  accepted in the compiler front-end for the current bootstrap path.
+- A first generic runtime/library slice is available through
+  `System.Collections.List<T>`, `ListEnumerator<T>`, `IEnumerable<T>`,
+  `IList<T>`, `ICollection<T>`, `IReadOnlyList<T>`, and `Dictionary<TKey, TValue>`.
+- Generic `foreach` lowering now also supports `IEnumerable<T>`.
+- Wider generic coverage beyond the current closed-specialization bootstrap
+  slice is still future work.
 - Interface declarations and class interface lists are available.
 - Interface method dispatch through interface-typed receivers is supported in
   the current bootstrap path.

@@ -60,6 +60,7 @@ if (bindingResult.Diagnostics.Count > 0)
 
 var declaredMethods = bindingResult.Compilation.Types
     .OfType<NamedTypeSymbol>()
+    .Where(type => !SemanticFacts.IsOpenGenericDefinition(type))
     .SelectMany(type => type.Methods)
     .ToArray();
 var declaredFields = bindingResult.Compilation.GetAllFields();

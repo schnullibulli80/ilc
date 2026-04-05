@@ -231,6 +231,14 @@ public sealed record QualifiedNameSyntax(
     public string ToDisplayString() => string.Join(".", Parts.Select(part => part.Text));
 }
 
+public sealed record TypeParameterListSyntax(
+    SyntaxToken LessThanToken,
+    IReadOnlyList<SyntaxToken> Parameters,
+    SyntaxToken GreaterThanToken) : SyntaxNode(SyntaxKind.QualifiedName)
+{
+    public IReadOnlyList<string> GetParameterNames() => Parameters.Select(parameter => parameter.Text).ToArray();
+}
+
 public sealed record NamespaceDeclarationSyntax(
     SyntaxToken NamespaceKeyword,
     QualifiedNameSyntax Name,
@@ -300,6 +308,7 @@ public sealed record ClassDeclarationSyntax(
     IReadOnlyList<SyntaxToken> Modifiers,
     SyntaxToken ClassKeyword,
     SyntaxToken Identifier,
+    TypeParameterListSyntax? TypeParameters,
     SyntaxToken? ColonToken,
     QualifiedNameSyntax? BaseType,
     IReadOnlyList<QualifiedNameSyntax> InterfaceTypes,
@@ -312,6 +321,7 @@ public sealed record InterfaceDeclarationSyntax(
     IReadOnlyList<SyntaxToken> Modifiers,
     SyntaxToken InterfaceKeyword,
     SyntaxToken Identifier,
+    TypeParameterListSyntax? TypeParameters,
     SyntaxToken? ColonToken,
     IReadOnlyList<QualifiedNameSyntax> BaseInterfaces,
     SyntaxToken BeginKeyword,
@@ -649,7 +659,8 @@ public sealed record AsExpressionSyntax(
     QualifiedNameSyntax TypeName) : ExpressionSyntax(SyntaxKind.AsExpression);
 
 public sealed record ArgumentSyntax(
-    ExpressionSyntax Expression) : SyntaxNode(SyntaxKind.Argument);
+    ExpressionSyntax Expression,
+    SyntaxToken? ModifierKeyword = null) : SyntaxNode(SyntaxKind.Argument);
 
 public sealed record CallExpressionSyntax(
     ExpressionSyntax Target,
@@ -1180,17 +1191,18 @@ internal sealed class Parser
             ? Match(SyntaxKind.RecordKeyword)
             : Match(SyntaxKind.ClassKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+        var typeParameters = ParseOptionalTypeParameterList();
         SyntaxToken? colonToken = null;
         QualifiedNameSyntax? baseType = null;
         var interfaceTypes = new List<QualifiedNameSyntax>();
         if (Current.Kind == SyntaxKind.ColonToken)
         {
             colonToken = Match(SyntaxKind.ColonToken);
-            baseType = ParseQualifiedName();
+            baseType = ParseTypeName();
             while (Current.Kind == SyntaxKind.CommaToken)
             {
                 NextToken();
-                interfaceTypes.Add(ParseQualifiedName());
+                interfaceTypes.Add(ParseTypeName());
             }
         }
 
@@ -1214,6 +1226,7 @@ internal sealed class Parser
             modifiers,
             classKeyword,
             identifier,
+            typeParameters,
             colonToken,
             baseType,
             interfaceTypes,
@@ -1227,16 +1240,17 @@ internal sealed class Parser
     {
         var interfaceKeyword = Match(SyntaxKind.InterfaceKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+        var typeParameters = ParseOptionalTypeParameterList();
         SyntaxToken? colonToken = null;
         var baseInterfaces = new List<QualifiedNameSyntax>();
         if (Current.Kind == SyntaxKind.ColonToken)
         {
             colonToken = Match(SyntaxKind.ColonToken);
-            baseInterfaces.Add(ParseQualifiedName());
+            baseInterfaces.Add(ParseTypeName());
             while (Current.Kind == SyntaxKind.CommaToken)
             {
                 NextToken();
-                baseInterfaces.Add(ParseQualifiedName());
+                baseInterfaces.Add(ParseTypeName());
             }
         }
 
@@ -1259,6 +1273,7 @@ internal sealed class Parser
             modifiers,
             interfaceKeyword,
             identifier,
+            typeParameters,
             colonToken,
             baseInterfaces,
             beginKeyword,
@@ -2453,11 +2468,11 @@ internal sealed class Parser
             var arguments = new List<ArgumentSyntax>();
             if (Current.Kind != SyntaxKind.CloseParenToken)
             {
-                arguments.Add(new ArgumentSyntax(ParseExpression()));
+                arguments.Add(ParseArgument());
                 while (Current.Kind == SyntaxKind.CommaToken)
                 {
                     NextToken();
-                    arguments.Add(new ArgumentSyntax(ParseExpression()));
+                    arguments.Add(ParseArgument());
                 }
             }
 
@@ -2551,11 +2566,11 @@ internal sealed class Parser
                 var arguments = new List<ArgumentSyntax>();
                 if (Current.Kind != SyntaxKind.CloseParenToken)
                 {
-                    arguments.Add(new ArgumentSyntax(ParseExpression()));
+                    arguments.Add(ParseArgument());
                     while (Current.Kind == SyntaxKind.CommaToken)
                     {
                         NextToken();
-                        arguments.Add(new ArgumentSyntax(ParseExpression()));
+                        arguments.Add(ParseArgument());
                     }
                 }
 
@@ -2568,6 +2583,17 @@ internal sealed class Parser
         }
 
         return expression;
+    }
+
+    private ArgumentSyntax ParseArgument()
+    {
+        SyntaxToken? modifierKeyword = null;
+        if (Current.Kind is SyntaxKind.OutKeyword or SyntaxKind.RefKeyword or SyntaxKind.InKeyword)
+        {
+            modifierKeyword = NextToken();
+        }
+
+        return new ArgumentSyntax(ParseExpression(), modifierKeyword);
     }
 
     private static ExpressionSyntax BuildMemberAccessExpression(QualifiedNameSyntax name)
@@ -2621,6 +2647,70 @@ internal sealed class Parser
         return new QualifiedNameSyntax(parts);
     }
 
+    private QualifiedNameSyntax ParseQualifiedTypeName()
+    {
+        var parts = new List<SyntaxToken> { ParseQualifiedTypeNamePart() };
+        while (Current.Kind == SyntaxKind.DotToken)
+        {
+            NextToken();
+            parts.Add(ParseQualifiedTypeNamePart());
+        }
+
+        return new QualifiedNameSyntax(parts);
+    }
+
+    private SyntaxToken ParseQualifiedTypeNamePart()
+    {
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        if (Current.Kind != SyntaxKind.LessToken)
+        {
+            return identifier;
+        }
+
+        var start = identifier.Span.Start;
+        var builder = new List<string> { identifier.Text, "<" };
+        NextToken();
+        while (Current.Kind != SyntaxKind.GreaterToken && Current.Kind != SyntaxKind.EndOfFileToken)
+        {
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                builder.Add(", ");
+                NextToken();
+                continue;
+            }
+
+            var typeArgument = ParseTypeName();
+            builder.Add(typeArgument.ToDisplayString());
+        }
+
+        var closeToken = Match(SyntaxKind.GreaterToken);
+        builder.Add(">");
+        return identifier with
+        {
+            Text = string.Concat(builder),
+            Span = new TextSpan(start, closeToken.Span.End - start)
+        };
+    }
+
+    private TypeParameterListSyntax? ParseOptionalTypeParameterList()
+    {
+        if (Current.Kind != SyntaxKind.LessToken)
+        {
+            return null;
+        }
+
+        var lessThan = Match(SyntaxKind.LessToken);
+        var parameters = new List<SyntaxToken> { Match(SyntaxKind.IdentifierToken) };
+        while (Current.Kind == SyntaxKind.CommaToken)
+        {
+            NextToken();
+            parameters.Add(Match(SyntaxKind.IdentifierToken));
+        }
+
+        var greaterThan = Match(SyntaxKind.GreaterToken);
+        return new TypeParameterListSyntax(lessThan, parameters, greaterThan);
+    }
+
     private QualifiedNameSyntax ParseTypeName()
     {
         if (Current.Kind == SyntaxKind.SetKeyword)
@@ -2670,7 +2760,7 @@ internal sealed class Parser
             ]);
         }
 
-        var name = ParseQualifiedName();
+        var name = ParseQualifiedTypeName();
         if (Current.Kind == SyntaxKind.OpenBracketToken && Peek(1).Kind == SyntaxKind.CloseBracketToken)
         {
             var openBracket = NextToken();
