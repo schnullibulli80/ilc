@@ -62,7 +62,7 @@ else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" |
     failures.Add("Parser should capture imported namespaces.");
 }
 
-if (tree.Root.Members.Count != 9)
+if (tree.Root.Members.Count != 10)
 {
     failures.Add("Parser should capture top-level members.");
 }
@@ -1558,6 +1558,7 @@ else
                 (ushort)Math.Max(method.Parameters.Count + (method.IsStatic ? 1 : 2), 1),
                 (ushort)(method.Parameters.Count + (method.IsStatic ? 0 : 1)),
                 method.HostImportKind,
+                null,
                 [new Instruction(OpCode.Ret)],
                 [],
                 [],
@@ -2896,6 +2897,164 @@ var invalidExternHostBinding = new Binder().Bind(invalidExternHostTree);
 if (!invalidExternHostBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2183"))
 {
     failures.Add("Binder should reject unsupported extern host imports.");
+}
+
+var dllImportTree = SyntaxTree.Parse("""
+public enum CallingConvention
+begin
+  Cdecl,
+  StdCall
+end;
+
+public class Native
+begin
+  [DllImport('libc.so.6', EntryPoint := 'puts', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function Puts(text: String): Integer;
+end;
+""");
+
+var dllImportBinding = new Binder().Bind(dllImportTree);
+if (dllImportBinding.Diagnostics.Count > 0)
+{
+    failures.Add($"Binder should accept a valid DllImport declaration without diagnostics. Actual: {string.Join(", ", dllImportBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+else
+{
+    var nativeType = dllImportBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Native");
+    var putsMethod = nativeType?.Methods.FirstOrDefault(method => method.Name == "Puts");
+    if (putsMethod is null || !putsMethod.IsExtern || putsMethod.IsStatic is false)
+    {
+        failures.Add("Binder should preserve extern/static metadata for DllImport methods.");
+    }
+    else if (putsMethod.HostImportKind != HostImportKind.None)
+    {
+        failures.Add("DllImport methods must stay separate from built-in host import mappings.");
+    }
+    else if (putsMethod.DllImport is null)
+    {
+        failures.Add("Binder should attach DllImport metadata to extern methods.");
+    }
+    else if (putsMethod.DllImport.LibraryName != "libc.so.6" ||
+        putsMethod.DllImport.EntryPoint != "puts" ||
+        putsMethod.DllImport.CallingConvention != NativeCallingConvention.Cdecl)
+    {
+        failures.Add("Binder should capture library name, entry point, and calling convention for DllImport.");
+    }
+
+    var syntaxMethod = dllImportTree.Root.Members
+        .OfType<ClassDeclarationSyntax>()
+        .First(type => type.Identifier.Text == "Native")
+        .Members
+        .OfType<MethodDeclarationSyntax>()
+        .First(method => method.Identifier.Text == "Puts");
+    if (syntaxMethod.Attributes.Count != 1 ||
+        syntaxMethod.Attributes[0].Name.ToDisplayString() != "DllImport" ||
+        syntaxMethod.Attributes[0].Arguments.Count != 3)
+    {
+        failures.Add("Syntax parser should preserve the DllImport attribute and its arguments on methods.");
+    }
+
+    var dllImportMethods = dllImportBinding.Compilation.GetAllMethods().ToArray();
+    var dllImportFields = dllImportBinding.Compilation.GetAllFields();
+    var dllImportModule = new BytecodeEmitter().EmitModule(
+        dllImportMethods,
+        dllImportFields,
+        dllImportBinding.Compilation.Types,
+        new Lowerer(
+            dllImportMethods,
+            dllImportFields,
+            dllImportBinding.Compilation.Types,
+            dllImportBinding.Compilation.GetAllProperties(),
+            dllImportBinding.Compilation.GetAllConstants()));
+    var emittedPuts = dllImportModule.Functions.FirstOrDefault(function => function.Name == "Puts");
+    if (emittedPuts?.DllImport is null)
+    {
+        failures.Add("Bytecode emission should preserve DllImport metadata for extern native methods.");
+    }
+    else if (emittedPuts.DllImport.LibraryName != "libc.so.6" ||
+        emittedPuts.DllImport.EntryPoint != "puts" ||
+        emittedPuts.DllImport.CallingConvention != NativeCallingConvention.Cdecl)
+    {
+        failures.Add("Bytecode emission should keep the bound DllImport metadata unchanged.");
+    }
+
+    var dllImportIlb = new IlbSerializer().Serialize(
+        dllImportModule,
+        dllImportMethods,
+        dllImportFields,
+        dllImportBinding.Compilation.Types,
+        null);
+    var stringSection = dllImportIlb.Sections.First(section => section.Kind == IlbSectionKind.StringTable);
+    var methodSection = dllImportIlb.Sections.First(section => section.Kind == IlbSectionKind.MethodTable);
+    static uint ReadU32(byte[] bytes, int offset) =>
+        (uint)(bytes[offset] |
+            (bytes[offset + 1] << 8) |
+            (bytes[offset + 2] << 16) |
+            (bytes[offset + 3] << 24));
+    static List<string> ReadStringTable(byte[] bytes, int offset)
+    {
+        var count = (int)ReadU32(bytes, offset);
+        var cursor = offset + 4;
+        var strings = new List<string> { string.Empty };
+        for (var index = 0; index < count; index++)
+        {
+            var length = (int)ReadU32(bytes, cursor);
+            cursor += 4;
+            strings.Add(System.Text.Encoding.UTF8.GetString(bytes, cursor, length));
+            cursor += length;
+        }
+
+        return strings;
+    }
+
+    var ilbStrings = ReadStringTable(dllImportIlb.Bytes, (int)stringSection.Offset);
+    var putsRowOffset = (int)methodSection.Offset;
+    var libraryStringId = ReadU32(dllImportIlb.Bytes, putsRowOffset + 46);
+    var entryPointStringId = ReadU32(dllImportIlb.Bytes, putsRowOffset + 50);
+    var callingConvention = ReadU32(dllImportIlb.Bytes, putsRowOffset + 54);
+    if (libraryStringId == 0 || entryPointStringId == 0)
+    {
+        failures.Add("ILB method rows should carry string-table ids for DllImport library and entry point.");
+    }
+    else if (ilbStrings[(int)libraryStringId] != "libc.so.6" || ilbStrings[(int)entryPointStringId] != "puts")
+    {
+        failures.Add("ILB serialization should persist DllImport string metadata into the string table.");
+    }
+    else if (callingConvention != (uint)NativeCallingConvention.Cdecl)
+    {
+        failures.Add("ILB serialization should persist the native calling convention for DllImport methods.");
+    }
+}
+
+var invalidDllImportExternTree = SyntaxTree.Parse("""
+public class Native
+begin
+  [DllImport('libc.so.6')]
+  public static function Puts(text: String): Integer;
+  begin
+    return 0;
+  end;
+end;
+""");
+
+var invalidDllImportExternBinding = new Binder().Bind(invalidDllImportExternTree);
+if (!invalidDllImportExternBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2212"))
+{
+    failures.Add("Binder should reject DllImport methods that are not declared extern.");
+}
+
+var invalidDllImportStaticTree = SyntaxTree.Parse("""
+public class Native
+begin
+  [DllImport('libc.so.6')]
+  public extern function Puts(text: String): Integer;
+end;
+""");
+
+var invalidDllImportStaticBinding = new Binder().Bind(invalidDllImportStaticTree);
+if (!invalidDllImportStaticBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2213"))
+{
+    failures.Add("Binder should reject instance DllImport methods.");
 }
 
 var ambiguousImportPrimaryTree = SyntaxTree.Parse("""

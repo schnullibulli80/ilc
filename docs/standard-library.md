@@ -384,6 +384,25 @@ Notable mapping examples:
 `extern` methods that do not match expected signatures are treated as regular methods
 unless the source marks known host import kinds.
 
+`DllImport` is now a separate extern path from built-in host services.
+
+Current `DllImport` status:
+
+- syntax:
+  - `[DllImport('libname', EntryPoint := 'symbol', CallingConvention := CallingConvention.Cdecl)]`
+- binder:
+  - accepted only on `static extern` methods
+- bytecode / ILB:
+  - library name, entry point, and calling convention are serialized into method metadata
+- runtime:
+  - Linux shared-library loading via `dlopen` / `dlsym`
+  - free functions only
+  - currently supported FFI value types:
+    - parameters: `Integer`, `Boolean`, `String`
+    - return: `Integer`, `Boolean`, `Void`
+
+This is intentionally separate from the private shipped `_Core` host bridge methods.
+
 ## 7) Built-in Intrinsics Outside the shipped source library
 
 The following APIs are currently supported even though they are not declared in

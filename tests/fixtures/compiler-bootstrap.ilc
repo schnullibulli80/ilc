@@ -1,26 +1,72 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                           I L C   C O M P I L E R   B O O T S T R A P   F I X T U R E
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file is used as a compilation fixture for the ILC compiler bootstrap process. It contains a variety of language features and 
+//            library usages to ensure that the compiler can successfully compile itself and its standard library. This code will be compiled by
+//            the ILC compiler during the bootstrap process, and any changes to the language or libraries should be reflected here to maintain 
+//            coverage. After compilation, the resulting executable will be run to verify that it produces the expected output, which serves as
+//            a sanity check for the correctness of the compiler and its generated code. This fixture is not intended to be a comprehensive test 
+//            suite, but rather a broad smoke test to catch any major regressions or issues during development.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-03-13
+// History  : 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 namespace Demo.App;
+
+// Loading shipped libraries to ensure they are included in the bootstrap process
 uses System, System.Diagnostics, System.Text, System.Collections, Demo.Core;
+
+// Testing constant declaration
 const TopBonus: Integer = 2;
+
+// Testing enum declaration
 public enum Mode
 begin
   Idle;
   Busy;
   Done = 5;
 end;
+
+// Testing record declaration
 public record Point
 begin
   public var X: Integer;
   public var Y: Integer;
 end;
+
+// Testing interface declaration
 public interface IWorker
 begin
   public function Boost(value: Integer): Integer;
   public property Name: String { get; set; };
 end;
+
+// Testing interface inheritance
 public interface IAdvancedWorker: IWorker
 begin
   public function Bonus(): Integer;
 end;
+
+// Testing external method declaration
+public class Native
+begin
+  // Testing String as parameter and Integer as return type in an external function
+  [DllImport('libc.so.6', EntryPoint := 'atoi', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function Atoi(text: String): Integer;
+
+  // Testing Integer as parameter and Integer as return type in an external function
+  [DllImport('libc.so.6', EntryPoint := 'abs', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function Abs(value: Integer): Integer;
+
+  // Testing Integer as parameter and Boolean as return type in an external function
+  [DllImport('libc.so.6', EntryPoint := 'isdigit', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function IsDigit(value: Integer): Boolean;
+end;
+
+// Testing class declaration with inheritance and method/property implementations
 public class WorkerImpl: IAdvancedWorker
 begin
   private var NameValue: String;
@@ -53,26 +99,40 @@ begin
     return 7;
   end;
 end;
+
+// Testing variable declaration and initialization
 var value := 42;
+// Testing method invocation
 Program.Add(3, 4);
+
+// Program class with main method to serve as the entry point for the compiled executable
 public class Program
 begin
+  // Testing static constants and variables
   public static const DefaultSeed: Integer = 1;
   public static const CaseHit: Integer = 90;
   public static var Accumulator: Integer;
+
+  // Testing instance variables
   public var Counter: Integer;
   public var Items: array of Integer;
   public var Children: array of Program;
   public var Matrix: array[3, 3] of Integer;
+
+  // Testing static properties
   public static property Total: Integer read Accumulator write Accumulator;
-  public property Value: Integer read Counter write Counter;
-  public property Grid: array[3, 3] of Integer read Matrix write Matrix;
-  public default property Item[index: Integer]: Integer read Items write Items;
-  public default property Child[index: Integer]: Program read Children write Children;
   public static property AutoTotal: Integer { get; set; };
-  public property AutoValue: Integer { get; set; };
   public static property HiddenTotal: Integer { get; private set; };
   public static property SecretRead: Integer { private get; set; };
+  
+  // Testing default and indexer properties
+  public default property Item[index: Integer]: Integer read Items write Items;
+  public default property Child[index: Integer]: Program read Children write Children;
+  
+  // Testing instance properties with custom getters and setters
+  public property Value: Integer read Counter write Counter;
+  public property Grid: array[3, 3] of Integer read Matrix write Matrix;
+  public property AutoValue: Integer { get; set; };
   public property Created: Integer { get; init; };
   public property Adjusted: Integer
   begin
@@ -87,6 +147,7 @@ begin
     end;
   end;
 
+  // Constructor to initialize instance variables
   public constructor(seed: Integer);
   begin
     Counter := seed;
@@ -95,6 +156,7 @@ begin
     Created := seed + 100;
   end;
 
+  // Testing static functions and procedures with various parameter modifiers and return types
   public static function ParseSeed(text: String; out value: Integer): Boolean;
   begin
     value := Integer.Parse(text);
@@ -116,6 +178,7 @@ begin
     Program.Total := Program.Total + values.Length;
   end;
 
+  // Testing exit statement as alternative to return
   public static function Add(left: Integer; right: Integer): Integer;
   begin
     if left > right then
@@ -126,6 +189,7 @@ begin
     exit left + right;
   end;
 
+  // Trace methods for outputting checkpoints during execution
   public static procedure Trace(name: String; value: Integer);
   begin
     System.Console.WriteLine(name + value.ToString());
@@ -136,6 +200,7 @@ begin
     System.Console.WriteLine(text);
   end;
 
+  // Testing various language features and library usages in the main method
   public static method Main;
   begin
     Program.TraceText('SECTION static-state');
@@ -1053,6 +1118,19 @@ begin
 
     Program.Trace('CHECKPOINT collections=', current);
 
+    Program.TraceText('SECTION ffi');
+    var nativeAtoi := Native.Atoi('123');
+    var nativeAbs := Native.Abs(-7);
+    var nativeDigit := Native.IsDigit(53);
+    current := current + nativeAtoi + nativeAbs;
+    if nativeDigit then
+    begin
+      current := current + 1;
+    end;
+
+    Program.Trace('CHECKPOINT ffi-bool=', nativeDigit);
+    Program.Trace('CHECKPOINT ffi=', current);
+
     Program.TraceText('SECTION diagnostics');
     var stopwatch := Stopwatch.StartNew();
     if stopwatch.IsRunning then
@@ -1172,6 +1250,7 @@ begin
     return;
   end;
 
+  // Increment the counter by 2 to verify that both direct field access and property access work in the same method.
   public method Increment;
   begin
     Counter := Counter + 1;
@@ -1179,6 +1258,7 @@ begin
     return;
   end;
 
+  // Return the current value to verify that property getters work correctly.
   public function Current: Integer;
   begin
     return self.Value;

@@ -89,6 +89,17 @@ public enum HostImportKind
     PathGetExtension
 }
 
+public enum NativeCallingConvention
+{
+    Cdecl,
+    StdCall
+}
+
+public sealed record DllImportMetadata(
+    string LibraryName,
+    string EntryPoint,
+    NativeCallingConvention CallingConvention);
+
 public sealed record ParameterSymbol(string Name, TypeSymbol Type, ParameterPassingKind PassingKind = ParameterPassingKind.Value) : Symbol(Name);
 
 public sealed record FieldSymbol(
@@ -134,7 +145,8 @@ public sealed record MethodSymbol(
     bool IsExtern = false,
     bool IsVirtual = false,
     bool IsOverride = false,
-    HostImportKind HostImportKind = HostImportKind.None) : Symbol(Name);
+    HostImportKind HostImportKind = HostImportKind.None,
+    DllImportMetadata? DllImport = null) : Symbol(Name);
 
 public sealed record EnumerablePatternResolution(
     TypeSymbol ElementType,
@@ -717,6 +729,11 @@ public sealed class Binder
                 declaredTypeName,
                 diagnostics);
 
+            if (method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod is not null)
+            {
+                ValidateDllImportMethod(classDeclaration.Identifier.Text, method, boundMethod, diagnostics);
+            }
+
             foreach (var field in typeFields.Where(field => field.IsStatic))
             {
                 locals[field.Name] = field.Type;
@@ -758,7 +775,7 @@ public sealed class Binder
                     DiagnosticSeverity.Error,
                     method.Keyword.Span);
             }
-            else if (boundMethod.HostImportKind == HostImportKind.None)
+            else if (!method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod.HostImportKind == HostImportKind.None)
             {
                 diagnostics.Report(
                     "ILC2183",
@@ -852,6 +869,13 @@ public sealed class Binder
                     diagnostics.Report(
                         "ILC2207",
                         $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
+                        DiagnosticSeverity.Error,
+                        method.Keyword.Span);
+                    break;
+                case MethodDeclarationSyntax method when method.Attributes.Any(attribute => IsDllImportAttribute(attribute)):
+                    diagnostics.Report(
+                        "ILC2216",
+                        $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' cannot declare DllImport metadata.",
                         DiagnosticSeverity.Error,
                         method.Keyword.Span);
                     break;
@@ -4249,8 +4273,110 @@ public sealed class Binder
                 parameters,
                 declaringTypeName,
                 methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword),
-                methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.ExternKeyword)));
+                methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.ExternKeyword)),
+            DllImport: BindDllImportMetadata(methodDeclaration));
     }
+
+    private static void ValidateDllImportMethod(
+        string declaringTypeName,
+        MethodDeclarationSyntax declaration,
+        MethodSymbol method,
+        DiagnosticBag diagnostics)
+    {
+        if (!method.IsExtern)
+        {
+            diagnostics.Report(
+                "ILC2212",
+                $"DllImport method '{declaringTypeName}.{declaration.Identifier.Text}' must be declared extern.",
+                DiagnosticSeverity.Error,
+                declaration.Keyword.Span);
+        }
+
+        if (!method.IsStatic)
+        {
+            diagnostics.Report(
+                "ILC2213",
+                $"DllImport method '{declaringTypeName}.{declaration.Identifier.Text}' must be declared static.",
+                DiagnosticSeverity.Error,
+                declaration.Keyword.Span);
+        }
+
+        if (method.IsConstructor)
+        {
+            diagnostics.Report(
+                "ILC2214",
+                $"DllImport constructor '{declaringTypeName}' is not supported.",
+                DiagnosticSeverity.Error,
+                declaration.Keyword.Span);
+        }
+
+        if (method.DllImport is null)
+        {
+            diagnostics.Report(
+                "ILC2215",
+                $"DllImport method '{declaringTypeName}.{declaration.Identifier.Text}' must declare a string library name.",
+                DiagnosticSeverity.Error,
+                declaration.Keyword.Span);
+        }
+    }
+
+    private static DllImportMetadata? BindDllImportMetadata(MethodDeclarationSyntax methodDeclaration)
+    {
+        var dllImportAttribute = methodDeclaration.Attributes.FirstOrDefault(attribute => IsDllImportAttribute(attribute));
+        if (dllImportAttribute is null)
+        {
+            return null;
+        }
+
+        var libraryName = dllImportAttribute.Arguments
+            .FirstOrDefault(argument => argument.ModifierKeyword is null)?.Expression switch
+        {
+            LiteralExpressionSyntax { LiteralToken.Kind: SyntaxKind.StringToken, LiteralToken.Value: string value } => value,
+            _ => null
+        };
+
+        var entryPoint = methodDeclaration.Identifier.Text;
+        var callingConvention = NativeCallingConvention.Cdecl;
+
+        foreach (var argument in dllImportAttribute.Arguments.Select(argument => argument.Expression).OfType<AssignmentExpressionSyntax>())
+        {
+            var targetName = argument.Target switch
+            {
+                NameExpressionSyntax { Name.Parts.Count: > 0 } name => name.Name.Parts[^1].Text,
+                MemberAccessExpressionSyntax memberAccess => memberAccess.MemberName.Text,
+                _ => null
+            };
+
+            if (string.Equals(targetName, "EntryPoint", StringComparison.Ordinal))
+            {
+                if (argument.Expression is LiteralExpressionSyntax { LiteralToken.Kind: SyntaxKind.StringToken, LiteralToken.Value: string value })
+                {
+                    entryPoint = value;
+                }
+            }
+            else if (string.Equals(targetName, "CallingConvention", StringComparison.Ordinal))
+            {
+                switch (argument.Expression)
+                {
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "StdCall", StringComparison.Ordinal):
+                    case MemberAccessExpressionSyntax { MemberName.Text: "StdCall" }:
+                        callingConvention = NativeCallingConvention.StdCall;
+                        break;
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "Cdecl", StringComparison.Ordinal):
+                    case MemberAccessExpressionSyntax { MemberName.Text: "Cdecl" }:
+                        callingConvention = NativeCallingConvention.Cdecl;
+                        break;
+                }
+            }
+        }
+
+        return libraryName is null
+            ? null
+            : new DllImportMetadata(libraryName, entryPoint, callingConvention);
+    }
+
+    private static bool IsDllImportAttribute(AttributeSyntax attribute) =>
+        string.Equals(attribute.Name.Parts[^1].Text, "DllImport", StringComparison.Ordinal);
 
     private static HostImportKind ResolveHostImportKind(
         string methodName,
@@ -4532,6 +4658,7 @@ public sealed class Binder
 
     private static MethodDeclarationSyntax CreateGetterAccessorDeclaration(PropertyDeclarationSyntax propertyDeclaration) =>
         new(
+            [],
             propertyDeclaration.Modifiers,
             new SyntaxToken(SyntaxKind.FunctionKeyword, "function", null, propertyDeclaration.GetterKeyword?.Span ?? propertyDeclaration.Identifier.Span),
             new SyntaxToken(SyntaxKind.IdentifierToken, $"get_{propertyDeclaration.Identifier.Text}", null, propertyDeclaration.Identifier.Span),
@@ -4562,6 +4689,7 @@ public sealed class Binder
             propertyDeclaration.TypeName));
 
         return new MethodDeclarationSyntax(
+            [],
             propertyDeclaration.Modifiers,
             new SyntaxToken(SyntaxKind.MethodKeyword, "method", null, propertyDeclaration.SetterKeyword?.Span ?? propertyDeclaration.Identifier.Span),
             new SyntaxToken(SyntaxKind.IdentifierToken, $"set_{propertyDeclaration.Identifier.Text}", null, propertyDeclaration.Identifier.Span),

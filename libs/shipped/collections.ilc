@@ -1,56 +1,188 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                          I L C   C O L L E C T I O N S
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the bootstrap collection surface for ILC. It defines the first generic collection interfaces and
+//            their shipped implementations, including list enumeration and a simple dictionary backed by parallel arrays.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-05
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 namespace System.Collections;
+
 uses System;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • IEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines the minimal generic enumerator contract.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current element in the collection.</summary>
   property Current: T { get; };
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element of the collection.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   function MoveNext(): Boolean;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   method Reset;
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • IEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines a source that can produce a generic enumerator.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the collection.</summary>
+  /// <returns>An enumerator that can be used to iterate through the collection.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   function GetEnumerator(): IEnumerator<T>;
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • IReadOnlyList<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines read-only indexed access to a generic list.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface IReadOnlyList<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of elements in the collection.</summary>
   property Count: Integer { get; };
+  
+  /// <summary>Gets the element at the specified index in the read-only list.</summary>
   default property Item[index: Integer]: T { get; };
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • ICollection<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines the mutable generic collection surface shared by shipped list implementations.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface ICollection<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of elements contained in the collection.</summary>
   property Count: Integer { get; };
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Add
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds an element to the collection.</summary>
+  /// <param name="value">The element to add to the collection.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   method Add(value: T);
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Clear
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Removes all elements from the collection.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   method Clear;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Contains
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the collection contains a specific value.</summary>
+  /// <param name="value">The value to locate in the collection.</param>
+  /// <returns>true if the collection contains an element with the specified value; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   function Contains(value: T): Boolean;
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • IList<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines the shipped mutable generic list abstraction.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface IList<T>: IReadOnlyList<T>, ICollection<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AddRange
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds the elements of the specified array to the end of the list.</summary>
+  /// <param name="values">The array whose elements should be added to the end of the list.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   method AddRange(values: array of T);
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • IndexOf
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines the index of a specific item in the list.</summary>
+  /// <param name="value">The item to locate in the list.</param>
+  /// <returns>The index of the first occurrence of the item within the list, if found; otherwise, -1.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   function IndexOf(value: T): Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToArray
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Copies the elements of the list to a new array.</summary>
+  /// <returns>An array containing copies of the elements of the list.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   function ToArray: array of T;
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • StringList
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides a convenience compatibility alias for List&lt;String&gt;.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class StringList: List<String>
 begin
 end;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ListEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates the active range of a shipped List&lt;T&gt; instance.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ListEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The array of items being enumerated.</summary>
   private var SourceItems: array of T;
+  /// <summary>The number of items in the source array that are being enumerated.</summary>
   private var SourceCount: Integer;
+  /// <summary>The current index of enumeration into the source array.</summary>
   private var Index: Integer;
 
-  public constructor(items: array of T; count: Integer);
-  begin
-    SourceItems := items;
-    SourceCount := count;
-    Index := -1;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public property Current: T
   begin
     get
@@ -59,6 +191,29 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the ListEnumerator class.</summary>
+  /// <param name="items">The array of items to enumerate.</param>
+  /// <param name="count">The number of items in the source array that are being enumerated.</param>
+  /// <remarks>The enumerator will enumerate the range of items from index 0 to count - 1 in the source array.</remarks>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(items: array of T; count: Integer);
+  begin
+    SourceItems := items;
+    SourceCount := count;
+    Index := -1;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element of the collection.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     if Index + 1 >= SourceCount then
@@ -70,17 +225,81 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     Index := -1;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • List<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides the shipped generic list implementation with dynamic array backing.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class List<T>: IList<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The array of items in the list.</summary>
   private var Items: array of T;
+  /// <summary>The number of items in the list.</summary>
   private var CountValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of elements contained in the list.</summary>
+  public property Count: Integer
+  begin
+    get
+    begin
+      return CountValue;
+    end;
+  end;
+
+  /// <summary>Gets or sets the element at the specified index in the list.</summary>
+  public default property Item[index: Integer]: T
+  begin
+    get
+    begin
+      return Items[index];
+    end;
+
+    set(value)
+    begin
+      Items[index] := value;
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the List class.</summary>
+  /// <remarks>The list is initialized with a default capacity of 4 items.</remarks>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    Items := new T[4];
+    CountValue := 0;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EnsureCapacity
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Ensures that the list has at least the specified capacity, resizing the internal array if necessary.</summary>
+  /// <param name="minimum">The minimum capacity required.</param>
+  /// <remarks>
+  ///   If the current capacity of the list is less than the specified minimum, the internal array is resized to a new capacity that is at least
+  ///   double the current capacity until it meets or exceeds the minimum.
+  /// </remarks>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method EnsureCapacity(minimum: Integer);
   begin
     if Items = nil then
@@ -115,38 +334,23 @@ begin
     Items := resized;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CreateEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Creates a new enumerator for the list.</summary>
+  /// <returns>A ListEnumerator instance for the list.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function CreateEnumerator(): ListEnumerator<T>;
   begin
     return new ListEnumerator<T>(Items, CountValue);
   end;
 
-  public constructor;
-  begin
-    Items := new T[4];
-    CountValue := 0;
-  end;
-
-  public property Count: Integer
-  begin
-    get
-    begin
-      return CountValue;
-    end;
-  end;
-
-  public default property Item[index: Integer]: T
-  begin
-    get
-    begin
-      return Items[index];
-    end;
-
-    set(value)
-    begin
-      Items[index] := value;
-    end;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Add
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds an item to the end of the list.</summary>
+  /// <param name="value">The item to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Add(value: T);
   begin
     EnsureCapacity(CountValue + 1);
@@ -154,6 +358,12 @@ begin
     CountValue := CountValue + 1;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AddRange
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds the elements of the specified array to the end of the list.</summary>
+  /// <param name="values">The array of items to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method AddRange(values: array of T);
   begin
     var index := 0;
@@ -164,17 +374,37 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Clear
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Removes all items from the list.</summary>
+  /// <remarks>The internal array is reinitialized to the default capacity of 4 items.</remarks>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Clear;
   begin
     Items := new T[4];
     CountValue := 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Contains
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the list contains a specific value.</summary>
+  /// <param name="value">The item to locate.</param>
+  /// <returns>true if the item is found; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Contains(value: T): Boolean;
   begin
     return IndexOf(value) >= 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • IndexOf
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines the index of a specific item in the list.</summary>
+  /// <param name="value">The item to locate.</param>
+  /// <returns>The index of the first occurrence of the item within the list, if found; otherwise, -1.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function IndexOf(value: T): Integer;
   begin
     var index := 0;
@@ -191,6 +421,12 @@ begin
     return -1;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToArray
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns a new array containing all the elements of the list.</summary>
+  /// <returns>A new array containing all the elements of the list.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function ToArray: array of T;
   begin
     var result := new T[CountValue];
@@ -204,18 +440,100 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the list.</summary>
+  /// <returns>An enumerator that can be used to iterate through the list.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return CreateEnumerator();
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Dictionary<TKey, TValue>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides the shipped generic dictionary implementation backed by parallel key/value arrays.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Dictionary<TKey, TValue>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The array of keys in the dictionary.</summary>
   private var Keys: array of TKey;
+  /// <summary>
+  ///   The array of values in the dictionary, where the value at each index corresponds to the key at the same index in the Keys array.
+  /// </summary>
   private var Values: array of TValue;
+  /// <summary>The number of key/value pairs in the dictionary.</summary>
   private var CountValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of key/value pairs contained in the dictionary.</summary>
+  public property Count: Integer
+  begin
+    get
+    begin
+      return CountValue;
+    end;
+  end;
+
+  /// <summary>Gets or sets the value associated with the specified key.</summary>
+  /// <param name="key">The key of the value to get or set.</param>
+  /// <returns>The value associated with the specified key.</returns>
+  public default property Item[key: TKey]: TValue
+  begin
+    get
+    begin
+      var index := IndexOfKey(key);
+      return Values[index];
+    end;
+
+    set(value)
+    begin
+      var index := IndexOfKey(key);
+      if index >= 0 then
+      begin
+        Values[index] := value;
+        return;
+      end;
+
+      EnsureCapacity(CountValue + 1);
+      Keys[CountValue] := key;
+      Values[CountValue] := value;
+      CountValue := CountValue + 1;
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Dictionary class.</summary>
+  /// <remarks>The dictionary is initialized with a default capacity of 4 key/value pairs.</remarks>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    Keys := new TKey[4];
+    Values := new TValue[4];
+    CountValue := 0;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EnsureCapacity
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Ensures that the dictionary has at least the specified capacity, resizing the internal arrays if necessary.</summary>
+  /// <param name="minimum">The minimum capacity required.</param>
+  /// <remarks>
+  ///   If the current capacity of the dictionary is less than the specified minimum, the internal arrays are resized to a new capacity that is 
+  ///   at least double the current capacity until it meets or exceeds the minimum.
+  /// </remarks>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method EnsureCapacity(minimum: Integer);
   begin
     if Keys = nil then
@@ -254,6 +572,13 @@ begin
     Values := resizedValues;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • IndexOfKey
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines the index of a specific key in the dictionary.</summary>
+  /// <param name="key">The key to locate.</param>
+  /// <returns>The index of the key within the dictionary, if found; otherwise, -1.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function IndexOfKey(key: TKey): Integer;
   begin
     var index := 0;
@@ -270,55 +595,38 @@ begin
     return -1;
   end;
 
-  public constructor;
-  begin
-    Keys := new TKey[4];
-    Values := new TValue[4];
-    CountValue := 0;
-  end;
-
-  public property Count: Integer
-  begin
-    get
-    begin
-      return CountValue;
-    end;
-  end;
-
-  public default property Item[key: TKey]: TValue
-  begin
-    get
-    begin
-      var index := IndexOfKey(key);
-      return Values[index];
-    end;
-
-    set(value)
-    begin
-      var index := IndexOfKey(key);
-      if index >= 0 then
-      begin
-        Values[index] := value;
-        return;
-      end;
-
-      EnsureCapacity(CountValue + 1);
-      Keys[CountValue] := key;
-      Values[CountValue] := value;
-      CountValue := CountValue + 1;
-    end;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Add
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds a key/value pair to the dictionary.</summary>
+  /// <param name="key">The key of the element to add.</param>
+  /// <param name="value">The value of the element to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Add(key: TKey; value: TValue);
   begin
     Item[key] := value;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ContainsKey
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the dictionary contains the specified key.</summary>
+  /// <param name="key">The key to locate.</param>
+  /// <returns>true if the dictionary contains an element with the specified key; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function ContainsKey(key: TKey): Boolean;
   begin
     return IndexOfKey(key) >= 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TryGetValue
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Attempts to get the value associated with the specified key.</summary>
+  /// <param name="key">The key to locate.</param>
+  /// <param name="value">When this method returns, contains the value associated with the specified key, if the key is found; otherwise, the default value for the type of the value parameter.</param>
+  /// <returns>true if the dictionary contains an element with the specified key; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function TryGetValue(key: TKey; out value: TValue): Boolean;
   begin
     var index := IndexOfKey(key);
@@ -331,6 +639,11 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Clear
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Removes all elements from the dictionary.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Clear;
   begin
     Keys := new TKey[4];
@@ -338,3 +651,6 @@ begin
     CountValue := 0;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

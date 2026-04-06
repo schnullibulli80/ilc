@@ -1,6 +1,25 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                    I L C   D I A G N O S T I C S
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the diagnostics and tracing surface of the shipped ILC library. It provides stopwatch support,
+//            trace abstractions, concrete trace targets, and the static Trace facade used by fixtures and higher-level libraries.
+//            The implementation stays intentionally bootstrap-friendly and relies on the existing system and host services.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-05
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 namespace System.Diagnostics;
+
 uses System;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • TraceLevel
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines the verbosity or severity level of a trace message.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum TraceLevel
 begin
   Debug;
@@ -8,52 +27,115 @@ begin
   Warning;
   Error;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • TraceTarget
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines the output targets supported by the bootstrap trace implementation.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum TraceTarget
 begin
   Console;
   File;
   Null;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • ITrace
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines the common tracing surface used by all diagnostics targets.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface ITrace
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the trace targets supported by this trace instance.</summary>
   public property Targets: array of TraceTarget { get; set; };
+  /// <summary>Gets or sets the minimum trace level.</summary>
   public property MinimumLevel: TraceLevel { get; set; };
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Write(text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level including a newline.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteLine(text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the debug level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————  
   public method WriteDebug(text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the information level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteInformation(text: String);
+
+  // ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the warning level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteWarning(text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteError(text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level including a stack trace.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteErrorWithStackTrace(text: String);
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Stopwatch
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides a lightweight stopwatch based on monotonic host time.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Stopwatch
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Ticks at the moment the stopwatch was started.</summary>
   private var StartTick: Integer;
+  /// <summary>Ticks accumulated from previous start/stop cycles.</summary>
   private var ElapsedTick: Integer;
+  /// <summary>Indicates whether the stopwatch is currently running.</summary>
   private var Running: Boolean;
 
-  private static function CurrentTick: Integer;
-  begin
-    return Integer.Parse(Clock.MonotonicMillisecondsText);
-  end;
-
-  public constructor;
-  begin
-    StartTick := 0;
-    ElapsedTick := 0;
-    Running := false;
-  end;
-
-  public static function StartNew: Stopwatch;
-  begin
-    var stopwatch := new Stopwatch();
-    stopwatch.Start();
-    return stopwatch;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the stopwatch is currently running.</summary>
   public property IsRunning: Boolean
   begin
     get
@@ -61,7 +143,8 @@ begin
       return Running;
     end;
   end;
-
+  
+  /// <summary>Gets the total elapsed time in milliseconds.</summary>
   public property ElapsedMilliseconds: Integer
   begin
     get
@@ -75,6 +158,46 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Stopwatch class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    StartTick := 0;
+    ElapsedTick := 0;
+    Running := false;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CurrentTick
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Retrieves the current tick count from the monotonic host clock.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static function CurrentTick: Integer;
+  begin
+    return Integer.Parse(Clock.MonotonicMillisecondsText);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • StartNew
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Creates and starts a new Stopwatch instance.</summary>
+  /// <returns>A started Stopwatch instance.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public static function StartNew: Stopwatch;
+  begin
+    var stopwatch := new Stopwatch();
+    stopwatch.Start();
+    return stopwatch;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Start
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Starts or resumes the stopwatch.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Start;
   begin
     if not Running then
@@ -84,6 +207,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Stop
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Stops or pauses the stopwatch.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Stop;
   begin
     if Running then
@@ -93,6 +221,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Restart
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Restarts the stopwatch.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Restart;
   begin
     ElapsedTick := 0;
@@ -100,6 +233,11 @@ begin
     Running := true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the stopwatch.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     StartTick := 0;
@@ -107,15 +245,34 @@ begin
     Running := false;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TraceFormatting
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides shared formatting helpers for trace implementations.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TraceFormatting
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NewLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Retrieves the newline string for the current environment.</summary>
+  /// <returns>A string representing the newline sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function NewLine: String;
   begin
     return '
 ';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • LevelText
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the text representation of a trace level.</summary>
+  /// <param name="level">The trace level.</param>
+  /// <returns>A string representing the trace level.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function LevelText(level: TraceLevel): String;
   begin
     if level = TraceLevel.Debug then
@@ -136,35 +293,126 @@ begin
     return 'ERROR';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Prefix
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Formats a trace message prefix with timestamp and level information.</summary>
+  /// <param name="level">The trace level to include in the prefix.</param>
+  /// <returns>A string representing the trace message prefix.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Prefix(level: TraceLevel): String;
   begin
     return '[' + Clock.WallDateTimeText + '] [' + LevelText(level) + '] ';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AppendLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Appends a newline character to the specified text.</summary>
+  /// <param name="text">The text to which to append a newline.</param>
+  /// <returns>A string representing the text with a newline appended.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function AppendLine(text: String): String;
   begin
     return text + NewLine();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ThrowStackTraceNotSupported
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Throws a NotSupportedException indicating that stack trace tracing is not supported in the bootstrap runtime.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method ThrowStackTraceNotSupported;
   begin
     raise new NotSupportedException('Stacktrace tracing is not supported in the bootstrap runtime yet.');
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ConsoleTrace
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Writes trace output to the console target with timestamp and level prefixing.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ConsoleTrace: ITrace
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Holds the trace targets supported by this trace instance.</summary>
   private var TargetKinds: array of TraceTarget;
+  /// <summary>Holds the minimum trace level for this trace instance.</summary>
   private var MinimumLevelValue: TraceLevel;
+  /// <summary>Indicates whether there is a pending trace fragment that has not yet been flushed to the console.</summary>
   private var HasPending: Boolean;
+  /// <summary>Holds the text of the pending trace fragment that has not yet been flushed to the console.</summary>
   private var PendingText: String;
+  /// <summary>Holds the trace level of the pending trace fragment that has not yet been flushed to the console.</summary>
   private var PendingLevel: TraceLevel;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the trace targets supported by this trace instance.</summary>
+  public property Targets: array of TraceTarget
+  begin
+    get
+    begin
+      return TargetKinds;
+    end;
+
+    set(value)
+    begin
+      TargetKinds := value;
+    end;
+  end;
+
+  /// <summary>Gets or sets the minimum trace level.</summary>
+  public property MinimumLevel: TraceLevel
+  begin
+    get
+    begin
+      return MinimumLevelValue;
+    end;
+
+    set(value)
+    begin
+      MinimumLevelValue := value;
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the ConsoleTrace class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    TargetKinds := new TraceTarget[1];
+    TargetKinds[0] := TraceTarget.Console;
+    MinimumLevelValue := TraceLevel.Debug;
+    HasPending := false;
+    PendingText := '';
+      PendingLevel := TraceLevel.Information;
+  end;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ShouldWrite
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether a trace message with the specified level should be written based on the minimum level setting.</summary>
+  /// <param name="level">The trace level of the message to check.</param>
+  /// <returns>true if the message should be written; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ShouldWrite(level: TraceLevel): Boolean;
   begin
     return level >= MinimumLevelValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FlushPending
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Flushes the pending trace fragment to the console.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method FlushPending;
   begin
     if HasPending then
@@ -175,6 +423,16 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EmitFragment
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Emits a trace fragment with the specified level and text. If there is an existing pending fragment with the same level, the text is
+  ///   appended to it; otherwise, the existing pending fragment is flushed and a new pending fragment is created.
+  /// </summary>
+  /// <param name="level">The trace level of the fragment to emit.</param>
+  /// <param name="text">The text of the fragment to emit.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method EmitFragment(level: TraceLevel; text: String);
   begin
     if not ShouldWrite(level) then
@@ -195,6 +453,17 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EmitLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Emits a trace line with the specified level and text. If there is an existing pending fragment with the same level, the text is
+  ///   appended to it; otherwise, the existing pending fragment is flushed and a new pending fragment is created.
+  /// </summary>
+  /// <param name="level">The trace level of the line to emit.</param>
+  /// <param name="text">The text of the line to emit.</param>
+  /// <param name="continuePending">A value indicating whether to continue the pending fragment.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method EmitLine(level: TraceLevel; text: String; continuePending: Boolean);
   begin
     if not ShouldWrite(level) then
@@ -214,16 +483,112 @@ begin
     Console.WriteLine(TraceFormatting.Prefix(level) + text);
   end;
 
-  public constructor;
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Write(text: String);
   begin
-    TargetKinds := new TraceTarget[1];
-    TargetKinds[0] := TraceTarget.Console;
-    MinimumLevelValue := TraceLevel.Debug;
-    HasPending := false;
-    PendingText := '';
-    PendingLevel := TraceLevel.Information;
+    EmitFragment(TraceLevel.Information, text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level including a newline.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteLine(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, true);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the debug level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteDebug(text: String);
+  begin
+    EmitLine(TraceLevel.Debug, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the information level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteInformation(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the warning level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteWarning(text: String);
+  begin
+    EmitLine(TraceLevel.Warning, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteError(text: String);
+  begin
+    EmitLine(TraceLevel.Error, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level and stack trace.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteErrorWithStackTrace(text: String);
+  begin
+    TraceFormatting.ThrowStackTraceNotSupported();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • FileTrace
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Writes formatted trace output into a text file.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class FileTrace: ITrace
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Holds the trace targets supported by this trace instance.</summary>
+  private var TargetKinds: array of TraceTarget;
+  /// <summary>Holds the minimum trace level for this trace instance.</summary>
+  private var MinimumLevelValue: TraceLevel;
+  /// <summary>Holds the file path to which trace messages will be written.</summary>
+  private var FilePathValue: String;
+  /// <summary>Indicates whether there is a pending trace fragment that has not yet been flushed to the file.</summary>
+  private var HasPending: Boolean;
+  /// <summary>Holds the text of the pending trace fragment that has not yet been flushed to the file.</summary>
+  private var PendingText: String;
+  /// <summary>Holds the trace level of the pending trace fragment that has not yet been flushed to the file.</summary>
+  private var PendingLevel: TraceLevel;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the trace targets supported by this trace instance.</summary>
   public property Targets: array of TraceTarget
   begin
     get
@@ -237,6 +602,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the minimum trace level.</summary>
   public property MinimumLevel: TraceLevel
   begin
     get
@@ -250,56 +616,54 @@ begin
     end;
   end;
 
-  public method Write(text: String);
+  /// <summary>Gets or sets the file path to which trace messages will be written.</summary>
+  public property FilePath: String
   begin
-    EmitFragment(TraceLevel.Information, text);
+    get
+    begin
+      return FilePathValue;
+    end;
+
+    set(value)
+    begin
+      FilePathValue := value;
+    end;
   end;
 
-  public method WriteLine(text: String);
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the FileTrace class with the specified file path.</summary>
+  /// <param name="path">The file path to which trace messages will be written.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(path: String);
   begin
-    EmitLine(TraceLevel.Information, text, true);
+    TargetKinds := new TraceTarget[1];
+    TargetKinds[0] := TraceTarget.File;
+    MinimumLevelValue := TraceLevel.Debug;
+    FilePathValue := path;
+    HasPending := false;
+    PendingText := '';
+    PendingLevel := TraceLevel.Information;
   end;
 
-  public method WriteDebug(text: String);
-  begin
-    EmitLine(TraceLevel.Debug, text, false);
-  end;
-
-  public method WriteInformation(text: String);
-  begin
-    EmitLine(TraceLevel.Information, text, false);
-  end;
-
-  public method WriteWarning(text: String);
-  begin
-    EmitLine(TraceLevel.Warning, text, false);
-  end;
-
-  public method WriteError(text: String);
-  begin
-    EmitLine(TraceLevel.Error, text, false);
-  end;
-
-  public method WriteErrorWithStackTrace(text: String);
-  begin
-    TraceFormatting.ThrowStackTraceNotSupported();
-  end;
-end;
-
-public class FileTrace: ITrace
-begin
-  private var TargetKinds: array of TraceTarget;
-  private var MinimumLevelValue: TraceLevel;
-  private var FilePathValue: String;
-  private var HasPending: Boolean;
-  private var PendingText: String;
-  private var PendingLevel: TraceLevel;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ShouldWrite
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether a trace message with the specified level should be written based on the minimum level setting.</summary>
+  /// <param name="level">The trace level of the message to check.</param>
+  /// <returns>true if the message should be written; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ShouldWrite(level: TraceLevel): Boolean;
   begin
     return level >= MinimumLevelValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FlushPending
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Flushes the pending trace fragment to the file.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method FlushPending;
   begin
     if HasPending then
@@ -310,6 +674,16 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EmitFragment
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Emits a trace fragment with the specified level and text. If there is an existing pending fragment with the same level, the text is
+  ///   appended to it; otherwise, the existing pending fragment is flushed and a new pending fragment is created.
+  /// </summary>
+  /// <param name="level">The trace level of the fragment to emit.</param>
+  /// <param name="text">The text of the fragment to emit.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method EmitFragment(level: TraceLevel; text: String);
   begin
     if not ShouldWrite(level) then
@@ -335,6 +709,17 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EmitLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Emits a trace line with the specified level and text. If there is an existing pending fragment with the same level, the text is appended
+  ///   to it; otherwise, the existing pending fragment is flushed and a new pending fragment is created.
+  /// </summary>
+  /// <param name="level">The trace level of the line to emit.</param>
+  /// <param name="text">The text of the line to emit.</param>
+  /// <param name="continuePending">A value indicating whether to continue the pending fragment.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method EmitLine(level: TraceLevel; text: String; continuePending: Boolean);
   begin
     if not ShouldWrite(level) then
@@ -359,17 +744,104 @@ begin
     File.AppendAllText(FilePathValue, TraceFormatting.AppendLine(TraceFormatting.Prefix(level) + text));
   end;
 
-  public constructor(path: String);
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Write(text: String);
   begin
-    TargetKinds := new TraceTarget[1];
-    TargetKinds[0] := TraceTarget.File;
-    MinimumLevelValue := TraceLevel.Debug;
-    FilePathValue := path;
-    HasPending := false;
-    PendingText := '';
-    PendingLevel := TraceLevel.Information;
+    EmitFragment(TraceLevel.Information, text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level including a newline.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteLine(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, true);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the debug level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteDebug(text: String);
+  begin
+    EmitLine(TraceLevel.Debug, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the information level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteInformation(text: String);
+  begin
+    EmitLine(TraceLevel.Information, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the warning level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteWarning(text: String);
+  begin
+    EmitLine(TraceLevel.Warning, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteError(text: String);
+  begin
+    EmitLine(TraceLevel.Error, text, false);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level and stack trace.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteErrorWithStackTrace(text: String);
+  begin
+    TraceFormatting.ThrowStackTraceNotSupported();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • NullTrace
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Implements a sink trace that discards all output.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class NullTrace: ITrace
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Holds the trace targets supported by this trace instance.</summary>
+  private var TargetKinds: array of TraceTarget;
+  /// <summary>Holds the minimum trace level for this trace instance.</summary>
+  private var MinimumLevelValue: TraceLevel;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the trace targets supported by this trace instance.</summary>
   public property Targets: array of TraceTarget
   begin
     get
@@ -383,6 +855,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the minimum trace level for this trace instance.</summary>
   public property MinimumLevel: TraceLevel
   begin
     get
@@ -395,61 +868,12 @@ begin
       MinimumLevelValue := value;
     end;
   end;
-
-  public property FilePath: String
-  begin
-    get
-    begin
-      return FilePathValue;
-    end;
-
-    set(value)
-    begin
-      FilePathValue := value;
-    end;
-  end;
-
-  public method Write(text: String);
-  begin
-    EmitFragment(TraceLevel.Information, text);
-  end;
-
-  public method WriteLine(text: String);
-  begin
-    EmitLine(TraceLevel.Information, text, true);
-  end;
-
-  public method WriteDebug(text: String);
-  begin
-    EmitLine(TraceLevel.Debug, text, false);
-  end;
-
-  public method WriteInformation(text: String);
-  begin
-    EmitLine(TraceLevel.Information, text, false);
-  end;
-
-  public method WriteWarning(text: String);
-  begin
-    EmitLine(TraceLevel.Warning, text, false);
-  end;
-
-  public method WriteError(text: String);
-  begin
-    EmitLine(TraceLevel.Error, text, false);
-  end;
-
-  public method WriteErrorWithStackTrace(text: String);
-  begin
-    TraceFormatting.ThrowStackTraceNotSupported();
-  end;
-end;
-
-public class NullTrace: ITrace
-begin
-  private var TargetKinds: array of TraceTarget;
-  private var MinimumLevelValue: TraceLevel;
-
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the NullTrace class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     TargetKinds := new TraceTarget[1];
@@ -457,81 +881,106 @@ begin
     MinimumLevelValue := TraceLevel.Debug;
   end;
 
-  public property Targets: array of TraceTarget
-  begin
-    get
-    begin
-      return TargetKinds;
-    end;
-
-    set(value)
-    begin
-      TargetKinds := value;
-    end;
-  end;
-
-  public property MinimumLevel: TraceLevel
-  begin
-    get
-    begin
-      return MinimumLevelValue;
-    end;
-
-    set(value)
-    begin
-      MinimumLevelValue := value;
-    end;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Write(text: String);
   begin
     return;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  
   public method WriteLine(text: String);
   begin
     return;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteDebug(text: String);
   begin
     return;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteInformation(text: String);
   begin
     return;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteWarning(text: String);
   begin
     return;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteError(text: String);
   begin
     return;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Discards the specified trace message.</summary>
+  /// <param name="text">The message to discard.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteErrorWithStackTrace(text: String);
   begin
     TraceFormatting.ThrowStackTraceNotSupported();
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • CompositeTrace
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Dispatches trace calls to all configured trace targets.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class CompositeTrace: ITrace
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Holds the list of trace targets to which trace calls will be dispatched.</summary>
   private var EntryList: array of ITrace;
+  /// <summary>Holds the trace targets supported by this trace instance.</summary>
   private var TargetKinds: array of TraceTarget;
+  /// <summary>Holds the minimum trace level for this trace instance.</summary>
   private var MinimumLevelValue: TraceLevel;
 
-  public constructor;
-  begin
-    EntryList := new ITrace[0];
-    TargetKinds := new TraceTarget[0];
-    MinimumLevelValue := TraceLevel.Debug;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the list of trace targets to which trace calls will be dispatched.</summary>
   public property Entries: array of ITrace
   begin
     get
@@ -545,6 +994,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the trace targets supported by this trace instance.</summary>
   public property Targets: array of TraceTarget
   begin
     get
@@ -558,6 +1008,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the minimum trace level for this trace instance.</summary>
   public property MinimumLevel: TraceLevel
   begin
     get
@@ -571,6 +1022,25 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the CompositeTrace class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    EntryList := new ITrace[0];
+    TargetKinds := new TraceTarget[0];
+    MinimumLevelValue := TraceLevel.Debug;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWrite
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a Write call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWrite(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -604,6 +1074,13 @@ begin
     target.Write(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a WriteLine call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWriteLine(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -637,6 +1114,13 @@ begin
     target.WriteLine(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a WriteDebug call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWriteDebug(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -670,6 +1154,13 @@ begin
     target.WriteDebug(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a WriteInformation call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWriteInformation(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -703,6 +1194,13 @@ begin
     target.WriteInformation(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a WriteWarning call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWriteWarning(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -736,6 +1234,13 @@ begin
     target.WriteWarning(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a WriteError call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWriteError(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -769,6 +1274,13 @@ begin
     target.WriteError(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchWriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a WriteErrorWithStackTrace call to the specified trace target.</summary>
+  /// <param name="target">The trace target to which the call will be dispatched.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static method DispatchWriteErrorWithStackTrace(target: ITrace; text: String);
   begin
     var composite := target as CompositeTrace;
@@ -802,6 +1314,12 @@ begin
     target.WriteErrorWithStackTrace(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Write(text: String);
   begin
     for each var entry in EntryList do
@@ -810,6 +1328,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level including a newline to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteLine(text: String);
   begin
     for each var entry in EntryList do
@@ -818,6 +1342,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the debug level to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteDebug(text: String);
   begin
     for each var entry in EntryList do
@@ -826,6 +1356,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the information level to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteInformation(text: String);
   begin
     for each var entry in EntryList do
@@ -834,6 +1370,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the warning level to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteWarning(text: String);
   begin
     for each var entry in EntryList do
@@ -842,6 +1384,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteError(text: String);
   begin
     for each var entry in EntryList do
@@ -850,6 +1398,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the error level and stack trace to all configured trace targets.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteErrorWithStackTrace(text: String);
   begin
     for each var entry in EntryList do
@@ -858,31 +1412,25 @@ begin
     end;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Trace
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides the static diagnostics facade used by application and fixture code.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Trace
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Holds the current trace instance.</summary>
   private static var CurrentTrace: ITrace;
 
-  private static method CurrentAsComposite: CompositeTrace;
-  begin
-    return Current as CompositeTrace;
-  end;
-
-  private static method CurrentAsConsole: ConsoleTrace;
-  begin
-    return Current as ConsoleTrace;
-  end;
-
-  private static method CurrentAsFile: FileTrace;
-  begin
-    return Current as FileTrace;
-  end;
-
-  private static method CurrentAsNull: NullTrace;
-  begin
-    return Current as NullTrace;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the current trace instance.</summary>
   public static property Current: ITrace
   begin
     get
@@ -901,6 +1449,56 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CurrentAsComposite
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current trace instance cast to CompositeTrace if possible, or null otherwise.</summary>
+  /// <returns>The current trace instance cast to CompositeTrace if possible, or null otherwise.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static method CurrentAsComposite: CompositeTrace;
+  begin
+    return Current as CompositeTrace;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CurrentAsConsole
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current trace instance cast to ConsoleTrace if possible, or null otherwise.</summary>
+  /// <returns>The current trace instance cast to ConsoleTrace if possible, or null otherwise.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————  
+  private static method CurrentAsConsole: ConsoleTrace;
+  begin
+    return Current as ConsoleTrace;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CurrentAsFile
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current trace instance cast to FileTrace if possible, or null otherwise.</summary>
+  /// <returns>The current trace instance cast to FileTrace if possible, or null otherwise.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static method CurrentAsFile: FileTrace;
+  begin
+    return Current as FileTrace;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CurrentAsNull
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current trace instance cast to NullTrace if possible, or null otherwise.</summary>
+  /// <returns>The current trace instance cast to NullTrace if possible, or null otherwise.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static method CurrentAsNull: NullTrace;
+  begin
+    return Current as NullTrace;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method Write(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -934,6 +1532,12 @@ begin
     Current.Write(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a trace message with the default information level including a newline to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteLine(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -967,6 +1571,12 @@ begin
     Current.WriteLine(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a debug trace message to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteDebug(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -1000,6 +1610,12 @@ begin
     Current.WriteDebug(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteInformation
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes an information trace message to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteInformation(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -1033,6 +1649,12 @@ begin
     Current.WriteInformation(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteWarning
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a warning trace message to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteWarning(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -1066,6 +1688,12 @@ begin
     Current.WriteWarning(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteError
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes an error trace message to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteError(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -1099,6 +1727,12 @@ begin
     Current.WriteError(text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteErrorWithStackTrace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes an error trace message with stack trace to the current trace instance.</summary>
+  /// <param name="text">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteErrorWithStackTrace(text: String);
   begin
     var composite := CurrentAsComposite();
@@ -1132,3 +1766,6 @@ begin
     Current.WriteErrorWithStackTrace(text);
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

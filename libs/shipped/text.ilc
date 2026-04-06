@@ -1,20 +1,58 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                                 I L C   T E X T
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains text and formatting helpers for the shipped ILC library. The implementation focuses on pragmatic
+//            string utilities that are useful for console output, diagnostics, fixtures, and general bootstrap scenarios.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-05
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 namespace System.Text;
+
 uses System;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Text
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides string helpers for formatting, splitting, and whitespace normalization.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Text
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NewLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the newline string for the current environment.</summary>
+  /// <returns>A string representing the newline for the current environment.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function NewLine: String;
   begin
     return '
 ';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NormalizeLineEndings
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Normalizes line endings in the given text to use the newline string for the current environment.</summary>
+  /// <param name="text">The text to normalize line endings in.</param>
+  /// <returns>A string with normalized line endings.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function NormalizeLineEndings(text: String): String;
   begin
     return text.Replace('
 ', NewLine());
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CountLines
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Counts the number of lines in the given text.</summary>
+  /// <param name="text">The text to count lines in.</param>
+  /// <returns>The number of lines in the text.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function CountLines(text: String): Integer;
   begin
     if text = '' then
@@ -45,6 +83,14 @@ begin
     return count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CountSplitParts
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Counts the number of parts in the given string when split by the specified separator.</summary>
+  /// <param name="value">The string to split.</param>
+  /// <param name="separator">The separator to use for splitting.</param>
+  /// <returns>The number of parts in the split string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function CountSplitParts(value: String; separator: String): Integer;
   begin
     if value = '' then
@@ -75,11 +121,25 @@ begin
     return count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • IsNullOrEmpty
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Indicates whether the specified string is null or an empty string.</summary>
+  /// <param name="value">The string to check.</param>
+  /// <returns>true if the string is null or an empty string; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function IsNullOrEmpty(value: String): Boolean;
   begin
     return value = nil or value = '';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NullIfEmpty
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns null if the specified string is empty; otherwise, returns the string.</summary>
+  /// <param name="value">The string to check.</param>
+  /// <returns>null if the string is empty; otherwise, the string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function NullIfEmpty(value: String): String;
   begin
     if IsNullOrEmpty(value) then
@@ -90,6 +150,13 @@ begin
     return value;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TrimToNull
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns null if the specified string is empty after trimming; otherwise, returns the trimmed string.</summary>
+  /// <param name="value">The string to check.</param>
+  /// <returns>null if the string is empty after trimming; otherwise, the trimmed string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function TrimToNull(value: String): String;
   begin
     if value = nil then
@@ -100,6 +167,14 @@ begin
     return NullIfEmpty(value.Trim());
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Join
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Concatenates the elements of an array of strings, using the specified separator between each element.</summary>
+  /// <param name="separator">The string to use as a separator.</param>
+  /// <param name="values">The array of strings to concatenate.</param>
+  /// <returns>The concatenated string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Join(separator: String; values: array of String): String;
   begin
     var result := '';
@@ -118,6 +193,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Repeat
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns a new string that consists of the specified string repeated a specified number of times.</summary>
+  /// <param name="value">The string to repeat.</param>
+  /// <param name="count">The number of times to repeat the string.</param>
+  /// <returns>A new string that consists of the specified string repeated the specified number of times.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Repeat(value: String; count: Integer): String;
   begin
     if value = nil or count <= 0 then
@@ -136,6 +219,17 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • PadLeft
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Returns a new string that is right-aligned and padded on the left with the specified padding string to a specified total width.
+  /// </summary>
+  /// <param name="value">The string to pad.</param>
+  /// <param name="totalWidth">The number of characters in the resulting string, including the original string and any padding.</param>
+  /// <param name="padding">The string to use for padding. If null or empty, a single space character will be used.</param>
+  /// <returns>A new string that is right-aligned and padded on the left to the specified total width.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function PadLeft(value: String; totalWidth: Integer; padding: String): String;
   begin
     var source := value;
@@ -158,6 +252,17 @@ begin
     return Repeat(pad, totalWidth - source.Length) + source;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • PadRight
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Returns a new string that is left-aligned and padded on the right with the specified padding string to a specified total width.
+  /// </summary>
+  /// <param name="value">The string to pad.</param>
+  /// <param name="totalWidth">The number of characters in the resulting string, including the original string and any padding.</param>
+  /// <param name="padding">The string to use for padding. If null or empty, a single space character will be used.</param>
+  /// <returns>A new string that is left-aligned and padded on the right to the specified total width.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function PadRight(value: String; totalWidth: Integer; padding: String): String;
   begin
     var source := value;
@@ -180,6 +285,17 @@ begin
     return source + Repeat(pad, totalWidth - source.Length);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Center
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Returns a new string that is centered and padded on both sides with the specified padding string to a specified total width.
+  /// </summary>
+  /// <param name="value">The string to pad.</param>
+  /// <param name="totalWidth">The number of characters in the resulting string, including the original string and any padding.</param>
+  /// <param name="padding">The string to use for padding. If null or empty, a single space character will be used.</param>
+  /// <returns>A new string that is centered and padded on both sides to the specified total width.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Center(value: String; totalWidth: Integer; padding: String): String;
   begin
     var source := value;
@@ -205,11 +321,31 @@ begin
     return Repeat(pad, leftWidth) + source + Repeat(pad, rightWidth);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • IsWhitespaceChar
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the specified character is a whitespace character (space, tab, or newline).</summary>
+  /// <param name="value">The character to check.</param>
+  /// <returns>true if the character is a whitespace character; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function IsWhitespaceChar(value: String): Boolean;
   begin
     return value = ' ' or value = NewLine() or value = '	';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CollapseWhitespace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Returns a new string that has all leading and trailing whitespace removed and all internal sequences of whitespace characters replaced
+  ///   with a single space.
+  /// </summary>
+  /// <param name="value">The string to collapse.</param>
+  /// <returns>
+  ///   A new string that has all leading and trailing whitespace removed and all internal sequences of whitespace characters replaced with a
+  ///   single space.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function CollapseWhitespace(value: String): String;
   begin
     if value = nil then
@@ -245,6 +381,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Indent
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns a new string that has the specified prefix added to the beginning of each line.</summary>
+  /// <param name="value">The string to indent.</param>
+  /// <param name="prefix">The prefix to add.</param>
+  /// <returns>A new string that has the specified prefix added to the beginning of each line.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Indent(value: String; prefix: String): String;
   begin
     if value = nil then
@@ -270,6 +414,14 @@ begin
     return Join(NewLine(), indented);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • StartsWithIgnoreCase
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns a new string that has the specified prefix added to the beginning of each line.</summary>
+  /// <param name="value">The string to indent.</param>
+  /// <param name="prefix">The prefix to add.</param>
+  /// <returns>A new string that has the specified prefix added to the beginning of each line.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function StartsWithIgnoreCase(value: String; prefix: String): Boolean;
   begin
     if value = nil or prefix = nil then
@@ -280,6 +432,14 @@ begin
     return value.ToLower().StartsWith(prefix.ToLower());
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EndsWithIgnoreCase
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns a new string that has the specified suffix added to the end of each line.</summary>
+  /// <param name="value">The string to indent.</param>
+  /// <param name="suffix">The suffix to add.</param>
+  /// <returns>A new string that has the specified suffix added to the end of each line.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function EndsWithIgnoreCase(value: String; suffix: String): Boolean;
   begin
     if value = nil or suffix = nil then
@@ -290,6 +450,14 @@ begin
     return value.ToLower().EndsWith(suffix.ToLower());
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ContainsIgnoreCase
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns a new string that has the specified substring added to the end of each line.</summary>
+  /// <param name="value">The string to indent.</param>
+  /// <param name="part">The substring to add.</param>
+  /// <returns>A new string that has the specified substring added to the end of each line.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ContainsIgnoreCase(value: String; part: String): Boolean;
   begin
     if value = nil or part = nil then
@@ -300,6 +468,14 @@ begin
     return value.ToLower().Contains(part.ToLower());
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Split
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Splits the given string into parts based on the specified separator.</summary>
+  /// <param name="value">The string to split.</param>
+  /// <param name="separator">The separator to use for splitting.</param>
+  /// <returns>An array of strings that contains the parts of the split string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Split(value: String; separator: String): array of String;
   begin
     if value = nil then
@@ -343,6 +519,13 @@ begin
     return parts;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Lines
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an array of strings that contains the lines of the specified string.</summary>
+  /// <param name="value">The string to split into lines.</param>
+  /// <returns>An array of strings that contains the lines of the specified string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Lines(value: String): array of String;
   begin
     if value = nil then
@@ -383,3 +566,6 @@ begin
     return lines;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

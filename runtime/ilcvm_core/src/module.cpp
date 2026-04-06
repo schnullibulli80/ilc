@@ -93,15 +93,43 @@ std::vector<std::string> read_string_table(const std::vector<std::uint8_t>& byte
     return strings;
 }
 
+std::vector<std::vector<std::uint8_t>> read_blob_table(const std::vector<std::uint8_t>& bytes, const SectionDirectoryEntry& section)
+{
+    validate_section_bounds(bytes, section);
+    std::size_t cursor = section.offset;
+    const auto count = read_u32(bytes, cursor);
+    cursor += 4;
+    std::vector<std::vector<std::uint8_t>> blobs;
+    blobs.reserve(count + 1);
+    blobs.emplace_back();
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        const auto length = read_u32(bytes, cursor);
+        cursor += 4;
+        if (cursor + length > static_cast<std::size_t>(section.offset + section.size))
+        {
+            throw std::runtime_error("invalid blob table entry");
+        }
+
+        blobs.emplace_back(bytes.begin() + static_cast<std::ptrdiff_t>(cursor), bytes.begin() + static_cast<std::ptrdiff_t>(cursor + length));
+        cursor += length;
+    }
+
+    return blobs;
+}
+
 Function decode_function(
     std::uint32_t function_id,
     std::uint32_t owner_type_id,
     std::uint32_t method_flags,
+    std::uint32_t return_type_id,
     std::string name,
     std::uint16_t register_count,
     std::uint16_t argument_count,
     bool returns_value,
     HostImportKind host_import_kind,
+    Function::DllImport dll_import,
+    std::vector<std::uint32_t> parameter_type_ids,
     std::uint32_t code_offset,
     std::uint32_t code_size,
     std::vector<Function::ExceptionHandler> exception_handlers,
@@ -116,6 +144,7 @@ Function decode_function(
     function.function_id = function_id;
     function.owner_type_id = owner_type_id;
     function.method_flags = method_flags;
+    function.return_type_id = return_type_id;
     function.name = std::move(name);
     function.register_count = register_count;
     function.argument_count = argument_count;
@@ -125,6 +154,8 @@ Function decode_function(
     function.is_override = (method_flags & (1u << 6)) != 0;
     function.is_extern = (method_flags & (1u << 16)) != 0;
     function.host_import_kind = host_import_kind;
+    function.dll_import = std::move(dll_import);
+    function.parameter_type_ids = std::move(parameter_type_ids);
     function.exception_handlers = std::move(exception_handlers);
 
     std::size_t cursor = code_offset;
@@ -231,6 +262,11 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
     const auto& method_table = require_section(module.sections, SectionKind::method_table);
     const auto& code_section = require_section(module.sections, SectionKind::code_section);
     const auto strings = read_string_table(bytes, string_table);
+    auto blobs = std::vector<std::vector<std::uint8_t>>(1);
+    if (const auto* blob_table = find_section(module.sections, SectionKind::blob_table))
+    {
+        blobs = read_blob_table(bytes, *blob_table);
+    }
     module.strings = strings;
 
     validate_section_bounds(bytes, method_table);
@@ -427,6 +463,7 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
     {
         const auto owner_type_id = read_u32(bytes, cursor + 0);
         const auto name_string_id = read_u32(bytes, cursor + 4);
+        const auto signature_blob_id = read_u32(bytes, cursor + 8);
         const auto method_flags = read_u32(bytes, cursor + 12);
         const auto register_count = read_u16(bytes, cursor + 16);
         const auto parameter_count = read_u16(bytes, cursor + 18);
@@ -436,9 +473,43 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
         const auto exception_start = read_u32(bytes, cursor + 34);
         const auto exception_count = read_u32(bytes, cursor + 38);
         const auto host_import_kind = read_u32(bytes, cursor + 42);
+        const auto dll_import_library_name_string_id = read_u32(bytes, cursor + 46);
+        const auto dll_import_entry_point_string_id = read_u32(bytes, cursor + 50);
+        const auto dll_import_calling_convention = read_u32(bytes, cursor + 54);
         const auto name = name_string_id < strings.size() ? strings[name_string_id] : std::string();
         const auto argument_count = static_cast<std::uint16_t>(
             parameter_count + ((method_flags & (1u << 4)) == 0 ? 1 : 0));
+        std::vector<std::uint32_t> parameter_type_ids;
+        if (signature_blob_id != 0)
+        {
+            if (signature_blob_id >= blobs.size())
+            {
+                throw std::runtime_error("method signature blob id is invalid");
+            }
+
+            const auto& signature_blob = blobs[signature_blob_id];
+            if (signature_blob.size() < 7)
+            {
+                throw std::runtime_error("method signature blob is truncated");
+            }
+
+            const auto signature_parameter_count = static_cast<std::uint16_t>(
+                static_cast<std::uint16_t>(signature_blob[5]) |
+                (static_cast<std::uint16_t>(signature_blob[6]) << 8));
+            const auto expected_size = static_cast<std::size_t>(1 + 4 + 2 + signature_parameter_count * 4 + 2);
+            if (signature_blob.size() < expected_size)
+            {
+                throw std::runtime_error("method signature blob parameter list is truncated");
+            }
+
+            parameter_type_ids.reserve(signature_parameter_count);
+            std::size_t signature_cursor = 7;
+            for (std::uint16_t parameter_index = 0; parameter_index < signature_parameter_count; ++parameter_index)
+            {
+                parameter_type_ids.push_back(read_u32(signature_blob, signature_cursor));
+                signature_cursor += 4;
+            }
+        }
 
         if (code_offset + code_size > code_section.size)
         {
@@ -463,11 +534,19 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
             method_index,
             owner_type_id,
             method_flags,
+            return_type_id,
             name,
             register_count,
             argument_count,
             return_type_id != 0,
             static_cast<HostImportKind>(host_import_kind),
+            Function::DllImport {
+                .library_name = dll_import_library_name_string_id < strings.size() ? strings[dll_import_library_name_string_id] : std::string(),
+                .entry_point = dll_import_entry_point_string_id < strings.size() ? strings[dll_import_entry_point_string_id] : std::string(),
+                .calling_convention = static_cast<NativeCallingConvention>(dll_import_calling_convention),
+                .is_present = dll_import_library_name_string_id != 0
+            },
+            std::move(parameter_type_ids),
             code_offset,
             code_size,
             std::move(function_exceptions),

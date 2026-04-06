@@ -4,11 +4,14 @@
 #include <cctype>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <dlfcn.h>
 #include <functional>
 #include <limits>
 #include <stdexcept>
 #include <array>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ilcvm
@@ -60,6 +63,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     std::vector<ArrayObject> arrays(1);
     std::vector<ManagedObject> objects(1);
     std::vector<std::string> strings = module.strings;
+    std::unordered_map<std::string, void*> native_library_handles;
+    std::unordered_map<std::string, void*> native_symbol_handles;
 
     std::uint32_t max_function_id = 0;
     for (const auto& function : module.functions)
@@ -139,7 +144,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     std::vector<std::uint32_t> function_leaf_fastpath_instance_slot(static_cast<std::size_t>(max_function_id) + 1, 0);
     for (const auto& function : module.functions)
     {
-        if (function.host_import_kind != HostImportKind::none || !function.exception_handlers.empty())
+        if (function.host_import_kind != HostImportKind::none || function.dll_import.is_present || !function.exception_handlers.empty())
         {
             continue;
         }
@@ -466,6 +471,199 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         }
 
         return *type_lookup[type_id];
+    };
+    enum class NativeFfiValueKind : std::uint8_t
+    {
+        void_ = 0,
+        i32 = 1,
+        bool32 = 2,
+        utf8_string = 3
+    };
+    const auto get_native_ffi_value_kind = [&require_type](std::uint32_t type_id) -> NativeFfiValueKind
+    {
+        if (type_id == 0)
+        {
+            return NativeFfiValueKind::void_;
+        }
+
+        const auto& type = require_type(type_id);
+        if (type.name == "Integer")
+        {
+            return NativeFfiValueKind::i32;
+        }
+
+        if (type.name == "Boolean")
+        {
+            return NativeFfiValueKind::bool32;
+        }
+
+        if (type.name == "String")
+        {
+            return NativeFfiValueKind::utf8_string;
+        }
+
+        throw std::runtime_error("native ffi type is not supported: " + type.name);
+    };
+    const auto load_native_library = [&](const std::string& library_name) -> void*
+    {
+        if (const auto it = native_library_handles.find(library_name); it != native_library_handles.end())
+        {
+            return it->second;
+        }
+
+        dlerror();
+        auto* handle = dlopen(library_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
+        if (handle == nullptr)
+        {
+            const auto* error = dlerror();
+            throw std::runtime_error(
+                "failed to load native library '" + library_name + "': " + (error == nullptr ? "unknown error" : std::string(error)));
+        }
+
+        native_library_handles.emplace(library_name, handle);
+        return handle;
+    };
+    const auto resolve_native_symbol = [&](const Function& function) -> void*
+    {
+        const auto cache_key = function.dll_import.library_name + '\n' + function.dll_import.entry_point;
+        if (const auto it = native_symbol_handles.find(cache_key); it != native_symbol_handles.end())
+        {
+            return it->second;
+        }
+
+        auto* library_handle = load_native_library(function.dll_import.library_name);
+        dlerror();
+        auto* symbol = dlsym(library_handle, function.dll_import.entry_point.c_str());
+        if (symbol == nullptr)
+        {
+            const auto* error = dlerror();
+            throw std::runtime_error(
+                "failed to resolve native symbol '" + function.dll_import.entry_point +
+                "' from '" + function.dll_import.library_name +
+                "': " + (error == nullptr ? "unknown error" : std::string(error)));
+        }
+
+        native_symbol_handles.emplace(cache_key, symbol);
+        return symbol;
+    };
+    const auto invoke_native_import = [&](const Function& function, std::int32_t* arguments) -> std::int32_t
+    {
+        if (!function.dll_import.is_present)
+        {
+            throw std::runtime_error("native ffi invocation requested without dll import metadata");
+        }
+
+        if (function.dll_import.calling_convention != NativeCallingConvention::cdecl_ &&
+            function.dll_import.calling_convention != NativeCallingConvention::stdcall_)
+        {
+            throw std::runtime_error("native ffi calling convention is not supported");
+        }
+
+        if (function.parameter_type_ids.size() != function.argument_count)
+        {
+            throw std::runtime_error("native ffi signature metadata does not match argument count");
+        }
+
+        const auto return_kind = get_native_ffi_value_kind(function.return_type_id);
+        std::vector<std::string> marshaled_strings;
+        std::vector<NativeFfiValueKind> parameter_kinds;
+        parameter_kinds.reserve(function.parameter_type_ids.size());
+        for (const auto parameter_type_id : function.parameter_type_ids)
+        {
+            parameter_kinds.push_back(get_native_ffi_value_kind(parameter_type_id));
+        }
+
+        auto get_string_argument = [&](std::size_t index) -> const char*
+        {
+            marshaled_strings.push_back(require_string(arguments[index]));
+            return marshaled_strings.back().c_str();
+        };
+
+        auto get_i32_argument = [&](std::size_t index) -> std::int32_t
+        {
+            return arguments[index];
+        };
+
+        void* symbol = resolve_native_symbol(function);
+
+        if (parameter_kinds.empty())
+        {
+            switch (return_kind)
+            {
+                case NativeFfiValueKind::void_:
+                    reinterpret_cast<void(*)()>(symbol)();
+                    return 0;
+                case NativeFfiValueKind::i32:
+                    return reinterpret_cast<std::int32_t(*)()>(symbol)();
+                case NativeFfiValueKind::bool32:
+                    return reinterpret_cast<std::int32_t(*)()>(symbol)() != 0 ? 1 : 0;
+                default:
+                    break;
+            }
+        }
+        else if (parameter_kinds.size() == 1)
+        {
+            if (parameter_kinds[0] == NativeFfiValueKind::utf8_string)
+            {
+                const auto* arg0 = get_string_argument(0);
+                switch (return_kind)
+                {
+                    case NativeFfiValueKind::void_:
+                        reinterpret_cast<void(*)(const char*)>(symbol)(arg0);
+                        return 0;
+                    case NativeFfiValueKind::i32:
+                        return reinterpret_cast<std::int32_t(*)(const char*)>(symbol)(arg0);
+                    case NativeFfiValueKind::bool32:
+                        return reinterpret_cast<std::int32_t(*)(const char*)>(symbol)(arg0) != 0 ? 1 : 0;
+                    default:
+                        break;
+                }
+            }
+            else if (parameter_kinds[0] == NativeFfiValueKind::i32 || parameter_kinds[0] == NativeFfiValueKind::bool32)
+            {
+                const auto arg0 = get_i32_argument(0);
+                switch (return_kind)
+                {
+                    case NativeFfiValueKind::void_:
+                        reinterpret_cast<void(*)(std::int32_t)>(symbol)(arg0);
+                        return 0;
+                    case NativeFfiValueKind::i32:
+                        return reinterpret_cast<std::int32_t(*)(std::int32_t)>(symbol)(arg0);
+                    case NativeFfiValueKind::bool32:
+                        return reinterpret_cast<std::int32_t(*)(std::int32_t)>(symbol)(arg0) != 0 ? 1 : 0;
+                    default:
+                        break;
+                }
+            }
+        }
+        else if (parameter_kinds.size() == 2)
+        {
+            if ((parameter_kinds[0] == NativeFfiValueKind::i32 || parameter_kinds[0] == NativeFfiValueKind::bool32) &&
+                (parameter_kinds[1] == NativeFfiValueKind::i32 || parameter_kinds[1] == NativeFfiValueKind::bool32))
+            {
+                const auto arg0 = get_i32_argument(0);
+                const auto arg1 = get_i32_argument(1);
+                switch (return_kind)
+                {
+                    case NativeFfiValueKind::void_:
+                        reinterpret_cast<void(*)(std::int32_t, std::int32_t)>(symbol)(arg0, arg1);
+                        return 0;
+                    case NativeFfiValueKind::i32:
+                        return reinterpret_cast<std::int32_t(*)(std::int32_t, std::int32_t)>(symbol)(arg0, arg1);
+                    case NativeFfiValueKind::bool32:
+                        return reinterpret_cast<std::int32_t(*)(std::int32_t, std::int32_t)>(symbol)(arg0, arg1) != 0 ? 1 : 0;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        throw std::runtime_error(
+            "native ffi signature is not yet supported for '" +
+            function.name +
+            "' (" +
+            function.dll_import.entry_point +
+            ")");
     };
     const auto require_field = [&field_lookup](std::uint32_t field_id) -> const Field&
     {
@@ -1253,6 +1451,23 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         if (argument_count != function.argument_count)
         {
             throw std::runtime_error("call target argument count mismatch");
+        }
+
+        if (function.dll_import.is_present)
+        {
+            const auto host_start = std::chrono::steady_clock::now();
+            if (profile != nullptr)
+            {
+                ++profile->host_import_calls;
+            }
+
+            const auto result = invoke_native_import(function, arguments);
+            if (profile != nullptr)
+            {
+                profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+            }
+            return result;
         }
 
         if (function.host_import_kind != HostImportKind::none)

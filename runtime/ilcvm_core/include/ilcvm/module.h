@@ -34,6 +34,12 @@ enum class HostImportKind : std::uint32_t
     path_get_extension = 22
 };
 
+enum class NativeCallingConvention : std::uint32_t
+{
+    cdecl_ = 0,
+    stdcall_ = 1
+};
+
 enum class OpCode : std::uint8_t
 {
     nop = 0x00,
@@ -133,9 +139,18 @@ struct SectionDirectoryEntry
 
 struct Function
 {
+    struct DllImport
+    {
+        std::string library_name;
+        std::string entry_point;
+        NativeCallingConvention calling_convention { NativeCallingConvention::cdecl_ };
+        bool is_present {};
+    };
+
     std::uint32_t function_id {};
     std::uint32_t owner_type_id {};
     std::uint32_t method_flags {};
+    std::uint32_t return_type_id {};
     std::string name;
     std::uint16_t register_count {};
     std::uint16_t argument_count {};
@@ -145,6 +160,8 @@ struct Function
     bool is_override {};
     bool is_extern {};
     HostImportKind host_import_kind { HostImportKind::none };
+    DllImport dll_import {};
+    std::vector<std::uint32_t> parameter_type_ids;
     std::vector<Instruction> instructions;
     struct ExceptionHandler
     {

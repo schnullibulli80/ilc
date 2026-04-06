@@ -1,19 +1,52 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                       I L C   S Y S T E M   L I B R A R Y
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the implementation of basic system functionalities such as exceptions, console I/O, environment variables,
+//            file operations, and path manipulations. It serves as a foundational library for the ILC compiler and its standard library, providing
+//            essential features that are used throughout the codebase. The implementations may rely on platform-specific APIs and are designed to
+//            be efficient and straightforward while adhering to the language's conventions and capabilities.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-03-13
+// History  : 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 namespace System;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • IException
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Basic exception interface that all exceptions implement.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface IException
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the message associated with the exception.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public property Message: String { get; };
 end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Exception
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Base class for exceptions in the ILC system library.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Exception: IException
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Protected field to store the exception message.</summary>
   protected var MessageValue: String;
 
-  public constructor(message: String);
-  begin
-    MessageValue := message;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the message associated with the exception.</summary>
   public property Message: String
   begin
     get
@@ -21,33 +54,142 @@ begin
       return MessageValue;
     end;
   end;
-end;
 
-public class NotSupportedException: Exception
-begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Exception class with the specified message.</summary>
+  /// <param name="message">The message that describes the error.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(message: String);
   begin
     MessageValue := message;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • NotSupportedException
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Exception thrown when an invoked method is not supported.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class NotSupportedException: Exception
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the NotSupportedException class with the specified message.</summary>
+  /// <param name="message">The message that describes the error.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(message: String);
+  begin
+    MessageValue := message;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Console
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides methods for console input and output.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Console
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Write
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes the specified text to the console without a newline.</summary>
+  /// <param name="text">The text to write to the console.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern method Write(text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes the specified text to the console followed by a newline.</summary>
+  /// <param name="text">The text to write to the console.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern method WriteLine(text: String);
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Environment
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides information about the current environment and platform.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Environment
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetCommandLineArgsCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the command line arguments as an array of strings.</summary>
+  /// <returns>An array of strings representing the command line arguments.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetCommandLineArgsCore: array of String;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetCurrentDirectoryCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the current working directory as a string.</summary>
+  /// <returns>A string representing the current working directory.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetCurrentDirectoryCore: String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetUserNameCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the current user's name as a string.</summary>
+  /// <returns>A string representing the current user's name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetUserNameCore: String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetMachineNameCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the machine name as a string.</summary>
+  /// <returns>A string representing the machine name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetMachineNameCore: String;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetHomeDirectoryCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the home directory as a string.</summary>
+  /// <returns>A string representing the home directory.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetHomeDirectoryCore: String;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetTempDirectoryCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the temporary directory as a string.</summary>
+  /// <returns>A string representing the temporary directory.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetTempDirectoryCore: String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetEnvironmentVariableCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the value of an environment variable by name.</summary>
+  /// <param name="name">The name of the environment variable to retrieve.</param>
+  /// <returns>A string representing the value of the environment variable, or nil if it does not exist.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetEnvironmentVariableCore(name: String): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetEnvironmentVariableCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to set the value of an environment variable.</summary>
+  /// <param name="name">The name of the environment variable to set.</param>
+  /// <param name="value">The value to set for the environment variable.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method SetEnvironmentVariableCore(name: String; value: String);
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the command line arguments as an array of strings.</summary>
   public static property CommandLineArgs: array of String
   begin
     get
@@ -56,6 +198,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the current working directory as a string.</summary>
   public static property CurrentDirectory: String
   begin
     get
@@ -64,6 +207,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the current user's name as a string.</summary>
   public static property UserName: String
   begin
     get
@@ -72,6 +216,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the machine name as a string.</summary>
   public static property MachineName: String
   begin
     get
@@ -80,6 +225,8 @@ begin
     end;
   end;
 
+  
+  /// <summary>Gets the home directory as a string.</summary>
   public static property HomeDirectory: String
   begin
     get
@@ -88,6 +235,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the temporary directory as a string.</summary>
   public static property TempDirectory: String
   begin
     get
@@ -96,6 +244,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the value of an environment variable.</summary>
   public static property Variables[name: String]: String
   begin
     get
@@ -109,13 +258,43 @@ begin
     end;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Clock
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides methods to retrieve the current time in various formats.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Clock
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetMonotonicMillisecondsTextCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the current monotonic time in milliseconds as a string.</summary>
+  /// <returns>A string representing the current monotonic time in milliseconds.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetMonotonicMillisecondsTextCore: String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetWallMillisecondsTextCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the current wall clock time in milliseconds as a string.</summary>
+  /// <returns>A string representing the current wall clock time in milliseconds.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetWallMillisecondsTextCore: String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetWallDateTimeTextCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the current wall clock date and time as a string.</summary>
+  /// <returns>A string representing the current wall clock date and time.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetWallDateTimeTextCore: String;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current monotonic time in milliseconds as a string.</summary>
   public static property MonotonicMillisecondsText: String
   begin
     get
@@ -124,6 +303,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the current wall clock time in milliseconds as a string.</summary>
   public static property WallMillisecondsText: String
   begin
     get
@@ -132,6 +312,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the current wall clock date and time as a string.</summary>
   public static property WallDateTimeText: String
   begin
     get
@@ -140,9 +321,23 @@ begin
     end;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Math
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides mathematical functions and constants.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Math
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Min
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the smaller of two integers.</summary>
+  /// <param name="left">The first integer to compare.</param>
+  /// <param name="right">The second integer to compare.</param>
+  /// <returns>The smaller of the two integers.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Min(left: Integer; right: Integer): Integer;
   begin
     if left < right then
@@ -153,6 +348,14 @@ begin
     return right;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Max
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the larger of two integers.</summary>
+  /// <param name="left">The first integer to compare.</param>
+  /// <param name="right">The second integer to compare.</param>
+  /// <returns>The larger of the two integers.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Max(left: Integer; right: Integer): Integer;
   begin
     if left > right then
@@ -163,6 +366,13 @@ begin
     return right;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Abs
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the absolute value of an integer.</summary>
+  /// <param name="value">The integer value to get the absolute value of.</param>
+  /// <returns>The absolute value of the integer.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Abs(value: Integer): Integer;
   begin
     if value < 0 then
@@ -173,6 +383,15 @@ begin
     return value;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Clamp
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Clamps an integer value between a minimum and maximum value.</summary>
+  /// <param name="value">The integer value to clamp.</param>
+  /// <param name="minimum">The minimum value to clamp to.</param>
+  /// <param name="maximum">The maximum value to clamp to.</param>
+  /// <returns>The clamped integer value.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Clamp(value: Integer; minimum: Integer; maximum: Integer): Integer;
   begin
     var lower := Min(minimum, maximum);
@@ -191,49 +410,141 @@ begin
     return value;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Convert
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides methods for converting between different types.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Convert
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToInteger
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts a string to an integer.</summary>
+  /// <param name="value">The string to convert.</param>
+  /// <returns>The integer representation of the string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ToInteger(value: String): Integer;
   begin
     return Integer.Parse(value);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TryToInteger
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Attempts to convert a string to an integer.</summary>
+  /// <param name="value">The string to convert.</param>
+  /// <param name="result">The integer representation of the string.</param>
+  /// <returns>true if the conversion was successful; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function TryToInteger(value: String; out result: Integer): Boolean;
   begin
     return Integer.TryParse(value, result);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToString
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts an integer to a string.</summary>
+  /// <param name="value">The integer to convert.</param>
+  /// <returns>The string representation of the integer.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ToString(value: Integer): String;
   begin
     return value.ToString();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToBoolean
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts an integer to a boolean.</summary>
+  /// <param name="value">The integer to convert.</param>
+  /// <returns>true if the integer is non-zero; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ToBoolean(value: Integer): Boolean;
   begin
     return value <> 0;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • File
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides methods for file operations such as reading, writing, and appending text to files.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class File
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ExistsCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to check if a file exists at the specified path.</summary>
+  /// <param name="path">The path of the file to check for existence.</param>
+  /// <returns>true if the file exists; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function ExistsCore(path: String): Boolean;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ReadAllTextCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to read all text from a file at the specified path.</summary>
+  /// <param name="path">The path of the file to read from.</param>
+  /// <returns>A string containing the contents of the file.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function ReadAllTextCore(path: String): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • WriteAllTextCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to write text to a file at the specified path, overwriting any existing content.</summary>
+  /// <param name="path">The path of the file to write to.</param>
+  /// <param name="text">The text to write to the file.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method WriteAllTextCore(path: String; text: String);
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • AppendAllTextCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to append text to a file at the specified path.</summary>
+  /// <param name="path">The path of the file to append to.</param>
+  /// <param name="text">The text to append to the file.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method AppendAllTextCore(path: String; text: String);
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NewLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the newline string used by the environment.</summary>
+  /// <returns>A string representing the newline sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function NewLine: String;
   begin
     return '
 ';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NormalizeLineEndings
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Normalizes line endings in a string to use the environment's newline sequence.</summary>
+  /// <param name="text">The string to normalize.</param>
+  /// <returns>A string with normalized line endings.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function NormalizeLineEndings(text: String): String;
   begin
     return text.Replace('
 ', NewLine());
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CountLines
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Counts the number of lines in a string.</summary>
+  /// <param name="text">The string to count lines in.</param>
+  /// <returns>The number of lines in the string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function CountLines(text: String): Integer;
   begin
     if text = '' then
@@ -264,26 +575,61 @@ begin
     return count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Exists
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Checks if a file exists at the specified path.</summary>
+  /// <param name="path">The path of the file to check for existence.</param>
+  /// <returns>true if the file exists; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Exists(path: String): Boolean;
   begin
     return ExistsCore(path);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ReadAllText
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads all text from a file at the specified path.</summary>
+  /// <param name="path">The path of the file to read from.</param>
+  /// <returns>A string containing the contents of the file.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ReadAllText(path: String): String;
   begin
     return ReadAllTextCore(path);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteAllText
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes text to a file at the specified path, overwriting any existing content.</summary>
+  /// <param name="path">The path of the file to write to.</param>
+  /// <param name="text">The text to write to the file.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteAllText(path: String; text: String);
   begin
     WriteAllTextCore(path, text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AppendAllText
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Appends text to a file at the specified path.</summary>
+  /// <param name="path">The path of the file to append to.</param>
+  /// <param name="text">The text to append to the file.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method AppendAllText(path: String; text: String);
   begin
     AppendAllTextCore(path, text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ReadAllLines
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads all lines from a file at the specified path.</summary>
+  /// <param name="path">The path of the file to read from.</param>
+  /// <returns>An array of strings containing the lines of the file.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ReadAllLines(path: String): array of String;
   begin
     var normalized := NormalizeLineEndings(ReadAllText(path));
@@ -319,6 +665,13 @@ begin
     return lines;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteAllLines
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes all lines to a file at the specified path, overwriting any existing content.</summary>
+  /// <param name="path">The path of the file to write to.</param>
+  /// <param name="lines">The lines to write to the file.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method WriteAllLines(path: String; lines: array of String);
   begin
     var text := '';
@@ -337,6 +690,13 @@ begin
     WriteAllText(path, text);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AppendLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Appends a line to a file at the specified path.</summary>
+  /// <param name="path">The path of the file to append to.</param>
+  /// <param name="text">The text to append to the file.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method AppendLine(path: String; text: String);
   begin
     var newline := NewLine();
@@ -353,39 +713,120 @@ begin
     AppendAllText(path, prefix + text + newline);
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Path
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides methods for manipulating file and directory paths.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Path
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • CombineCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to combine two path segments into a single path.</summary>
+  /// <param name="left">The first path segment.</param>
+  /// <param name="right">The second path segment.</param>
+  /// <returns>A string representing the combined path.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function CombineCore(left: String; right: String): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetFileNameCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the file name from a path.</summary>
+  /// <param name="path">The path to retrieve the file name from.</param>
+  /// <returns>A string representing the file name, or an empty string if the path does not contain a file name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetFileNameCore(path: String): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetDirectoryNameCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the directory name from a path.</summary>
+  /// <param name="path">The path to retrieve the directory name from.</param>
+  /// <returns>A string representing the directory name, or an empty string if the path does not contain a directory name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetDirectoryNameCore(path: String): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetExtensionCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>VM Built-in method to retrieve the file extension from a path.</summary>
+  /// <param name="path">The path to retrieve the file extension from.</param>
+  /// <returns>A string representing the file extension, or an empty string if the path does not contain a file extension.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetExtensionCore(path: String): String;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Combine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Combines two path segments into a single path.</summary>
+  /// <param name="left">The first path segment.</param>
+  /// <param name="right">The second path segment.</param>
+  /// <returns>A string representing the combined path.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Combine(left: String; right: String): String;
   begin
     return CombineCore(left, right);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetFileName
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Retrieves the file name from a path.</summary>
+  /// <param name="path">The path to retrieve the file name from.</param>
+  /// <returns>A string representing the file name, or an empty string if the path does not contain a file name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GetFileName(path: String): String;
   begin
     return GetFileNameCore(path);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetDirectoryName
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Retrieves the directory name from a path.</summary>
+  /// <param name="path">The path to retrieve the directory name from.</param>
+  /// <returns>A string representing the directory name, or an empty string if the path does not contain a directory name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GetDirectoryName(path: String): String;
   begin
     return GetDirectoryNameCore(path);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetExtension
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Retrieves the extension from a path.</summary>
+  /// <param name="path">The path to retrieve the extension from.</param>
+  /// <returns>A string representing the extension, or an empty string if the path does not contain an extension.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GetExtension(path: String): String;
   begin
     return GetExtensionCore(path);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • HasExtension
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Indicates whether a path has an extension.</summary>
+  /// <param name="path">The path to check for an extension.</param>
+  /// <returns>true if the path has an extension; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function HasExtension(path: String): Boolean;
   begin
     return GetExtension(path) <> '';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetFileNameWithoutExtension
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Retrieves the file name without the extension from a path.</summary>
+  /// <param name="path">The path to retrieve the file name from.</param>
+  /// <returns>A string representing the file name without the extension, or an empty string if the path does not contain a file name.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GetFileNameWithoutExtension(path: String): String;
   begin
     var fileName := GetFileName(path);
@@ -398,6 +839,17 @@ begin
     return fileName.Substring(0, fileName.Length - extension.Length);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ChangeExtension
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Changes the extension of a path string.</summary>
+  /// <param name="path">The path of the file to change the extension for.</param>
+  /// <param name="extension">
+  ///   The new extension to use. If the extension does not start with a period ('.'), one will be added. If the extension is null or empty,
+  ///   the existing extension will be removed.
+  /// </param>
+  /// <returns>A string with the modified path.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ChangeExtension(path: String; extension: String): String;
   begin
     var directory := GetDirectoryName(path);
@@ -418,3 +870,6 @@ begin
     return Combine(directory, changedFileName);
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

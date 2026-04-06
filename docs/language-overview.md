@@ -246,6 +246,23 @@ and `Integer.Parse` / `Integer.TryParse` as type intrinsics.
 `extern` methods are bound through the host import layer. Unknown host mapping
 names are rejected by the binder.
 
+In addition to built-in host imports, the language now also supports a first
+native FFI slice through method attributes:
+
+```ilc
+[DllImport('libc.so.6', EntryPoint := 'atoi', CallingConvention := CallingConvention.Cdecl)]
+public static extern function Atoi(text: String): Integer;
+```
+
+Current `DllImport` scope:
+
+- `static extern` free functions only
+- Linux shared libraries through `dlopen` / `dlsym`
+- current FFI type subset:
+  - parameter: `Integer`, `Boolean`, `String`
+  - return: `Integer`, `Boolean`, `Void`
+- no callbacks, no native structs, no returned native strings yet
+
 The shipped library lives under `libs/shipped` and currently includes:
 
 - `System.Console` (`Write`, `WriteLine`)

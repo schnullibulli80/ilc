@@ -88,12 +88,18 @@ public sealed record BytecodeModuleArrayShapeInfo(uint FunctionId, ushort ArrayR
 public sealed record BytecodeExceptionHandlerInfo(ushort TryStart, ushort TryEnd, ushort HandlerStart, ushort HandlerEnd, ushort TargetRegister, uint CatchTypeId);
 public sealed record BytecodeModuleExceptionHandlerInfo(uint FunctionId, ushort TryStart, ushort TryEnd, ushort HandlerStart, ushort HandlerEnd, ushort TargetRegister, uint CatchTypeId);
 
+public sealed record BytecodeDllImportMetadata(
+    string LibraryName,
+    string EntryPoint,
+    NativeCallingConvention CallingConvention);
+
 public sealed record BytecodeFunction(
     uint FunctionId,
     string Name,
     ushort RegisterCount,
     ushort ArgumentCount,
     HostImportKind HostImportKind,
+    BytecodeDllImportMetadata? DllImport,
     IReadOnlyList<Instruction> Instructions,
     IReadOnlyList<BytecodeArrayShapeInfo> ArrayShapes,
     IReadOnlyList<BytecodeExceptionHandlerInfo> ExceptionHandlers,
@@ -167,6 +173,12 @@ public sealed class IlbSerializer
         foreach (var method in methodList)
         {
             stringTable.GetOrAdd(method.Name);
+            if (method.DllImport is not null)
+            {
+                stringTable.GetOrAdd(method.DllImport.LibraryName);
+                stringTable.GetOrAdd(method.DllImport.EntryPoint);
+            }
+
             blobTable.Add(BuildSignatureBlob(method, typeList));
         }
 
@@ -473,9 +485,9 @@ public sealed class IlbSerializer
                 writer.Write(0u);
             }
             writer.Write((uint)method.HostImportKind);
-            writer.Write(0u);
-            writer.Write(0u);
-            writer.Write(0u);
+            writer.Write(method.DllImport is null ? 0u : strings.GetOrAdd(method.DllImport.LibraryName));
+            writer.Write(method.DllImport is null ? 0u : strings.GetOrAdd(method.DllImport.EntryPoint));
+            writer.Write(method.DllImport is null ? 0u : (uint)method.DllImport.CallingConvention);
             writer.Write(0u);
         }
 
@@ -1471,6 +1483,12 @@ public sealed class BytecodeEmitter
             (ushort)nextScratchRegister,
             (ushort)(method.Parameters.Count + (method.DeclaringTypeName is not null && !method.IsStatic ? 1 : 0)),
             method.HostImportKind,
+            method.DllImport is null
+                ? null
+                : new BytecodeDllImportMetadata(
+                    method.DllImport.LibraryName,
+                    method.DllImport.EntryPoint,
+                    method.DllImport.CallingConvention),
             instructions,
             arrayShapes,
             exceptionHandlers,

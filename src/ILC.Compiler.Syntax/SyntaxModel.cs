@@ -130,6 +130,7 @@ public enum SyntaxKind
     CompilationUnit,
     NamespaceDeclaration,
     UsesClause,
+    Attribute,
     QualifiedName,
     TopLevelVariableDeclaration,
     TopLevelConstantDeclaration,
@@ -382,7 +383,16 @@ public sealed record ParameterSyntax(
     SyntaxToken ColonToken,
     QualifiedNameSyntax TypeName) : SyntaxNode(SyntaxKind.Parameter);
 
+public sealed record AttributeSyntax(
+    SyntaxToken OpenBracketToken,
+    QualifiedNameSyntax Name,
+    SyntaxToken? OpenParenToken,
+    IReadOnlyList<ArgumentSyntax> Arguments,
+    SyntaxToken? CloseParenToken,
+    SyntaxToken CloseBracketToken) : SyntaxNode(SyntaxKind.Attribute);
+
 public sealed record MethodDeclarationSyntax(
+    IReadOnlyList<AttributeSyntax> Attributes,
     IReadOnlyList<SyntaxToken> Modifiers,
     SyntaxToken Keyword,
     SyntaxToken Identifier,
@@ -1321,15 +1331,59 @@ internal sealed class Parser
 
     private TypeMemberSyntax ParseTypeMember()
     {
+        var attributes = ParseAttributes();
         var modifiers = ParseModifiers();
+        if (attributes.Count > 0 &&
+            Current.Kind is not (SyntaxKind.MethodKeyword or SyntaxKind.FunctionKeyword or SyntaxKind.ProcedureKeyword or SyntaxKind.ConstructorKeyword))
+        {
+            _diagnostics.Report(
+                "ILC1004",
+                "Attributes are currently only supported on methods.",
+                DiagnosticSeverity.Error,
+                attributes[0].OpenBracketToken.Span);
+        }
+
         return Current.Kind switch
         {
             SyntaxKind.VarKeyword => ParseFieldDeclaration(modifiers),
             SyntaxKind.ConstKeyword => ParseConstantDeclaration(modifiers),
             SyntaxKind.PropertyKeyword => ParsePropertyDeclaration(modifiers),
-            SyntaxKind.MethodKeyword or SyntaxKind.FunctionKeyword or SyntaxKind.ProcedureKeyword or SyntaxKind.ConstructorKeyword => ParseMethodDeclaration(modifiers),
-            _ => ParseMethodDeclaration(modifiers)
+            SyntaxKind.MethodKeyword or SyntaxKind.FunctionKeyword or SyntaxKind.ProcedureKeyword or SyntaxKind.ConstructorKeyword => ParseMethodDeclaration(attributes, modifiers),
+            _ => ParseMethodDeclaration(attributes, modifiers)
         };
+    }
+
+    private IReadOnlyList<AttributeSyntax> ParseAttributes()
+    {
+        var attributes = new List<AttributeSyntax>();
+        while (Current.Kind == SyntaxKind.OpenBracketToken)
+        {
+            var openBracketToken = NextToken();
+            var name = ParseQualifiedName();
+            SyntaxToken? openParenToken = null;
+            var arguments = new List<ArgumentSyntax>();
+            SyntaxToken? closeParenToken = null;
+            if (Current.Kind == SyntaxKind.OpenParenToken)
+            {
+                openParenToken = NextToken();
+                if (Current.Kind != SyntaxKind.CloseParenToken)
+                {
+                    arguments.Add(ParseArgument());
+                    while (Current.Kind is SyntaxKind.CommaToken or SyntaxKind.SemicolonToken)
+                    {
+                        NextToken();
+                        arguments.Add(ParseArgument());
+                    }
+                }
+
+                closeParenToken = Match(SyntaxKind.CloseParenToken);
+            }
+
+            var closeBracketToken = Match(SyntaxKind.CloseBracketToken);
+            attributes.Add(new AttributeSyntax(openBracketToken, name, openParenToken, arguments, closeParenToken, closeBracketToken));
+        }
+
+        return attributes;
     }
 
     private FieldDeclarationSyntax ParseFieldDeclaration(IReadOnlyList<SyntaxToken> modifiers)
@@ -1538,7 +1592,7 @@ internal sealed class Parser
             semicolon);
     }
 
-    private MethodDeclarationSyntax ParseMethodDeclaration(IReadOnlyList<SyntaxToken> modifiers)
+    private MethodDeclarationSyntax ParseMethodDeclaration(IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<SyntaxToken> modifiers)
     {
         var keyword = NextToken();
         var identifier = keyword.Kind == SyntaxKind.ConstructorKeyword
@@ -1599,6 +1653,7 @@ internal sealed class Parser
         }
 
         return new MethodDeclarationSyntax(
+            attributes,
             modifiers,
             keyword,
             identifier,
@@ -3097,12 +3152,23 @@ public sealed class SyntaxTree
             },
             MethodDeclarationSyntax methodDeclaration => methodDeclaration with
             {
+                Attributes = methodDeclaration.Attributes.Select(attribute => NormalizeAttribute(attribute, aliases)).ToArray(),
                 ReturnType = NormalizeQualifiedName(methodDeclaration.ReturnType, aliases),
                 Parameters = methodDeclaration.Parameters.Select(parameter => NormalizeParameter(parameter, aliases)!).ToArray(),
                 ExpressionBody = NormalizeExpression(methodDeclaration.ExpressionBody, aliases),
                 Body = NormalizeBlock(methodDeclaration.Body, aliases)
             },
             _ => member
+        };
+
+    private static AttributeSyntax NormalizeAttribute(AttributeSyntax attribute, IReadOnlyDictionary<string, QualifiedNameSyntax> aliases) =>
+        attribute with
+        {
+            Name = NormalizeQualifiedName(attribute.Name, aliases)!,
+            Arguments = attribute.Arguments.Select(argument => argument with
+            {
+                Expression = NormalizeExpression(argument.Expression, aliases)!
+            }).ToArray()
         };
 
     private static ParameterSyntax? NormalizeParameter(ParameterSyntax? parameter, IReadOnlyDictionary<string, QualifiedNameSyntax> aliases) =>
