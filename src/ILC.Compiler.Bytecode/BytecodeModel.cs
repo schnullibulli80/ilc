@@ -93,6 +93,11 @@ public sealed record BytecodeDllImportMetadata(
     string EntryPoint,
     NativeCallingConvention CallingConvention);
 
+public sealed record BytecodeDebugVmIpRange(
+    int IrVmIp,
+    int BytecodeVmIpStart,
+    int BytecodeVmIpEnd);
+
 public sealed record BytecodeFunction(
     uint FunctionId,
     string Name,
@@ -103,7 +108,8 @@ public sealed record BytecodeFunction(
     IReadOnlyList<Instruction> Instructions,
     IReadOnlyList<BytecodeArrayShapeInfo> ArrayShapes,
     IReadOnlyList<BytecodeExceptionHandlerInfo> ExceptionHandlers,
-    IReadOnlyList<string> StringLiterals);
+    IReadOnlyList<string> StringLiterals,
+    IReadOnlyList<BytecodeDebugVmIpRange> DebugVmIpRanges);
 
 public sealed record BytecodeModule(
     IReadOnlyList<BytecodeFunction> Functions,
@@ -1058,12 +1064,15 @@ public sealed class BytecodeEmitter
         var stringLiterals = new List<string>();
         var arrayShapes = new List<BytecodeArrayShapeInfo>();
         var exceptionHandlers = new List<BytecodeExceptionHandlerInfo>();
+        var debugVmIpRanges = new List<BytecodeDebugVmIpRange>();
         var nextScratchRegister = function.Registers.Count;
+        var irVmIp = 0;
 
         foreach (var block in function.Blocks)
         {
             foreach (var instruction in block.Instructions)
             {
+                var bytecodeStart = instructions.Count;
                 switch (instruction.OpCode)
                 {
                     case IrOpCode.LoadConstant:
@@ -1441,6 +1450,10 @@ public sealed class BytecodeEmitter
                     default:
                         throw new InvalidOperationException($"Unsupported IR opcode '{instruction.OpCode}'.");
                 }
+
+                var bytecodeEnd = instructions.Count == 0 ? bytecodeStart : Math.Max(instructions.Count - 1, bytecodeStart);
+                debugVmIpRanges.Add(new BytecodeDebugVmIpRange(irVmIp, bytecodeStart, bytecodeEnd));
+                irVmIp++;
             }
         }
 
@@ -1492,7 +1505,8 @@ public sealed class BytecodeEmitter
             instructions,
             arrayShapes,
             exceptionHandlers,
-            stringLiterals);
+            stringLiterals,
+            debugVmIpRanges);
     }
 
     private static ushort EmitPackedArguments(List<Instruction> instructions, IReadOnlyList<IrValue> arguments, ref int nextScratchRegister)

@@ -1,0 +1,6 @@
+# Example VM debugger script for ilcvm_cli.
+
+break Program.Main:299
+steps 12
+log tmp/vm-debug-script.log
+run

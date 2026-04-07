@@ -5,6 +5,7 @@
 #include "ilcvm/module.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,57 @@ namespace ilcvm
 class VirtualMachine
 {
 public:
+    struct DebugBreakpoint
+    {
+        std::uint32_t function_id {};
+        std::uint32_t vm_ip {};
+    };
+
+    struct DebugFrame
+    {
+        std::uint32_t function_id {};
+        std::string function_name;
+        std::uint32_t vm_ip {};
+    };
+
+    struct DebugInstruction
+    {
+        OpCode opcode {};
+        std::uint16_t destination {};
+        std::uint16_t left {};
+        std::uint16_t right {};
+        std::int32_t immediate {};
+    };
+
+    struct DebugEvent
+    {
+        DebugFrame frame;
+        DebugInstruction instruction;
+        std::vector<std::int32_t> registers;
+        std::vector<std::string> register_displays;
+        std::vector<DebugFrame> call_stack;
+        bool breakpoint_hit {};
+    };
+
+    enum class DebugAction : std::uint8_t
+    {
+        none = 0,
+        continue_execution = 1,
+        step_into = 2,
+        step_over = 3,
+        quit = 4
+    };
+
+    struct DebugOptions
+    {
+        std::vector<DebugBreakpoint> breakpoints;
+        bool break_on_entry {};
+        std::uint64_t step_count_after_break {};
+    };
+
+    using DebugSink = std::function<DebugAction(const DebugEvent&)>;
+    using StackTraceFormatter = std::function<std::string(const DebugFrame&)>;
+
     struct ExecutionProfile
     {
         std::uint64_t total_execution_ns {};
@@ -53,9 +105,15 @@ public:
 
     [[nodiscard]] std::int32_t execute(const Module& module) const;
     [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile& profile) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, const StackTraceFormatter& stack_trace_formatter) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile& profile, const StackTraceFormatter& stack_trace_formatter) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, const DebugOptions& debug_options, const DebugSink& debug_sink) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile& profile, const DebugOptions& debug_options, const DebugSink& debug_sink) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, const DebugOptions& debug_options, const DebugSink& debug_sink, const StackTraceFormatter& stack_trace_formatter) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile& profile, const DebugOptions& debug_options, const DebugSink& debug_sink, const StackTraceFormatter& stack_trace_formatter) const;
 
 private:
-    [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile* profile) const;
+    [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile* profile, const DebugOptions* debug_options, const DebugSink* debug_sink, const StackTraceFormatter* stack_trace_formatter) const;
 
     Heap& heap_;
     const IHostServices& host_services_;

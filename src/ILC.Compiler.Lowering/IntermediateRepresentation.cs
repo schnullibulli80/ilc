@@ -1,7 +1,10 @@
 namespace ILC.Compiler.Lowering;
 
 using ILC.Compiler.Binding;
+using ILC.Compiler.Core;
 using ILC.Compiler.Syntax;
+using System.Collections;
+using System.Reflection;
 
 public enum IrOpCode
 {
@@ -87,16 +90,51 @@ public sealed record IrInstruction(IrOpCode OpCode, IrValue? Destination, object
 
 public sealed record IrBasicBlock(string Name, IReadOnlyList<IrInstruction> Instructions);
 
+public enum IrDebugVariableKind
+{
+    Self,
+    Parameter,
+    Local
+}
+
+public sealed record IrDebugVariable(
+    string Name,
+    TypeSymbol Type,
+    ushort RegisterIndex,
+    int VmIpStart,
+    int VmIpEnd,
+    IrDebugVariableKind Kind);
+
+public sealed record IrDebugSourceMap(
+    TextSpan Span,
+    int VmIpStart,
+    int VmIpEnd);
+
 public sealed record IrFunction(
     string Name,
     TypeSymbol ReturnType,
     IReadOnlyList<IrValue> Registers,
     IReadOnlyList<IrBasicBlock> Blocks,
     IReadOnlyList<IrArrayShape> ArrayShapes,
-    IReadOnlyList<IrExceptionHandler> ExceptionHandlers);
+    IReadOnlyList<IrExceptionHandler> ExceptionHandlers,
+    IReadOnlyList<IrDebugVariable> DebugVariables,
+    IReadOnlyList<IrDebugSourceMap> DebugSourceMaps);
 
 public sealed class Lowerer
 {
+    private sealed class DebugVariableBuilder(string name, TypeSymbol type, ushort registerIndex, int vmIpStart, IrDebugVariableKind kind)
+    {
+        public string Name { get; } = name;
+        public TypeSymbol Type { get; } = type;
+        public ushort RegisterIndex { get; } = registerIndex;
+        public int VmIpStart { get; } = vmIpStart;
+        public int? VmIpEnd { get; private set; }
+        public IrDebugVariableKind Kind { get; } = kind;
+
+        public IrDebugVariable ToSymbol(int defaultVmIpEnd) =>
+            new(Name, Type, RegisterIndex, VmIpStart, VmIpEnd ?? defaultVmIpEnd, Kind);
+    }
+
     private readonly IReadOnlyList<MethodSymbol> _knownMethods;
     private readonly IReadOnlyList<FieldSymbol> _knownFields;
     private readonly IReadOnlyList<ConstantSymbol> _knownConstants;
@@ -121,6 +159,8 @@ public sealed class Lowerer
         var localTypes = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
         var arrayShapesByName = new Dictionary<string, IReadOnlyList<IrValue>>(StringComparer.Ordinal);
         var exceptionHandlers = new List<IrExceptionHandler>();
+        var debugVariables = new List<DebugVariableBuilder>();
+        var debugSourceMaps = new List<IrDebugSourceMap>();
         _labelCounter = 0;
         _loopLabels.Clear();
 
@@ -132,6 +172,7 @@ public sealed class Lowerer
             registers.Add(selfRegister);
             registerByName["self"] = selfRegister;
             localTypes["self"] = selfType;
+            debugVariables.Add(new DebugVariableBuilder("self", selfType, selfRegister.Index, 0, IrDebugVariableKind.Self));
             nextIndex++;
         }
 
@@ -142,6 +183,7 @@ public sealed class Lowerer
             registers.Add(register);
             registerByName[parameter.Name] = register;
             localTypes[parameter.Name] = parameter.Type;
+            debugVariables.Add(new DebugVariableBuilder(parameter.Name, parameter.Type, register.Index, 0, IrDebugVariableKind.Parameter));
         }
 
         var instructions = new List<IrInstruction>();
@@ -158,7 +200,7 @@ public sealed class Lowerer
         {
             if (method.IsSynthetic && method.SyntheticMembers is not null)
             {
-                LowerSyntheticTopLevelBody(method, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers);
+                LowerSyntheticTopLevelBody(method, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps);
             }
             else
             {
@@ -172,7 +214,7 @@ public sealed class Lowerer
         }
         else
         {
-            LowerMethodBody(method.Declaration, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, false, method);
+            LowerMethodBody(method.Declaration, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, false, method);
         }
 
         var entryBlock = new IrBasicBlock("entry", instructions);
@@ -180,7 +222,16 @@ public sealed class Lowerer
             .Where(instruction => instruction.OpCode == IrOpCode.NewArray && instruction.Operand is IrNewArrayTarget)
             .Select(instruction => ((IrNewArrayTarget)instruction.Operand!).Shape)
             .ToArray();
-        return new IrFunction(method.Name, method.ReturnType, registers, [entryBlock], arrayShapes, exceptionHandlers);
+        var lastVmIp = Math.Max(instructions.Count - 1, 0);
+        return new IrFunction(
+            method.Name,
+            method.ReturnType,
+            registers,
+            [entryBlock],
+            arrayShapes,
+            exceptionHandlers,
+            debugVariables.Select(variable => variable.ToSymbol(lastVmIp)).ToArray(),
+            debugSourceMaps.ToArray());
     }
 
     private void LowerMethodBody(
@@ -192,13 +243,17 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler = false,
         MethodSymbol? currentMethod = null)
     {
         if (declaration.ExpressionBody is not null)
         {
+            var vmIpStart = instructions.Count;
             LowerReturnExpression(declaration.ExpressionBody, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, currentMethod);
             instructions.Add(new IrInstruction(IrOpCode.Return, null, returnRegister));
+            AddDebugSourceMap(debugSourceMaps, declaration.ExpressionBody, vmIpStart, instructions.Count - 1);
             return;
         }
 
@@ -211,7 +266,7 @@ public sealed class Lowerer
         var hasTerminated = false;
         foreach (var statement in declaration.Body.Statements)
         {
-            hasTerminated = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+            hasTerminated = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
             if (hasTerminated)
             {
                 break;
@@ -232,10 +287,13 @@ public sealed class Lowerer
         List<IrValue> registers,
         List<IrInstruction> instructions,
         IrValue? returnRegister,
-        List<IrExceptionHandler> exceptionHandlers)
+        List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps)
     {
         foreach (var member in method.SyntheticMembers ?? [])
         {
+            var vmIpStart = instructions.Count;
             switch (member)
             {
                 case TopLevelVariableDeclarationSyntax variableDeclaration:
@@ -246,6 +304,7 @@ public sealed class Lowerer
                         registers.Add(localRegister);
                         registerByName[declarator.Identifier.Text] = localRegister;
                         localTypes[declarator.Identifier.Text] = localType;
+                        debugVariables.Add(new DebugVariableBuilder(declarator.Identifier.Text, localType, localRegister.Index, instructions.Count, IrDebugVariableKind.Local));
 
                         if (declarator.Initializer is NewArrayExpressionSyntax newArrayInitializer && newArrayInitializer.LengthExpressions.Count > 1)
                         {
@@ -262,6 +321,11 @@ public sealed class Lowerer
                 case TopLevelExpressionStatementSyntax expressionStatement:
                     LowerExpressionStatement(expressionStatement.Expression, registerByName, localTypes, arrayShapesByName, registers, instructions, method);
                     break;
+            }
+
+            if (member is not TopLevelConstantDeclarationSyntax)
+            {
+                AddDebugSourceMap(debugSourceMaps, member, vmIpStart, instructions.Count - 1);
             }
         }
 
@@ -282,20 +346,25 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
+        var vmIpStart = instructions.Count;
+        var terminated = false;
         switch (statement)
         {
             case BlockStatementSyntax block:
                 foreach (var nestedStatement in block.Statements)
                 {
-                    if (LowerStatement(nestedStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod))
+                    if (LowerStatement(nestedStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod))
                     {
                         return true;
                     }
                 }
-                return false;
+                terminated = false;
+                break;
             case LocalVariableDeclarationStatementSyntax localVariable:
                 foreach (var declarator in localVariable.Declarators)
                 {
@@ -304,6 +373,7 @@ public sealed class Lowerer
                     registers.Add(localRegister);
                     registerByName[declarator.Identifier.Text] = localRegister;
                     localTypes[declarator.Identifier.Text] = localType;
+                    debugVariables.Add(new DebugVariableBuilder(declarator.Identifier.Text, localType, localRegister.Index, instructions.Count, IrDebugVariableKind.Local));
 
                     if (declarator.Initializer is NewArrayExpressionSyntax newArrayInitializer && newArrayInitializer.LengthExpressions.Count > 1)
                     {
@@ -314,7 +384,8 @@ public sealed class Lowerer
                         LowerExpressionInto(declarator.Initializer, localRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                     }
                 }
-                return false;
+                terminated = false;
+                break;
             case ReturnStatementSyntax returnStatement:
                 if (returnStatement.Expression is not null)
                 {
@@ -322,7 +393,8 @@ public sealed class Lowerer
                 }
 
                 instructions.Add(new IrInstruction(IrOpCode.Return, null, returnRegister));
-                return true;
+                terminated = true;
+                break;
             case BreakStatementSyntax:
                 if (_loopLabels.Count == 0)
                 {
@@ -330,7 +402,8 @@ public sealed class Lowerer
                 }
 
                 instructions.Add(new IrInstruction(IrOpCode.Branch, null, _loopLabels.Peek().BreakLabel));
-                return true;
+                terminated = true;
+                break;
             case ContinueStatementSyntax:
                 if (_loopLabels.Count == 0)
                 {
@@ -338,50 +411,139 @@ public sealed class Lowerer
                 }
 
                 instructions.Add(new IrInstruction(IrOpCode.Branch, null, _loopLabels.Peek().ContinueLabel));
-                return true;
+                terminated = true;
+                break;
             case RaiseStatementSyntax raiseStatement:
                 LowerRaiseStatement(raiseStatement, registerByName, arrayShapesByName, registers, instructions, inExceptionHandler, currentMethod);
-                return true;
+                terminated = true;
+                break;
             case ExpressionStatementSyntax expressionStatement:
                 LowerExpressionStatement(expressionStatement.Expression, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
-                return false;
+                terminated = false;
+                break;
             case IncStatementSyntax incStatement:
                 LowerIncDecStatement(incStatement.Target, SyntaxKind.PlusAssignToken, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                return false;
+                terminated = false;
+                break;
             case DecStatementSyntax decStatement:
                 LowerIncDecStatement(decStatement.Target, SyntaxKind.MinusAssignToken, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                return false;
+                terminated = false;
+                break;
             case IncludeStatementSyntax includeStatement:
                 LowerIncludeExcludeStatement(includeStatement.Target, includeStatement.Value, true, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                return false;
+                terminated = false;
+                break;
             case ExcludeStatementSyntax excludeStatement:
                 LowerIncludeExcludeStatement(excludeStatement.Target, excludeStatement.Value, false, registerByName, arrayShapesByName, registers, instructions, currentMethod);
-                return false;
+                terminated = false;
+                break;
             case IfStatementSyntax ifStatement:
-                return LowerIfStatement(ifStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                terminated = LowerIfStatement(ifStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                break;
             case WhileStatementSyntax whileStatement:
-                LowerWhileStatement(whileStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
-                return false;
+                LowerWhileStatement(whileStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                terminated = false;
+                break;
             case RepeatStatementSyntax repeatStatement:
-                LowerRepeatStatement(repeatStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
-                return false;
+                LowerRepeatStatement(repeatStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                terminated = false;
+                break;
             case ForStatementSyntax forStatement:
-                LowerForStatement(forStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
-                return false;
+                LowerForStatement(forStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                terminated = false;
+                break;
             case ForeachStatementSyntax foreachStatement:
-                LowerForeachStatement(foreachStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
-                return false;
+                LowerForeachStatement(foreachStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                terminated = false;
+                break;
             case WithStatementSyntax withStatement:
                 var rewrittenWithBody = RewriteWithStatement(withStatement.Body, withStatement.Receiver, registerByName, localTypes, currentMethod);
-                return LowerStatement(rewrittenWithBody, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                return LowerStatement(rewrittenWithBody, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
             case CaseStatementSyntax caseStatement:
-                return LowerCaseStatement(caseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                terminated = LowerCaseStatement(caseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                break;
             case MatchStatementSyntax matchStatement:
-                return LowerMatchStatement(matchStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                terminated = LowerMatchStatement(matchStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                break;
             case TryStatementSyntax tryStatement:
-                return LowerTryStatement(tryStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                terminated = LowerTryStatement(tryStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                break;
             default:
-                return false;
+                terminated = false;
+                break;
+        }
+
+        if (statement is not BlockStatementSyntax)
+        {
+            AddDebugSourceMap(debugSourceMaps, statement, vmIpStart, instructions.Count - 1);
+        }
+
+        return terminated;
+    }
+
+    private static void AddDebugSourceMap(List<IrDebugSourceMap> debugSourceMaps, SyntaxNode? node, int vmIpStart, int vmIpEnd)
+    {
+        if (node is null || vmIpEnd < vmIpStart)
+        {
+            return;
+        }
+
+        var span = TryGetSyntaxSpan(node);
+        if (span is null || span.Value.Length < 0)
+        {
+            return;
+        }
+
+        debugSourceMaps.Add(new IrDebugSourceMap(span.Value, vmIpStart, vmIpEnd));
+    }
+
+    private static TextSpan? TryGetSyntaxSpan(SyntaxNode node)
+    {
+        var minStart = int.MaxValue;
+        var maxEnd = int.MinValue;
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+        VisitSyntaxValue(node, visited, ref minStart, ref maxEnd);
+        if (minStart == int.MaxValue || maxEnd < minStart)
+        {
+            return null;
+        }
+
+        return new TextSpan(minStart, maxEnd - minStart);
+    }
+
+    private static void VisitSyntaxValue(object? value, HashSet<object> visited, ref int minStart, ref int maxEnd)
+    {
+        if (value is null || value is string)
+        {
+            return;
+        }
+
+        if (value is SyntaxToken token)
+        {
+            minStart = Math.Min(minStart, token.Span.Start);
+            maxEnd = Math.Max(maxEnd, token.Span.End);
+            return;
+        }
+
+        if (value is IEnumerable enumerable)
+        {
+            foreach (var item in enumerable)
+            {
+                VisitSyntaxValue(item, visited, ref minStart, ref maxEnd);
+            }
+
+            return;
+        }
+
+        if (value is not SyntaxNode node || !visited.Add(node))
+        {
+            return;
+        }
+
+        foreach (var property in node.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            VisitSyntaxValue(property.GetValue(node), visited, ref minStart, ref maxEnd);
         }
     }
 
@@ -394,6 +556,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -404,7 +568,7 @@ public sealed class Lowerer
         var endLabel = AllocateLabel("endif");
 
         instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, conditionRegister, elseLabel));
-        var thenTerminates = LowerStatement(ifStatement.ThenStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        var thenTerminates = LowerStatement(ifStatement.ThenStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
 
         if (ifStatement.ElseStatement is not null)
         {
@@ -414,7 +578,7 @@ public sealed class Lowerer
             }
 
             instructions.Add(new IrInstruction(IrOpCode.Label, null, elseLabel));
-            var elseTerminates = LowerStatement(ifStatement.ElseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+            var elseTerminates = LowerStatement(ifStatement.ElseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
             if (!thenTerminates || !elseTerminates)
             {
                 instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
@@ -436,6 +600,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -448,7 +614,7 @@ public sealed class Lowerer
         LowerExpressionInto(whileStatement.Condition, conditionRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
         instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, conditionRegister, endLabel));
         _loopLabels.Push((endLabel, continueLabel));
-        LowerStatement(whileStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        LowerStatement(whileStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
         _loopLabels.Pop();
         instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
         instructions.Add(new IrInstruction(IrOpCode.Branch, null, loopLabel));
@@ -464,6 +630,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -475,7 +643,7 @@ public sealed class Lowerer
         _loopLabels.Push((endLabel, continueLabel));
         foreach (var statement in repeatStatement.Statements)
         {
-            if (LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod))
+            if (LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod))
             {
                 break;
             }
@@ -498,6 +666,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -513,6 +683,7 @@ public sealed class Lowerer
             registers.Add(loopRegister);
             registerByName[forStatement.Identifier.Text] = loopRegister;
             localTypes[forStatement.Identifier.Text] = TypeSymbol.Integer;
+            debugVariables.Add(new DebugVariableBuilder(forStatement.Identifier.Text, TypeSymbol.Integer, loopRegister.Index, instructions.Count, IrDebugVariableKind.Local));
             createdLoopRegister = true;
         }
 
@@ -543,7 +714,7 @@ public sealed class Lowerer
         instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, conditionRegister, endLabel));
 
         _loopLabels.Push((endLabel, continueLabel));
-        LowerStatement(forStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        LowerStatement(forStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
         _loopLabels.Pop();
 
         instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
@@ -570,6 +741,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -600,6 +773,7 @@ public sealed class Lowerer
             registers.Add(itemRegister);
             registerByName[foreachStatement.Identifier.Text] = itemRegister;
             localTypes[foreachStatement.Identifier.Text] = itemType;
+            debugVariables.Add(new DebugVariableBuilder(foreachStatement.Identifier.Text, itemType, itemRegister.Index, instructions.Count, IrDebugVariableKind.Local));
             createdItemRegister = true;
         }
 
@@ -628,6 +802,8 @@ public sealed class Lowerer
                 instructions,
                 returnRegister,
                 exceptionHandlers,
+                debugVariables,
+                debugSourceMaps,
                 inExceptionHandler,
                 currentMethod);
 
@@ -654,6 +830,8 @@ public sealed class Lowerer
                 instructions,
                 returnRegister,
                 exceptionHandlers,
+                debugVariables,
+                debugSourceMaps,
                 inExceptionHandler,
                 currentMethod);
 
@@ -683,7 +861,7 @@ public sealed class Lowerer
 
         instructions.Add(new IrInstruction(IrOpCode.LoadElement, itemRegister, new IrArrayTarget(collectionRegister, indexRegister)));
         _loopLabels.Push((endLabel, continueLabel));
-        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
         _loopLabels.Pop();
 
         instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
@@ -711,6 +889,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -748,7 +928,7 @@ public sealed class Lowerer
 
         instructions.Add(new IrInstruction(IrOpCode.Copy, itemRegister, indexRegister));
         _loopLabels.Push((endLabel, continueLabel));
-        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
         _loopLabels.Pop();
 
         instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
@@ -778,6 +958,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -826,7 +1008,7 @@ public sealed class Lowerer
                 enumerablePattern.CurrentGetterMethod.IsVirtual || enumeratorRegister.Type.Name.StartsWith("IEnumerator", StringComparison.Ordinal))));
 
         _loopLabels.Push((endLabel, continueLabel));
-        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+        LowerStatement(foreachStatement.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
         _loopLabels.Pop();
 
         instructions.Add(new IrInstruction(IrOpCode.Label, null, continueLabel));
@@ -843,6 +1025,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -896,7 +1080,7 @@ public sealed class Lowerer
         for (var clauseIndex = 0; clauseIndex < caseStatement.Clauses.Count; clauseIndex++)
         {
             instructions.Add(new IrInstruction(IrOpCode.Label, null, clauseLabels[clauseIndex]));
-            var clauseTerminates = LowerStatement(caseStatement.Clauses[clauseIndex].Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+            var clauseTerminates = LowerStatement(caseStatement.Clauses[clauseIndex].Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
             if (!clauseTerminates)
             {
                 allTerminate = false;
@@ -910,7 +1094,7 @@ public sealed class Lowerer
         {
             foreach (var elseStatement in caseStatement.ElseStatements)
             {
-                elseTerminates = LowerStatement(elseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                elseTerminates = LowerStatement(elseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
                 if (elseTerminates)
                 {
                     break;
@@ -949,6 +1133,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -1015,7 +1201,7 @@ public sealed class Lowerer
         for (var armIndex = 0; armIndex < matchStatement.Arms.Count; armIndex++)
         {
             instructions.Add(new IrInstruction(IrOpCode.Label, null, armLabels[armIndex]));
-            var armTerminates = LowerStatement(matchStatement.Arms[armIndex].Body, armRegisterScopes[armIndex], armLocalScopes[armIndex], arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+            var armTerminates = LowerStatement(matchStatement.Arms[armIndex].Body, armRegisterScopes[armIndex], armLocalScopes[armIndex], arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
             if (!armTerminates)
             {
                 allTerminate = false;
@@ -1029,7 +1215,7 @@ public sealed class Lowerer
         {
             foreach (var elseStatement in matchStatement.ElseStatements)
             {
-                elseTerminates = LowerStatement(elseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+                elseTerminates = LowerStatement(elseStatement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
                 if (elseTerminates)
                 {
                     break;
@@ -1225,6 +1411,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         IrValue? returnRegister,
         List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
         bool inExceptionHandler,
         MethodSymbol? currentMethod)
     {
@@ -1255,7 +1443,7 @@ public sealed class Lowerer
                 tryStatement.EndKeyword,
                 tryStatement.SemicolonToken);
 
-            return LowerTryStatement(outerTry, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+            return LowerTryStatement(outerTry, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
         }
 
         var tryStartLabel = AllocateLabel("try_start");
@@ -1268,7 +1456,7 @@ public sealed class Lowerer
         var tryTerminates = false;
         foreach (var statement in tryStatement.TryStatements)
         {
-            tryTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, inExceptionHandler, currentMethod);
+            tryTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
             if (tryTerminates)
             {
                 break;
@@ -1296,7 +1484,7 @@ public sealed class Lowerer
                 localTypes[clause.Identifier.Text] = clauseType;
 
                 instructions.Add(new IrInstruction(IrOpCode.Label, null, clauseStartLabel));
-                var clauseTerminates = LowerStatement(clause.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, true, currentMethod);
+                var clauseTerminates = LowerStatement(clause.Body, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, true, currentMethod);
                 instructions.Add(new IrInstruction(IrOpCode.Label, null, clauseEndLabel));
                 if (!clauseTerminates)
                 {
@@ -1324,7 +1512,7 @@ public sealed class Lowerer
                 var catchAllTerminates = false;
                 foreach (var statement in tryStatement.ExceptStatements)
                 {
-                    catchAllTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, true, currentMethod);
+                    catchAllTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, true, currentMethod);
                     if (catchAllTerminates)
                     {
                         break;
@@ -1355,7 +1543,7 @@ public sealed class Lowerer
         var handlerIsExceptionHandler = tryStatement.FinallyKeyword is null;
         foreach (var statement in handlerStatements)
         {
-            handlerTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, handlerIsExceptionHandler, currentMethod);
+            handlerTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, handlerIsExceptionHandler, currentMethod);
             if (handlerTerminates)
             {
                 break;
@@ -1378,7 +1566,7 @@ public sealed class Lowerer
                 var finallyNormalTerminates = false;
                 foreach (var statement in tryStatement.FinallyStatements)
                 {
-                    finallyNormalTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, false, currentMethod);
+                    finallyNormalTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, false, currentMethod);
                     if (finallyNormalTerminates)
                     {
                         break;
@@ -1789,7 +1977,7 @@ public sealed class Lowerer
                     instructions,
                     currentMethod);
 
-                if (TryLowerStringIntrinsicCall(invocation, call.Target, preparedCallFrame.Arguments, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+                if (TryLowerStringIntrinsicCall(boundCall, invocation, call.Target, preparedCallFrame.Arguments, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
                 {
                     return;
                 }
@@ -2874,6 +3062,7 @@ public sealed class Lowerer
         rightType == TypeSymbol.String;
 
     private bool TryLowerStringIntrinsicCall(
+        BoundCall? boundCall,
         InvocationResolution invocation,
         ExpressionSyntax target,
         IReadOnlyList<IrValue> arguments,
@@ -2892,7 +3081,10 @@ public sealed class Lowerer
 
         if (invocation.Method.Name == "ToString" && invocation.Method.DeclaringTypeName == TypeSymbol.Integer.Name && arguments.Count == 0)
         {
-            var integerReceiver = ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            var integerReceiver = boundCall is null
+                ? ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+                : ResolveBoundCallReceiver(boundCall, target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+                    ?? ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
             if (integerReceiver is null)
             {
                 return false;
@@ -2907,7 +3099,10 @@ public sealed class Lowerer
             return false;
         }
 
-        var receiver = ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        var receiver = boundCall is null
+            ? ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+            : ResolveBoundCallReceiver(boundCall, target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+                ?? ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod);
         if (receiver is null)
         {
             return false;
@@ -3524,7 +3719,7 @@ public sealed class Lowerer
         var locals = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
         var displayName = SemanticFacts.GetExpressionDisplayName(call.Target);
         var receiverType = call.Target is MemberAccessExpressionSyntax memberAccessTarget
-            ? SemanticFacts.InferExpressionType(memberAccessTarget.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod)
+            ? SemanticFacts.InferExpressionType(memberAccessTarget.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes)
             : null;
         var directInvocation = SemanticFacts.ResolveInvocation(
             call.Target,
@@ -3872,6 +4067,15 @@ public sealed class Lowerer
             return resolvedReceiver;
         }
 
+        if (target.TargetExpression is not null &&
+            target.TargetExpression is not NameExpressionSyntax &&
+            target.IndexedType is not null)
+        {
+            var temp = AllocateTemp(target.IndexedType, registers);
+            LowerExpressionInto(target.TargetExpression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            return temp;
+        }
+
         return target.TargetExpression switch
         {
             NameExpressionSyntax nameExpression => ResolveIndexedReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
@@ -3948,6 +4152,21 @@ public sealed class Lowerer
             return null;
         }
 
+        if (target.TargetExpression is MemberAccessExpressionSyntax memberAccessTarget)
+        {
+            return ResolvePropertyReceiver(memberAccessTarget, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        if (target.TargetExpression is NameExpressionSyntax qualifiedNameTarget &&
+            qualifiedNameTarget.Name.Parts.Count > 1)
+        {
+            var receiverName = qualifiedNameTarget.Name.Parts[0].Text;
+            if (receiverName == "self" || registerByName.ContainsKey(receiverName))
+            {
+                return ResolvePropertyReceiver(qualifiedNameTarget, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            }
+        }
+
         if (target.Receiver is not null &&
             TryResolveBoundReceiver(target.Receiver, registerByName, arrayShapesByName, registers, instructions, currentMethod) is { } resolvedReceiver)
         {
@@ -3975,6 +4194,15 @@ public sealed class Lowerer
             return resolvedReceiver;
         }
 
+        if (target.TargetExpression is not null &&
+            target.TargetExpression is not NameExpressionSyntax &&
+            target.IndexedType is not null)
+        {
+            var temp = AllocateTemp(target.IndexedType, registers);
+            LowerExpressionInto(target.TargetExpression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            return temp;
+        }
+
         return target.TargetExpression switch
         {
             NameExpressionSyntax nameExpression => ResolveIndexedReceiver(nameExpression.Name, registerByName, arrayShapesByName, registers, instructions, currentMethod),
@@ -3993,6 +4221,21 @@ public sealed class Lowerer
         if (target.SetterMethod?.IsStatic == true || target.WriteField?.IsStatic == true)
         {
             return null;
+        }
+
+        if (target.TargetExpression is MemberAccessExpressionSyntax memberAccessTarget)
+        {
+            return ResolvePropertyReceiver(memberAccessTarget, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        }
+
+        if (target.TargetExpression is NameExpressionSyntax qualifiedNameTarget &&
+            qualifiedNameTarget.Name.Parts.Count > 1)
+        {
+            var receiverName = qualifiedNameTarget.Name.Parts[0].Text;
+            if (receiverName == "self" || registerByName.ContainsKey(receiverName))
+            {
+                return ResolvePropertyReceiver(qualifiedNameTarget, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            }
         }
 
         if (target.Receiver is not null &&
@@ -4041,12 +4284,7 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        var indexedType = target.IndexedType ?? target.ElementType;
-        var indexRegister = target.TargetExpression switch
-        {
-            NameExpressionSyntax nameExpression => LowerFlattenedElementIndex(nameExpression.Name, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-            _ => LowerFlattenedElementIndex(target.TargetExpression!, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod)
-        };
+        var indexRegister = LowerBoundElementIndexArgument(target.IndexerProperty?.IndexParameter?.Type, target.IndexedType, target.TargetExpression, indexExpressions, registerByName, arrayShapesByName, registers, instructions, currentMethod);
 
         if (target.GetterMethod is not null)
         {
@@ -4101,12 +4339,7 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        var indexedType = target.IndexedType ?? target.ElementType;
-        var indexRegister = target.TargetExpression switch
-        {
-            NameExpressionSyntax nameExpression => LowerFlattenedElementIndex(nameExpression.Name, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod),
-            _ => LowerFlattenedElementIndex(target.TargetExpression!, indexExpressions, indexedType, registerByName, arrayShapesByName, registers, instructions, currentMethod)
-        };
+        var indexRegister = LowerBoundElementIndexArgument(target.IndexerProperty?.IndexParameter?.Type, target.IndexedType, target.TargetExpression, indexExpressions, registerByName, arrayShapesByName, registers, instructions, currentMethod);
 
         if (target.SetterMethod is not null)
         {
@@ -4154,6 +4387,32 @@ public sealed class Lowerer
                 target.TargetExpression is NameExpressionSyntax directNamedTarget
                     ? TryGetTargetShape(directNamedTarget.Name, arrayShapesByName)
                     : null)));
+    }
+
+    private IrValue LowerBoundElementIndexArgument(
+        TypeSymbol? indexParameterType,
+        TypeSymbol? indexedType,
+        ExpressionSyntax? targetExpression,
+        IReadOnlyList<ExpressionSyntax> indexExpressions,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (indexExpressions.Count == 1 && indexParameterType is not null)
+        {
+            var indexRegister = AllocateTemp(indexParameterType, registers);
+            LowerExpressionInto(indexExpressions[0], indexRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            return indexRegister;
+        }
+
+        var elementOwnerType = indexedType ?? TypeSymbol.Integer;
+        return targetExpression switch
+        {
+            NameExpressionSyntax nameExpression => LowerFlattenedElementIndex(nameExpression.Name, indexExpressions, elementOwnerType, registerByName, arrayShapesByName, registers, instructions, currentMethod),
+            _ => LowerFlattenedElementIndex(targetExpression!, indexExpressions, elementOwnerType, registerByName, arrayShapesByName, registers, instructions, currentMethod)
+        };
     }
 
     private void LowerBoundSliceReadInto(
@@ -4350,7 +4609,7 @@ public sealed class Lowerer
                 }
             }
 
-            var receiverType = SemanticFacts.InferExpressionType(memberAccess.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            var receiverType = SemanticFacts.InferExpressionType(memberAccess.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
             var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == receiverType.Name);
             if (namedReceiverType is not null)
             {

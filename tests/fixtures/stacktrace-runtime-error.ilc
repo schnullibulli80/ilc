@@ -1,0 +1,22 @@
+namespace Demo.StackTrace;
+
+uses System;
+
+public class Program
+begin
+  public static function LoadFirstValue: Integer;
+  begin
+    var values: array of Integer := nil;
+    return values[0];
+  end;
+
+  public static procedure ShowRuntimeError;
+  begin
+    Program.LoadFirstValue();
+  end;
+
+  public static procedure Main;
+  begin
+    Program.ShowRuntimeError();
+  end;
+end;

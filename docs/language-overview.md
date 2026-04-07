@@ -259,8 +259,8 @@ Current `DllImport` scope:
 - `static extern` free functions only
 - Linux shared libraries through `dlopen` / `dlsym`
 - current FFI type subset:
-  - parameter: `Integer`, `Boolean`, `String`
-  - return: `Integer`, `Boolean`, `Void`
+  - parameter: `Integer`, `Boolean`, `String`, `NativeHandle`
+  - return: `Integer`, `Boolean`, `Void`, `NativeHandle`
 - no callbacks, no native structs, no returned native strings yet
 
 The shipped library lives under `libs/shipped` and currently includes:
@@ -269,6 +269,7 @@ The shipped library lives under `libs/shipped` and currently includes:
 - `System.Environment` (`CommandLineArgs`, `CurrentDirectory`, `Variables[...]`, etc.)
 - `System.Clock`
 - `System.IException`, `System.Exception`, `System.NotSupportedException`
+- `System.NativeHandle`
 - `System.Math` (`Min`, `Max`, `Abs`, `Clamp`)
 - `System.Convert` (`ToInteger`, `TryToInteger`, `ToString`, `ToBoolean`)
 - `System.Diagnostics.Stopwatch` (`StartNew`, `Start`, `Stop`, `Restart`, `Reset`, `IsRunning`, `ElapsedMilliseconds`)
@@ -277,6 +278,17 @@ The shipped library lives under `libs/shipped` and currently includes:
   - `ConsoleTrace`, `FileTrace`, `NullTrace`, `CompositeTrace`
   - `Trace`
 - `System.Text.Text` (`IsNullOrEmpty`, `NullIfEmpty`, `TrimToNull`, `CollapseWhitespace`, `Indent`, `Join`, `Repeat`, `PadLeft`, `PadRight`, `Center`, `StartsWithIgnoreCase`, `EndsWithIgnoreCase`, `ContainsIgnoreCase`, `Split`, `Lines`)
+- `System.Text.Json`
+  - `JsonKind`, `JsonValue`, `JsonNull`, `JsonBoolean`, `JsonNumber`, `JsonString`, `JsonArray`, `JsonObject`, `Json`
+  - currently supports parse + compact stringify roundtrips for the shipped JSON value model
+- `System.Net`
+  - `Uri`
+  - `TcpClient`
+  - `HttpClient`
+- `System.Threading`
+  - `Thread`
+  - `Mutex`
+  - currently supports absolute and relative URI parsing, `TryParse`, simple query-parameter access, and a small synchronous line-oriented TCP client
 - `System.Collections.IEnumerator<T>`, `System.Collections.IEnumerable<T>`, `System.Collections.IReadOnlyList<T>`, `System.Collections.ICollection<T>`, `System.Collections.IList<T>`, `System.Collections.ListEnumerator<T>`, `System.Collections.List<T>`, `System.Collections.StringList`, `System.Collections.Dictionary<TKey, TValue>`
 - `System.File`
 - `System.Path`

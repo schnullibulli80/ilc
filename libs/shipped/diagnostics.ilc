@@ -318,13 +318,13 @@ begin
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ThrowStackTraceNotSupported
+  // • METHOD • GetCurrentStackTraceText
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Throws a NotSupportedException indicating that stack trace tracing is not supported in the bootstrap runtime.</summary>
+  /// <summary>Retrieves the current formatted stack trace text from the runtime.</summary>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static method ThrowStackTraceNotSupported;
+  public static function GetCurrentStackTraceText: String;
   begin
-    raise new NotSupportedException('Stacktrace tracing is not supported in the bootstrap runtime yet.');
+    return Exception.CurrentStackTrace;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -557,7 +557,8 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteErrorWithStackTrace(text: String);
   begin
-    TraceFormatting.ThrowStackTraceNotSupported();
+    EmitLine(TraceLevel.Error, text, false);
+    EmitLine(TraceLevel.Error, TraceFormatting.GetCurrentStackTraceText(), false);
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -818,7 +819,8 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteErrorWithStackTrace(text: String);
   begin
-    TraceFormatting.ThrowStackTraceNotSupported();
+    EmitLine(TraceLevel.Error, text, false);
+    EmitLine(TraceLevel.Error, TraceFormatting.GetCurrentStackTraceText(), false);
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -955,7 +957,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method WriteErrorWithStackTrace(text: String);
   begin
-    TraceFormatting.ThrowStackTraceNotSupported();
+    return;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

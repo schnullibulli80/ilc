@@ -10,12 +10,18 @@ var bootstrapFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirector
 var systemFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "system.ilc"));
 var diagnosticsFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "diagnostics.ilc"));
 var textFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "text.ilc"));
+var jsonFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "json.ilc"));
+var netFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "net.ilc"));
+var threadingFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "threading.ilc"));
 var collectionsFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "collections.ilc"));
 var demoCoreFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "demo-core.ilc"));
 var bootstrapSource = File.ReadAllText(bootstrapFixturePath);
 var systemSource = File.ReadAllText(systemFixturePath);
 var diagnosticsSource = File.ReadAllText(diagnosticsFixturePath);
 var textSource = File.ReadAllText(textFixturePath);
+var jsonSource = File.ReadAllText(jsonFixturePath);
+var netSource = File.ReadAllText(netFixturePath);
+var threadingSource = File.ReadAllText(threadingFixturePath);
 var collectionsSource = File.ReadAllText(collectionsFixturePath);
 var demoCoreSource = File.ReadAllText(demoCoreFixturePath);
 
@@ -23,9 +29,12 @@ var tree = SyntaxTree.Parse(bootstrapSource);
 var systemTree = SyntaxTree.Parse(systemSource);
 var diagnosticsTree = SyntaxTree.Parse(diagnosticsSource);
 var textTree = SyntaxTree.Parse(textSource);
+var jsonTree = SyntaxTree.Parse(jsonSource);
+var netTree = SyntaxTree.Parse(netSource);
+var threadingTree = SyntaxTree.Parse(threadingSource);
 var collectionsTree = SyntaxTree.Parse(collectionsSource);
 var demoCoreTree = SyntaxTree.Parse(demoCoreSource);
-var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, collectionsTree, demoCoreTree]);
+var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, jsonTree, netTree, threadingTree, collectionsTree, demoCoreTree]);
 
 if (tree.Root.Tokens.Count == 0)
 {
@@ -49,15 +58,18 @@ if (tree.Root.Namespace?.Name.ToDisplayString() != "Demo.App")
     failures.Add("Parser should capture the namespace declaration.");
 }
 
-if (tree.Root.Uses?.Imports.Count != 5)
+if (tree.Root.Uses?.Imports.Count != 8)
 {
     failures.Add("Parser should capture the uses clause.");
 }
 else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" ||
          tree.Root.Uses.Imports[1].NamespaceName.ToDisplayString() != "System.Diagnostics" ||
          tree.Root.Uses.Imports[2].NamespaceName.ToDisplayString() != "System.Text" ||
-         tree.Root.Uses.Imports[3].NamespaceName.ToDisplayString() != "System.Collections" ||
-         tree.Root.Uses.Imports[4].NamespaceName.ToDisplayString() != "Demo.Core")
+         tree.Root.Uses.Imports[3].NamespaceName.ToDisplayString() != "System.Text.Json" ||
+         tree.Root.Uses.Imports[4].NamespaceName.ToDisplayString() != "System.Net" ||
+         tree.Root.Uses.Imports[5].NamespaceName.ToDisplayString() != "System.Threading" ||
+         tree.Root.Uses.Imports[6].NamespaceName.ToDisplayString() != "System.Collections" ||
+         tree.Root.Uses.Imports[7].NamespaceName.ToDisplayString() != "Demo.Core")
 {
     failures.Add("Parser should capture imported namespaces.");
 }
@@ -264,6 +276,147 @@ else if (!textType.Methods.Any(method => method.Name == "IsNullOrEmpty" && metho
     failures.Add("Binder should expose the expected System.Text.Text helper signatures.");
 }
 
+var jsonKindType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "JsonKind");
+if (jsonKindType is null || jsonKindType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Text.Json.JsonKind as a non-reference enum type.");
+}
+
+var jsonValueType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "JsonValue");
+if (jsonValueType is null || !jsonValueType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Text.Json.JsonValue as a reference type.");
+}
+else if (!jsonValueType.Properties.Any(property => property.Name == "Kind" && property.Type.Name == "JsonKind") ||
+         !jsonValueType.Properties.Any(property => property.Name == "IsNull" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should expose the expected System.Text.Json.JsonValue surface.");
+}
+
+var jsonObjectType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "JsonObject");
+if (jsonObjectType is null || jsonObjectType.BaseType?.Name != "JsonValue")
+{
+    failures.Add("Binder should surface System.Text.Json.JsonObject as a JsonValue subtype.");
+}
+else if (!jsonObjectType.Properties.Any(property => property.Name == "Count" && property.Type == TypeSymbol.Integer) ||
+         !jsonObjectType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type.Name == "JsonValue" && property.IndexParameter?.Type == TypeSymbol.String) ||
+         !jsonObjectType.Methods.Any(method => method.Name == "Add" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type.Name == "JsonValue") ||
+         !jsonObjectType.Methods.Any(method => method.Name == "Contains" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Boolean) ||
+         !jsonObjectType.Methods.Any(method => method.Name == "NameAt" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.String) ||
+         !jsonObjectType.Methods.Any(method => method.Name == "ValueAt" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType.Name == "JsonValue"))
+{
+    failures.Add("Binder should expose the expected System.Text.Json.JsonObject surface.");
+}
+
+var jsonArrayType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "JsonArray");
+if (jsonArrayType is null || jsonArrayType.BaseType?.Name != "JsonValue")
+{
+    failures.Add("Binder should surface System.Text.Json.JsonArray as a JsonValue subtype.");
+}
+else if (!jsonArrayType.Properties.Any(property => property.Name == "Count" && property.Type == TypeSymbol.Integer) ||
+         !jsonArrayType.Properties.Any(property => property.Name == "Item" && property.IsIndexer && property.Type.Name == "JsonValue" && property.IndexParameter?.Type == TypeSymbol.Integer) ||
+         !jsonArrayType.Methods.Any(method => method.Name == "Add" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "JsonValue"))
+{
+    failures.Add("Binder should expose the expected System.Text.Json.JsonArray surface.");
+}
+
+var jsonType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Json");
+if (jsonType is null)
+{
+    failures.Add("Binder should surface System.Text.Json.Json in the shipped library.");
+}
+else if (!jsonType.Methods.Any(method => method.Name == "Parse" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType.Name == "JsonValue"))
+{
+    failures.Add("Binder should expose the expected System.Text.Json.Json.Parse signature.");
+}
+else if (!jsonType.Methods.Any(method => method.Name == "Stringify" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "JsonValue" && method.ReturnType == TypeSymbol.String))
+{
+    failures.Add("Binder should expose the expected System.Text.Json.Json.Stringify signature.");
+}
+
+var uriType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Uri");
+if (uriType is null || !uriType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Net.Uri as a reference type.");
+}
+else if (!uriType.Properties.Any(property => property.Name == "OriginalString" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "Scheme" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "Host" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "Path" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "Query" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "HasQuery" && property.Type == TypeSymbol.Boolean) ||
+         !uriType.Properties.Any(property => property.Name == "Fragment" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "Authority" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "PathAndQuery" && property.Type == TypeSymbol.String) ||
+         !uriType.Properties.Any(property => property.Name == "Port" && property.Type == TypeSymbol.Integer) ||
+         !uriType.Properties.Any(property => property.Name == "IsAbsoluteUri" && property.Type == TypeSymbol.Boolean) ||
+         !uriType.Methods.Any(method => method.Name == "Parse" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType.Name == "Uri") ||
+         !uriType.Methods.Any(method => method.Name == "TryParse" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].PassingKind == ParameterPassingKind.Out && method.Parameters[1].Type.Name == "Uri" && method.ReturnType == TypeSymbol.Boolean) ||
+         !uriType.Methods.Any(method => method.Name == "ContainsQueryParameter" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Boolean) ||
+         !uriType.Methods.Any(method => method.Name == "GetQueryParameter" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String))
+{
+    failures.Add("Binder should expose the expected System.Net.Uri surface.");
+}
+
+var tcpClientType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TcpClient");
+if (tcpClientType is null || !tcpClientType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Net.TcpClient as a reference type.");
+}
+else if (!tcpClientType.Properties.Any(property => property.Name == "IsConnected" && property.Type == TypeSymbol.Boolean) ||
+         !tcpClientType.Methods.Any(method => method.Name == "Connect" && !method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.String && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Boolean) ||
+         !tcpClientType.Methods.Any(method => method.Name == "ReadLine" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.String) ||
+         !tcpClientType.Methods.Any(method => method.Name == "WriteLine" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Void) ||
+         !tcpClientType.Methods.Any(method => method.Name == "Close" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) ||
+         !tcpClientType.Methods.Any(method => method.Name == "ConnectCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.TcpConnect) ||
+         !tcpClientType.Methods.Any(method => method.Name == "ReadLineCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.TcpReadLine) ||
+         !tcpClientType.Methods.Any(method => method.Name == "WriteLineCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.TcpWriteLine) ||
+         !tcpClientType.Methods.Any(method => method.Name == "CloseCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.TcpClose))
+{
+    failures.Add("Binder should expose the expected System.Net.TcpClient surface.");
+}
+
+var httpClientType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "HttpClient");
+if (httpClientType is null || !httpClientType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Net.HttpClient as a reference type.");
+}
+else if (!httpClientType.Methods.Any(method => method.Name == "GetString" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.String) ||
+         !httpClientType.Methods.Any(method => method.Name == "GetStringCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.HttpGetString))
+{
+    failures.Add("Binder should expose the expected System.Net.HttpClient surface.");
+}
+
+var threadType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Thread");
+if (threadType is null || !threadType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Threading.Thread as a reference type.");
+}
+else if (!threadType.Properties.Any(property => property.Name == "CurrentManagedId" && property.Type == TypeSymbol.Integer) ||
+         !threadType.Methods.Any(method => method.Name == "Sleep" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void) ||
+         !threadType.Methods.Any(method => method.Name == "SleepCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadSleep) ||
+         !threadType.Methods.Any(method => method.Name == "GetCurrentManagedIdCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadGetCurrentManagedId))
+{
+    failures.Add("Binder should expose the expected System.Threading.Thread surface.");
+}
+
+var mutexType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Mutex");
+if (mutexType is null || !mutexType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Threading.Mutex as a reference type.");
+}
+else if (!mutexType.Properties.Any(property => property.Name == "IsValid" && property.Type == TypeSymbol.Boolean) ||
+         !mutexType.Methods.Any(method => method.Name == "WaitOne" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean) ||
+         !mutexType.Methods.Any(method => method.Name == "Release" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) ||
+         !mutexType.Methods.Any(method => method.Name == "Close" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) ||
+         !mutexType.Methods.Any(method => method.Name == "CreateCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.MutexCreate) ||
+         !mutexType.Methods.Any(method => method.Name == "WaitOneCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.MutexWaitOne) ||
+         !mutexType.Methods.Any(method => method.Name == "ReleaseCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.MutexRelease) ||
+         !mutexType.Methods.Any(method => method.Name == "CloseCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.MutexClose))
+{
+    failures.Add("Binder should expose the expected System.Threading.Mutex surface.");
+}
+
 var stringListType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "StringList");
 if (stringListType is null || !stringListType.IsReferenceType)
 {
@@ -420,6 +573,12 @@ var notSupportedExceptionType = binding.Compilation.Types.OfType<NamedTypeSymbol
 if (notSupportedExceptionType is null || notSupportedExceptionType.BaseType?.Name != "Exception")
 {
     failures.Add("Binder should surface NotSupportedException as a System.Exception subtype.");
+}
+
+var nativeHandleType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "NativeHandle");
+if (nativeHandleType is null || nativeHandleType.IsReferenceType)
+{
+    failures.Add("Binder should surface NativeHandle as a non-reference System enum type.");
 }
 
 var stopwatchType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Stopwatch");
@@ -1560,6 +1719,7 @@ else
                 method.HostImportKind,
                 null,
                 [new Instruction(OpCode.Ret)],
+                [],
                 [],
                 [],
                 []))

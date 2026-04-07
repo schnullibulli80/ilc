@@ -1,596 +1,458 @@
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-//                                                       I L C   S Y S T E M   L I B R A R Y
+//                                                                 I L C   J S O N
 //
 // Author   : Patrik Graf
 // GitHub   : https://github.com/schnullibulli80
-// Comment  : This file contains the implementation of basic system functionalities such as exceptions, console I/O, environment variables,
-//            file operations, and path manipulations. It serves as a foundational library for the ILC compiler and its standard library, providing
-//            essential features that are used throughout the codebase. The implementations may rely on platform-specific APIs and are designed to
-//            be efficient and straightforward while adhering to the language's conventions and capabilities.
+// Comment  : This file contains the first shipped JSON surface for ILC. It provides a small object model for parsed JSON values
+//            plus a bootstrap-friendly parser that can read objects, arrays, strings, integers, booleans, and null values.
 //
 // Type     : ILC source code fixture
-// Date     : 2026-03-13
-// History  : 
+// Date     : 2026-04-06
+// History  :
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-namespace System;
+namespace System.Text.Json;
+
+uses System, System.Text, System.Collections;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • INTERFACE • IException
+// • ENUM • JsonKind
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Basic exception interface that all exceptions implement.</summary>
+/// <summary>Defines the kinds of JSON values supported by the shipped parser.</summary>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public interface IException
+public enum JsonKind
 begin
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • PROPERTIES •
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Gets the message associated with the exception.</summary>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public property Message: String { get; };
-
-  /// <summary>Gets the formatted stack trace associated with the exception.</summary>
-  public property StackTrace: String { get; };
+  Null;
+  Boolean;
+  Number;
+  String;
+  Array;
+  Object;
 end;
-//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Exception
+// • CLASS • JsonException
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Base class for exceptions in the ILC system library.</summary>
+/// <summary>Represents errors that occur during JSON parsing.</summary>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Exception: IException
+public class JsonException: Exception
 begin
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetCurrentStackTraceCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM built-in method that returns the current stack trace as formatted lines.</summary>
-  private static extern function GetCurrentStackTraceCore: array of String;
-  
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • FIELDS •
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Protected field to store the exception message.</summary>
-  protected var MessageValue: String;
-  /// <summary>Protected field to store the captured stack trace lines.</summary>
-  protected var StackTraceLinesValue: array of String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • PROPERTIES •
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Gets the message associated with the exception.</summary>
-  public property Message: String
-  begin
-    get
-    begin
-      return MessageValue;
-    end;
-  end;
-
-  /// <summary>Gets the formatted stack trace associated with the exception.</summary>
-  public property StackTrace: String
-  begin
-    get
-    begin
-      if StackTraceLinesValue = nil then
-      begin
-        return Exception.CurrentStackTrace;
-      end;
-
-      return FormatStackTrace(StackTraceLinesValue);
-    end;
-  end;
-
-  /// <summary>Gets the current formatted stack trace from the runtime.</summary>
-  public static property CurrentStackTrace: String
-  begin
-    get
-    begin
-      return FormatStackTrace(GetCurrentStackTraceCore());
-    end;
-  end;
-
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • CONSTRUCTOR •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Initializes a new instance of the Exception class with the specified message.</summary>
-  /// <param name="message">The message that describes the error.</param>
+  /// <summary>Initializes a new instance of the JsonException class with the specified error message.</summary>
+  /// <param name="message">The error message that explains the reason for the exception.</param>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(message: String);
   begin
     MessageValue := message;
     StackTraceLinesValue := nil;
   end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • JsonValue
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a parsed JSON value.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class JsonValue
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The kind of the current JSON value.</summary>
+  protected var KindValue: JsonKind;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • FormatStackTrace
+  // • PROPERTIES •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Formats the specified stack trace lines into a single multi-line string.</summary>
-  private static function FormatStackTrace(lines: array of String): String;
+  /// <summary>Gets the kind of the current JSON value.</summary>
+  public property Kind: JsonKind
   begin
-    if lines = nil then
+    get
     begin
-      return '';
+      return KindValue;
     end;
+  end;
 
-    var result := '';
-    var index := 0;
-    while index < lines.Length do
+  /// <summary>Gets a value indicating whether the current JSON value is null.</summary>
+  public property IsNull: Boolean
+  begin
+    get
     begin
-      if index > 0 then
-      begin
-        result := result + NewLine();
-      end;
-
-      result := result + lines[index];
-      index := index + 1;
+      return KindValue = JsonKind.Null;
     end;
+  end;
 
-    return result;
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the JsonValue class.</summary>
+  /// <param name="kind">The kind of the JSON value.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(kind: JsonKind);
+  begin
+    KindValue := kind;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • NotSupportedException
+// • CLASS • JsonNull
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Exception thrown when an invoked method is not supported.</summary>
+/// <summary>Represents a parsed JSON null value.</summary>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class NotSupportedException: Exception
+public class JsonNull: JsonValue
 begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • CONSTRUCTOR •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Initializes a new instance of the NotSupportedException class with the specified message.</summary>
-  /// <param name="message">The message that describes the error.</param>
+  /// <summary>Initializes a new instance of the JsonNull class.</summary>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public constructor(message: String);
+  public constructor;
   begin
-    MessageValue := message;
+    KindValue := JsonKind.Null;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • ENUM • NativeHandle
+// • CLASS • JsonBoolean
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Represents an opaque native handle returned by external libraries.</summary>
+/// <summary>Represents a parsed JSON boolean value.</summary>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public enum NativeHandle
-begin
-  Null = 0;
-end;
-//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Console
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides methods for console input and output.</summary>
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Console
+public class JsonBoolean: JsonValue
 begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Write
+  // • FIELDS •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Writes the specified text to the console without a newline.</summary>
-  /// <param name="text">The text to write to the console.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static extern method Write(text: String);
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • WriteLine
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Writes the specified text to the console followed by a newline.</summary>
-  /// <param name="text">The text to write to the console.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static extern method WriteLine(text: String);
-end;
-//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Environment
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides information about the current environment and platform.</summary>
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Environment
-begin
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetCommandLineArgsCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the command line arguments as an array of strings.</summary>
-  /// <returns>An array of strings representing the command line arguments.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetCommandLineArgsCore: array of String;
-  
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetCurrentDirectoryCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the current working directory as a string.</summary>
-  /// <returns>A string representing the current working directory.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetCurrentDirectoryCore: String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetUserNameCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the current user's name as a string.</summary>
-  /// <returns>A string representing the current user's name.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetUserNameCore: String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetMachineNameCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the machine name as a string.</summary>
-  /// <returns>A string representing the machine name.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetMachineNameCore: String;
-  
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetHomeDirectoryCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the home directory as a string.</summary>
-  /// <returns>A string representing the home directory.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetHomeDirectoryCore: String;
-  
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetTempDirectoryCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the temporary directory as a string.</summary>
-  /// <returns>A string representing the temporary directory.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetTempDirectoryCore: String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetEnvironmentVariableCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the value of an environment variable by name.</summary>
-  /// <param name="name">The name of the environment variable to retrieve.</param>
-  /// <returns>A string representing the value of the environment variable, or nil if it does not exist.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetEnvironmentVariableCore(name: String): String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • SetEnvironmentVariableCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to set the value of an environment variable.</summary>
-  /// <param name="name">The name of the environment variable to set.</param>
-  /// <param name="value">The value to set for the environment variable.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern method SetEnvironmentVariableCore(name: String; value: String);
+  /// <summary>The Boolean value stored in the JSON node.</summary>
+  private var ValueField: Boolean;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • PROPERTIES •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Gets the command line arguments as an array of strings.</summary>
-  public static property CommandLineArgs: array of String
+  /// <summary>Gets the Boolean value stored in the JSON node.</summary>
+  public property Value: Boolean
   begin
     get
     begin
-      return GetCommandLineArgsCore();
+      return ValueField;
     end;
   end;
 
-  /// <summary>Gets the current working directory as a string.</summary>
-  public static property CurrentDirectory: String
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the JsonBoolean class.</summary>
+  /// <param name="value">The Boolean value represented by the JSON node.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(value: Boolean);
+  begin
+    KindValue := JsonKind.Boolean;
+    ValueField := value;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • JsonNumber
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a parsed integer JSON number value.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class JsonNumber: JsonValue
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The integer value stored in the JSON node.</summary>
+  private var ValueField: Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the integer value stored in the JSON node.</summary>
+  public property Value: Integer
   begin
     get
     begin
-      return GetCurrentDirectoryCore();
+      return ValueField;
     end;
   end;
 
-  /// <summary>Gets the current user's name as a string.</summary>
-  public static property UserName: String
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the JsonNumber class.</summary>
+  /// <param name="value">The integer value represented by the JSON node.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(value: Integer);
+  begin
+    KindValue := JsonKind.Number;
+    ValueField := value;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • JsonString
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a parsed JSON string value.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class JsonString: JsonValue
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The string value stored in the JSON node.</summary>
+  private var ValueField: String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the string value stored in the JSON node.</summary>
+  public property Value: String
   begin
     get
     begin
-      return GetUserNameCore();
+      return ValueField;
     end;
   end;
 
-  /// <summary>Gets the machine name as a string.</summary>
-  public static property MachineName: String
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the JsonString class.</summary>
+  /// <param name="value">The string value represented by the JSON node.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(value: String);
+  begin
+    KindValue := JsonKind.String;
+    ValueField := value;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • JsonArray
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a parsed JSON array value.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class JsonArray: JsonValue
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The list of JSON values stored in the JSON array.</summary>
+  private var Items: List<JsonValue>;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of elements in the JSON array.</summary>
+  public property Count: Integer
   begin
     get
     begin
-      return GetMachineNameCore();
+      return Items.Count;
     end;
   end;
 
-  
-  /// <summary>Gets the home directory as a string.</summary>
-  public static property HomeDirectory: String
+  /// <summary>Gets the JSON value at the specified array index.</summary>
+  public default property Item[index: Integer]: JsonValue
   begin
     get
     begin
-      return GetHomeDirectoryCore();
+      return Items[index];
     end;
   end;
 
-  /// <summary>Gets the temporary directory as a string.</summary>
-  public static property TempDirectory: String
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the JsonArray class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    KindValue := JsonKind.Array;
+    Items := new List<JsonValue>();
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Add
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds a value to the end of the JSON array.</summary>
+  /// <param name="value">The JSON value to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Add(value: JsonValue);
+  begin
+    Items.Add(value);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • JsonObject
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a parsed JSON object value.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class JsonObject: JsonValue
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The list of property names stored in the JSON object.</summary>
+  private var Keys: List<String>;
+  /// <summary>The list of property values stored in the JSON object.</summary>
+  private var Values: List<JsonValue>;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of properties in the JSON object.</summary>
+  public property Count: Integer
   begin
     get
     begin
-      return GetTempDirectoryCore();
+      return Keys.Count;
     end;
   end;
 
-  /// <summary>Gets or sets the value of an environment variable.</summary>
-  public static property Variables[name: String]: String
+  /// <summary>Gets or sets the JSON value stored under the specified property name.</summary>
+  public default property Item[name: String]: JsonValue
   begin
     get
     begin
-      return GetEnvironmentVariableCore(name);
+      var index := IndexOfKey(name);
+      if index < 0 then
+      begin
+        return nil;
+      end;
+
+      return Values[index];
     end;
 
     set(value)
     begin
-      SetEnvironmentVariableCore(name, value);
-    end;
-  end;
-end;
-//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+      var index := IndexOfKey(name);
+      if index < 0 then
+      begin
+        Keys.Add(name);
+        Values.Add(value);
+        return;
+      end;
 
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Clock
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides methods to retrieve the current time in various formats.</summary>
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Clock
-begin
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetMonotonicMillisecondsTextCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the current monotonic time in milliseconds as a string.</summary>
-  /// <returns>A string representing the current monotonic time in milliseconds.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetMonotonicMillisecondsTextCore: String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetWallMillisecondsTextCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the current wall clock time in milliseconds as a string.</summary>
-  /// <returns>A string representing the current wall clock time in milliseconds.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetWallMillisecondsTextCore: String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetWallDateTimeTextCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the current wall clock date and time as a string.</summary>
-  /// <returns>A string representing the current wall clock date and time.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetWallDateTimeTextCore: String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • PROPERTIES •
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Gets the current monotonic time in milliseconds as a string.</summary>
-  public static property MonotonicMillisecondsText: String
-  begin
-    get
-    begin
-      return GetMonotonicMillisecondsTextCore();
+      Values[index] := value;
     end;
   end;
 
-  /// <summary>Gets the current wall clock time in milliseconds as a string.</summary>
-  public static property WallMillisecondsText: String
-  begin
-    get
-    begin
-      return GetWallMillisecondsTextCore();
-    end;
-  end;
-
-  /// <summary>Gets the current wall clock date and time as a string.</summary>
-  public static property WallDateTimeText: String
-  begin
-    get
-    begin
-      return GetWallDateTimeTextCore();
-    end;
-  end;
-end;
-//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Math
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides mathematical functions and constants.</summary>
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Math
-begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Min
+  // • CONSTRUCTOR •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Returns the smaller of two integers.</summary>
-  /// <param name="left">The first integer to compare.</param>
-  /// <param name="right">The second integer to compare.</param>
-  /// <returns>The smaller of the two integers.</returns>
+  /// <summary>Initializes a new instance of the JsonObject class.</summary>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function Min(left: Integer; right: Integer): Integer;
+  public constructor;
   begin
-    if left < right then
-    begin
-      return left;
-    end;
-
-    return right;
+    KindValue := JsonKind.Object;
+    Keys := new List<String>();
+    Values := new List<JsonValue>();
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Max
+  // • METHOD • Add
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Returns the larger of two integers.</summary>
-  /// <param name="left">The first integer to compare.</param>
-  /// <param name="right">The second integer to compare.</param>
-  /// <returns>The larger of the two integers.</returns>
+  /// <summary>Adds or replaces the value stored under the specified property name.</summary>
+  /// <param name="name">The property name.</param>
+  /// <param name="value">The value to store.</param>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function Max(left: Integer; right: Integer): Integer;
+  public method Add(name: String; value: JsonValue);
   begin
-    if left > right then
-    begin
-      return left;
-    end;
-
-    return right;
+    Item[name] := value;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Abs
+  // • METHOD • IndexOfKey
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Returns the absolute value of an integer.</summary>
-  /// <param name="value">The integer value to get the absolute value of.</param>
-  /// <returns>The absolute value of the integer.</returns>
+  /// <summary>Finds the index of the specified property name in the JSON object.</summary>
+  /// <param name="name">The property name to locate.</param>
+  /// <returns>The zero-based index of the property if found; otherwise, -1.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function Abs(value: Integer): Integer;
+  private function IndexOfKey(name: String): Integer;
   begin
-    if value < 0 then
-    begin
-      return -value;
-    end;
-
-    return value;
+    return Keys.IndexOf(name);
   end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Clamp
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Clamps an integer value between a minimum and maximum value.</summary>
-  /// <param name="value">The integer value to clamp.</param>
-  /// <param name="minimum">The minimum value to clamp to.</param>
-  /// <param name="maximum">The maximum value to clamp to.</param>
-  /// <returns>The clamped integer value.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function Clamp(value: Integer; minimum: Integer; maximum: Integer): Integer;
-  begin
-    var lower := Min(minimum, maximum);
-    var upper := Max(minimum, maximum);
-
-    if value < lower then
-    begin
-      return lower;
-    end;
-
-    if value > upper then
-    begin
-      return upper;
-    end;
-
-    return value;
-  end;
-end;
-//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Convert
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides methods for converting between different types.</summary>
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Convert
-begin
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ToInteger
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Converts a string to an integer.</summary>
-  /// <param name="value">The string to convert.</param>
-  /// <returns>The integer representation of the string.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function ToInteger(value: String): Integer;
-  begin
-    return Integer.Parse(value);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • TryToInteger
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Attempts to convert a string to an integer.</summary>
-  /// <param name="value">The string to convert.</param>
-  /// <param name="result">The integer representation of the string.</param>
-  /// <returns>true if the conversion was successful; otherwise, false.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function TryToInteger(value: String; out result: Integer): Boolean;
-  begin
-    return Integer.TryParse(value, result);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ToString
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Converts an integer to a string.</summary>
-  /// <param name="value">The integer to convert.</param>
-  /// <returns>The string representation of the integer.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function ToString(value: Integer): String;
-  begin
-    return value.ToString();
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ToBoolean
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Converts an integer to a boolean.</summary>
-  /// <param name="value">The integer to convert.</param>
-  /// <returns>true if the integer is non-zero; otherwise, false.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function ToBoolean(value: Integer): Boolean;
-  begin
-    return value <> 0;
-  end;
-end;
-//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • File
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides methods for file operations such as reading, writing, and appending text to files.</summary>
-//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class File
-begin
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • ExistsCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to check if a file exists at the specified path.</summary>
-  /// <param name="path">The path of the file to check for existence.</param>
-  /// <returns>true if the file exists; otherwise, false.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function ExistsCore(path: String): Boolean;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • ReadAllTextCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to read all text from a file at the specified path.</summary>
-  /// <param name="path">The path of the file to read from.</param>
-  /// <returns>A string containing the contents of the file.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function ReadAllTextCore(path: String): String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • WriteAllTextCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to write text to a file at the specified path, overwriting any existing content.</summary>
-  /// <param name="path">The path of the file to write to.</param>
-  /// <param name="text">The text to write to the file.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern method WriteAllTextCore(path: String; text: String);
   
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • AppendAllTextCore
+  // • METHOD • Contains
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to append text to a file at the specified path.</summary>
-  /// <param name="path">The path of the file to append to.</param>
-  /// <param name="text">The text to append to the file.</param>
+  /// <summary>Determines whether the JSON object contains a property with the specified name.</summary>
+  /// <param name="name">The property name to locate.</param>
+  /// <returns>true if the property exists; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern method AppendAllTextCore(path: String; text: String);
+  public function Contains(name: String): Boolean;
+  begin
+    return IndexOfKey(name) >= 0;
+  end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NameAt
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the property name stored at the specified object index.</summary>
+  /// <param name="index">The zero-based property index.</param>
+  /// <returns>The property name at the specified index.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function NameAt(index: Integer): String;
+  begin
+    return Keys[index];
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ValueAt
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the property value stored at the specified object index.</summary>
+  /// <param name="index">The zero-based property index.</param>
+  /// <returns>The property value at the specified index.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function ValueAt(index: Integer): JsonValue;
+  begin
+    return Values[index];
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • JsonParser
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides the internal stateful parser used by Json.Parse.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class JsonParser
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The JSON text being parsed.</summary>
+  private var Source: String;
+  /// <summary>The current index into the JSON text.</summary>
+  private var Index: Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the JsonParser class.</summary>
+  /// <param name="text">The JSON text to parse.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(text: String);
+  begin
+    Source := text;
+    Index := 0;
+  end;
+  
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • NewLine
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Returns the newline string used by the environment.</summary>
-  /// <returns>A string representing the newline sequence.</returns>
+  /// <summary>Gets the newline character(s) used for JSON string escaping.</summary>
+  /// <returns>The newline character(s) used for JSON string escaping.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function NewLine: String;
   begin
@@ -599,348 +461,682 @@ begin
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • NormalizeLineEndings
+  // • METHOD • Tab
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Normalizes line endings in a string to use the environment's newline sequence.</summary>
-  /// <param name="text">The string to normalize.</param>
-  /// <returns>A string with normalized line endings.</returns>
+  /// <summary>Gets the tab character used for JSON string escaping.</summary>
+  /// <returns>The tab character used for JSON string escaping.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static function NormalizeLineEndings(text: String): String;
+  private static function Tab: String;
   begin
-    return text.Replace('
-', NewLine());
+    return '	';
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • CountLines
+  // • METHOD • IsDigit
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Counts the number of lines in a string.</summary>
-  /// <param name="text">The string to count lines in.</param>
-  /// <returns>The number of lines in the string.</returns>
+  /// <summary>Determines whether the specified text represents a single JSON digit (0-9).</summary>
+  /// <param name="text">The text to evaluate.</param>
+  /// <returns>true if the text is a single JSON digit; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static function CountLines(text: String): Integer;
+  private static function IsDigit(text: String): Boolean;
   begin
-    if text = '' then
+    if text = '0' then
     begin
-      return 0;
+      return true;
     end;
 
-    var newline := NewLine();
-    var count := 0;
-    var lineStart := 0;
-    var index := 0;
-    while index < text.Length do
+    if text = '1' then
     begin
-      if text.Substring(index, 1) = newline then
+      return true;
+    end;
+
+    if text = '2' then
+    begin
+      return true;
+    end;
+
+    if text = '3' then
+    begin
+      return true;
+    end;
+
+    if text = '4' then
+    begin
+      return true;
+    end;
+
+    if text = '5' then
+    begin
+      return true;
+    end;
+
+    if text = '6' then
+    begin
+      return true;
+    end;
+
+    if text = '7' then
+    begin
+      return true;
+    end;
+
+    if text = '8' then
+    begin
+      return true;
+    end;
+
+    if text = '9' then
+    begin
+      return true;
+    end;
+
+    return false;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • HasMore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether there are more characters to read from the JSON source.</summary>
+  /// <returns>true if there are more characters to read; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function HasMore: Boolean;
+  begin
+    return Index < Source.Length;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Peek
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Peeks at the next character in the JSON source.</summary>
+  /// <returns>The next character, or nil if there are no more characters.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function Peek: String;
+  begin
+    if not HasMore() then
+    begin
+      return nil;
+    end;
+
+    return Source.Substring(Index, 1);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Read
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads the next character from the JSON source and advances the parser position.</summary>
+  /// <returns>The next character, or nil if there are no more characters.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function Read: String;
+  begin
+    var current := Peek();
+    Index := Index + 1;
+    return current;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Expect
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads the next characters from the JSON source and validates that they match the specified text.</summary>
+  /// <param name="text">The expected text to read from the JSON source.</param>
+  /// <exception cref="JsonException">Thrown if the expected text does not match the actual text read from the JSON source.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private method Expect(text: String);
+  begin
+    var actual := Read();
+    if actual <> text then
+    begin
+      raise new JsonException('Invalid JSON syntax near index ' + Index.ToString() + '.');
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SkipWhitespace
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the parser position past any whitespace characters.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private method SkipWhitespace;
+  begin
+    while HasMore() do
+    begin
+      var current := Peek();
+      if current = ' ' or current = Tab() or current = NewLine() then
       begin
-        count := count + 1;
-        lineStart := index + 1;
-      end;
-
-      index := index + 1;
-    end;
-
-    if lineStart < text.Length then
-    begin
-      count := count + 1;
-    end;
-
-    return count;
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Exists
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Checks if a file exists at the specified path.</summary>
-  /// <param name="path">The path of the file to check for existence.</param>
-  /// <returns>true if the file exists; otherwise, false.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function Exists(path: String): Boolean;
-  begin
-    return ExistsCore(path);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ReadAllText
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Reads all text from a file at the specified path.</summary>
-  /// <param name="path">The path of the file to read from.</param>
-  /// <returns>A string containing the contents of the file.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function ReadAllText(path: String): String;
-  begin
-    return ReadAllTextCore(path);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • WriteAllText
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Writes text to a file at the specified path, overwriting any existing content.</summary>
-  /// <param name="path">The path of the file to write to.</param>
-  /// <param name="text">The text to write to the file.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static method WriteAllText(path: String; text: String);
-  begin
-    WriteAllTextCore(path, text);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • AppendAllText
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Appends text to a file at the specified path.</summary>
-  /// <param name="path">The path of the file to append to.</param>
-  /// <param name="text">The text to append to the file.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static method AppendAllText(path: String; text: String);
-  begin
-    AppendAllTextCore(path, text);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ReadAllLines
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Reads all lines from a file at the specified path.</summary>
-  /// <param name="path">The path of the file to read from.</param>
-  /// <returns>An array of strings containing the lines of the file.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function ReadAllLines(path: String): array of String;
-  begin
-    var normalized := NormalizeLineEndings(ReadAllText(path));
-    var lineCount := CountLines(normalized);
-    var lines := new String[lineCount];
-    var newline := NewLine();
-
-    if lineCount = 0 then
-    begin
-      return lines;
-    end;
-
-    var lineStart := 0;
-    var lineIndex := 0;
-    var index := 0;
-    while index < normalized.Length do
-    begin
-      if normalized.Substring(index, 1) = newline then
+        Index := Index + 1;
+      end
+      else
       begin
-        lines[lineIndex] := normalized.Substring(lineStart, index - lineStart);
-        lineIndex := lineIndex + 1;
-        lineStart := index + 1;
-      end;
-
-      index := index + 1;
-    end;
-
-    if lineStart < normalized.Length and lineIndex < lineCount then
-    begin
-      lines[lineIndex] := normalized.Substring(lineStart, normalized.Length - lineStart);
-    end;
-
-    return lines;
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • WriteAllLines
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Writes all lines to a file at the specified path, overwriting any existing content.</summary>
-  /// <param name="path">The path of the file to write to.</param>
-  /// <param name="lines">The lines to write to the file.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static method WriteAllLines(path: String; lines: array of String);
-  begin
-    var text := '';
-    var index := 0;
-    while index < lines.Length do
-    begin
-      if index > 0 then
-      begin
-        text := text + NewLine();
-      end;
-
-      text := text + lines[index];
-      index := index + 1;
-    end;
-
-    WriteAllText(path, text);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • AppendLine
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Appends a line to a file at the specified path.</summary>
-  /// <param name="path">The path of the file to append to.</param>
-  /// <param name="text">The text to append to the file.</param>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static method AppendLine(path: String; text: String);
-  begin
-    var newline := NewLine();
-    var prefix := '';
-    if Exists(path) then
-    begin
-      var current := ReadAllText(path);
-      if current <> '' and current.Substring(current.Length - 1, 1) <> newline then
-      begin
-        prefix := newline;
+        return;
       end;
     end;
+  end;
 
-    AppendAllText(path, prefix + text + newline);
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseNull
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON null literal from the current parser position.</summary>
+  /// <returns>A JsonNull instance representing the parsed null value.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON null literal is invalid.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseNull: JsonValue;
+  begin
+    if Index + 4 > Source.Length then
+    begin
+      raise new JsonException('Invalid JSON null literal.');
+    end;
+
+    if Source.Substring(Index, 4) <> 'null' then
+    begin
+      raise new JsonException('Invalid JSON null literal.');
+    end;
+
+    Index := Index + 4;
+    return new JsonNull();
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseBoolean
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON boolean literal from the current parser position.</summary>
+  /// <returns>A JsonBoolean instance representing the parsed boolean value.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON boolean literal is invalid.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseBoolean: JsonValue;
+  begin
+    if Index + 4 <= Source.Length then
+    begin
+      if Source.Substring(Index, 4) = 'true' then
+      begin
+        Index := Index + 4;
+        return new JsonBoolean(true);
+      end;
+    end;
+
+    if Index + 5 <= Source.Length then
+    begin
+      if Source.Substring(Index, 5) = 'false' then
+      begin
+        Index := Index + 5;
+        return new JsonBoolean(false);
+      end;
+    end;
+
+    raise new JsonException('Invalid JSON boolean literal.');
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseStringValue
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON string literal from the current parser position and returns the unescaped string value.</summary>
+  /// <returns>The unescaped string value represented by the JSON string literal.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON string literal is invalid or unterminated.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseStringValue: String;
+  begin
+    Expect('"');
+
+    var result := '';
+    while HasMore() do
+    begin
+      var current := Read();
+      if current = '"' then
+      begin
+        return result;
+      end;
+
+      if current = '\' then
+      begin
+        var escaped := Read();
+        if escaped = '"' or escaped = '\' or escaped = '/' then
+        begin
+          result := result + escaped;
+        end
+        else if escaped = 'n' then
+        begin
+          result := result + NewLine();
+        end
+        else if escaped = 'r' then
+        begin
+          result := result + NewLine();
+        end
+        else if escaped = 't' then
+        begin
+          result := result + Tab();
+        end
+        else if escaped = 'b' or escaped = 'f' then
+        begin
+          result := result + ' ';
+        end
+        else
+        begin
+          raise new JsonException('Unsupported JSON escape sequence.');
+        end;
+      end
+      else
+      begin
+        result := result + current;
+      end;
+    end;
+
+    raise new JsonException('Unterminated JSON string literal.');
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseString
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON string literal from the current parser position and returns a JsonString node.</summary>
+  /// <returns>A JsonString instance representing the parsed JSON string literal.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON string literal is invalid or unterminated.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseString: JsonValue;
+  begin
+    return new JsonString(ParseStringValue());
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseNumber
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON number literal from the current parser position and returns a JsonNumber node.</summary>
+  /// <returns>A JsonNumber instance representing the parsed JSON number literal.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON number literal is invalid.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseNumber: JsonValue;
+  begin
+    var start := Index;
+    if HasMore() then
+    begin
+      if Peek() = '-' then
+      begin
+        Index := Index + 1;
+      end;
+    end;
+
+    while HasMore() do
+    begin
+      var current := Peek();
+      if not IsDigit(current) then
+      begin
+        break;
+      end;
+
+      Index := Index + 1;
+    end;
+
+    var text := Source.Substring(start, Index - start);
+    if text = '' or text = '-' then
+    begin
+      raise new JsonException('Invalid JSON number literal.');
+    end;
+
+    return new JsonNumber(Integer.Parse(text));
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseArray
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON array literal from the current parser position and returns a JsonArray node.</summary>
+  /// <returns>A JsonArray instance representing the parsed JSON array literal.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON array literal is invalid or unterminated.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseArray: JsonValue;
+  begin
+    Expect('[');
+    var result := new JsonArray();
+    SkipWhitespace();
+    if HasMore() then
+    begin
+      if Peek() = ']' then
+      begin
+        Index := Index + 1;
+        return result;
+      end;
+    end;
+
+    while true do
+    begin
+      result.Add(ParseValue());
+      SkipWhitespace();
+      if HasMore() then
+      begin
+        if Peek() = ',' then
+        begin
+          Index := Index + 1;
+          SkipWhitespace();
+        end
+        else
+        begin
+          break;
+        end;
+      end
+      else
+      begin
+        break;
+      end;
+    end;
+
+    Expect(']');
+    return result;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseObject
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses a JSON object literal from the current parser position and returns a JsonObject node.</summary>
+  /// <returns>A JsonObject instance representing the parsed JSON object literal.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON object literal is invalid or unterminated.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private function ParseObject: JsonValue;
+  begin
+    Expect('{');
+    var result := new JsonObject();
+    SkipWhitespace();
+    if HasMore() then
+    begin
+      if Peek() = '}' then
+      begin
+        Index := Index + 1;
+        return result;
+      end;
+    end;
+
+    while true do
+    begin
+      SkipWhitespace();
+      var name := ParseStringValue();
+      SkipWhitespace();
+      Expect(':');
+      SkipWhitespace();
+      result.Add(name, ParseValue());
+      SkipWhitespace();
+      if HasMore() then
+      begin
+        if Peek() = ',' then
+        begin
+          Index := Index + 1;
+          SkipWhitespace();
+        end
+        else
+        begin
+          break;
+        end;
+      end
+      else
+      begin
+        break;
+      end;
+    end;
+
+    Expect('}');
+    return result;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseValue
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses the next JSON value from the current parser position.</summary>
+  /// <returns>The parsed JSON value.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON value is invalid.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function ParseValue: JsonValue;
+  begin
+    SkipWhitespace();
+    if not HasMore() then
+    begin
+      raise new JsonException('Unexpected end of JSON input.');
+    end;
+
+    var current := Peek();
+    if current = '{' then
+    begin
+      return ParseObject();
+    end;
+
+    if current = '[' then
+    begin
+      return ParseArray();
+    end;
+
+    if current = '"' then
+    begin
+      return ParseString();
+    end;
+
+    if current = 't' then
+    begin
+      return ParseBoolean();
+    end;
+
+    if current = 'f' then
+    begin
+      return ParseBoolean();
+    end;
+
+    if current = 'n' then
+    begin
+      return ParseNull();
+    end;
+
+    if current = '-' then
+    begin
+      return ParseNumber();
+    end;
+
+    if IsDigit(current) then
+    begin
+      return ParseNumber();
+    end;
+
+    raise new JsonException('Unsupported JSON value at index ' + Index.ToString() + '.');
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ParseDocument
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses the full JSON text and validates that no trailing tokens remain.</summary>
+  /// <returns>The parsed root JSON value.</returns>
+  /// <exception cref="JsonException">Thrown if the JSON text contains invalid syntax or trailing content.</exception>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function ParseDocument: JsonValue;
+  begin
+    var result := ParseValue();
+    SkipWhitespace();
+    if HasMore() then
+    begin
+      raise new JsonException('Unexpected trailing JSON content.');
+    end;
+
+    return result;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// • CLASS • Path
+// • CLASS • Json
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Provides methods for manipulating file and directory paths.</summary>
+/// <summary>Provides the entry point for JSON parsing.</summary>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-public class Path
+public class Json
 begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • CombineCore
+  // • METHOD • NewLine
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to combine two path segments into a single path.</summary>
-  /// <param name="left">The first path segment.</param>
-  /// <param name="right">The second path segment.</param>
-  /// <returns>A string representing the combined path.</returns>
+  /// <summary>Gets the newline character(s) used for JSON string escaping.</summary>
+  /// <returns>The newline character(s) used for JSON string escaping.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function CombineCore(left: String; right: String): String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetFileNameCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the file name from a path.</summary>
-  /// <param name="path">The path to retrieve the file name from.</param>
-  /// <returns>A string representing the file name, or an empty string if the path does not contain a file name.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetFileNameCore(path: String): String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetDirectoryNameCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the directory name from a path.</summary>
-  /// <param name="path">The path to retrieve the directory name from.</param>
-  /// <returns>A string representing the directory name, or an empty string if the path does not contain a directory name.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetDirectoryNameCore(path: String): String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • EXTERNAL • GetExtensionCore
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>VM Built-in method to retrieve the file extension from a path.</summary>
-  /// <param name="path">The path to retrieve the file extension from.</param>
-  /// <returns>A string representing the file extension, or an empty string if the path does not contain a file extension.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static extern function GetExtensionCore(path: String): String;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • Combine
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Combines two path segments into a single path.</summary>
-  /// <param name="left">The first path segment.</param>
-  /// <param name="right">The second path segment.</param>
-  /// <returns>A string representing the combined path.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function Combine(left: String; right: String): String;
+  private static function NewLine: String;
   begin
-    return CombineCore(left, right);
+    return '
+';
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • GetFileName
+  // • METHOD • Tab
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Retrieves the file name from a path.</summary>
-  /// <param name="path">The path to retrieve the file name from.</param>
-  /// <returns>A string representing the file name, or an empty string if the path does not contain a file name.</returns>
+  /// <summary>Gets the tab character(s) used for JSON string escaping.</summary>
+  /// <returns>The tab character(s) used for JSON string escaping.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function GetFileName(path: String): String;
+  private static function Tab: String;
   begin
-    return GetFileNameCore(path);
+    return '	';
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • GetDirectoryName
+  // • METHOD • EscapeString
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Retrieves the directory name from a path.</summary>
-  /// <param name="path">The path to retrieve the directory name from.</param>
-  /// <returns>A string representing the directory name, or an empty string if the path does not contain a directory name.</returns>
+  /// <summary>Escapes special characters in a string for JSON string literal encoding.</summary>
+  /// <param name="text">The string to escape.</param>
+  /// <returns>The escaped string suitable for JSON string literal encoding.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function GetDirectoryName(path: String): String;
+  private static function EscapeString(text: String): String;
   begin
-    return GetDirectoryNameCore(path);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • GetExtension
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Retrieves the extension from a path.</summary>
-  /// <param name="path">The path to retrieve the extension from.</param>
-  /// <returns>A string representing the extension, or an empty string if the path does not contain an extension.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function GetExtension(path: String): String;
-  begin
-    return GetExtensionCore(path);
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • HasExtension
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Indicates whether a path has an extension.</summary>
-  /// <param name="path">The path to check for an extension.</param>
-  /// <returns>true if the path has an extension; otherwise, false.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function HasExtension(path: String): Boolean;
-  begin
-    return GetExtension(path) <> '';
-  end;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • GetFileNameWithoutExtension
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Retrieves the file name without the extension from a path.</summary>
-  /// <param name="path">The path to retrieve the file name from.</param>
-  /// <returns>A string representing the file name without the extension, or an empty string if the path does not contain a file name.</returns>
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function GetFileNameWithoutExtension(path: String): String;
-  begin
-    var fileName := GetFileName(path);
-    var extension := GetExtension(path);
-    if extension = '' then
+    if text = nil then
     begin
-      return fileName;
+      return '';
     end;
 
-    return fileName.Substring(0, fileName.Length - extension.Length);
+    var result := '';
+    var index := 0;
+    while index < text.Length do
+    begin
+      var current := text.Substring(index, 1);
+      if current = '"' then
+      begin
+        result := result + '\' + '"';
+      end
+      else if current = '\' then
+      begin
+        result := result + '\' + '\';
+      end
+      else if current = NewLine() then
+      begin
+        result := result + '\' + 'n';
+      end
+      else if current = Tab() then
+      begin
+        result := result + '\' + 't';
+      end
+      else
+      begin
+        result := result + current;
+      end;
+
+      index := index + 1;
+    end;
+
+    return result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • ChangeExtension
+  // • METHOD • StringifyArray
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  /// <summary>Changes the extension of a path string.</summary>
-  /// <param name="path">The path of the file to change the extension for.</param>
-  /// <param name="extension">
-  ///   The new extension to use. If the extension does not start with a period ('.'), one will be added. If the extension is null or empty,
-  ///   the existing extension will be removed.
-  /// </param>
-  /// <returns>A string with the modified path.</returns>
+  /// <summary>Serializes a JSON array value into compact JSON text.</summary>
+  /// <param name="value">The JSON array to serialize.</param>
+  /// <returns>The compact JSON representation of the specified array.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function ChangeExtension(path: String; extension: String): String;
+  private static function StringifyArray(value: JsonArray): String;
   begin
-    var directory := GetDirectoryName(path);
-    var fileNameWithoutExtension := GetFileNameWithoutExtension(path);
-    var normalizedExtension := extension;
-
-    if normalizedExtension <> '' and not normalizedExtension.StartsWith('.') then
+    var result := '[';
+    var index := 0;
+    while index < value.Count do
     begin
-      normalizedExtension := '.' + normalizedExtension;
+      if index > 0 then
+      begin
+        result := result + ',';
+      end;
+
+      result := result + Stringify(value[index]);
+      index := index + 1;
     end;
 
-    var changedFileName := fileNameWithoutExtension + normalizedExtension;
-    if directory = '' then
+    return result + ']';
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • StringifyObject
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Serializes a JSON object value into compact JSON text.</summary>
+  /// <param name="value">The JSON object to serialize.</param>
+  /// <returns>The compact JSON representation of the specified object.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static function StringifyObject(value: JsonObject): String;
+  begin
+    var result := '{';
+    var index := 0;
+    while index < value.Count do
     begin
-      return changedFileName;
+      if index > 0 then
+      begin
+        result := result + ',';
+      end;
+
+      result := result + '"' + EscapeString(value.NameAt(index)) + '":' + Stringify(value.ValueAt(index));
+      index := index + 1;
     end;
 
-    return Combine(directory, changedFileName);
+    return result + '}';
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Parse
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses the specified JSON text into a JSON value tree.</summary>
+  /// <param name="text">The JSON text to parse.</param>
+  /// <returns>The parsed JSON value tree.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public static function Parse(text: String): JsonValue;
+  begin
+    return new JsonParser(text).ParseDocument();
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Stringify
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Serializes the specified JSON value back into compact JSON text.</summary>
+  /// <param name="value">The JSON value to serialize.</param>
+  /// <returns>The compact JSON representation of the specified value.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public static function Stringify(value: JsonValue): String;
+  begin
+    if value = nil then
+    begin
+      return 'null';
+    end;
+
+    if value.Kind = JsonKind.Null then
+    begin
+      return 'null';
+    end;
+
+    if value.Kind = JsonKind.Boolean then
+    begin
+      if (value as JsonBoolean).Value then
+      begin
+        return 'true';
+      end;
+
+      return 'false';
+    end;
+
+    if value.Kind = JsonKind.Number then
+    begin
+      return (value as JsonNumber).Value.ToString();
+    end;
+
+    if value.Kind = JsonKind.String then
+    begin
+      return '"' + EscapeString((value as JsonString).Value) + '"';
+    end;
+
+    if value.Kind = JsonKind.Array then
+    begin
+      return StringifyArray(value as JsonArray);
+    end;
+
+    if value.Kind = JsonKind.Object then
+    begin
+      return StringifyObject(value as JsonObject);
+    end;
+
+    raise new Exception('Unsupported JSON value kind.');
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

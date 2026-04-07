@@ -52,13 +52,18 @@
     "strings": {
       "patterns": [
         {
+          "name": "string.quoted.raw.ilc",
+          "begin": "'''",
+          "end": "'''"
+        },
+        {
           "name": "string.quoted.single.ilc",
           "begin": "'",
           "end": "'",
           "patterns": [
             {
               "name": "constant.character.escape.ilc",
-              "match": "\\\\(\\\\|[ntrfvab'\"0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
+              "match": "\\\\(\\\\|[ntrfvab0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
             }
           ]
         },
@@ -69,14 +74,9 @@
           "patterns": [
             {
               "name": "constant.character.escape.ilc",
-              "match": "\\\\(\\\\|[ntrfvab'\"0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
+              "match": "\\\\(\\\\|[ntrfvab0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
             }
           ]
-        },
-        {
-          "name": "string.quoted.raw.ilc",
-          "begin": "'''",
-          "end": "'''"
         },
         {
           "name": "string.interpolated.ilc",
@@ -85,7 +85,7 @@
           "patterns": [
             {
               "name": "constant.character.escape.ilc",
-              "match": "\\\\(\\\\|[ntrfvab'\"0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
+              "match": "\\\\(\\\\|[ntrfvab0]|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})"
             }
           ]
         }

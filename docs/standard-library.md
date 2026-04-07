@@ -32,6 +32,8 @@ The current shipped library is split across:
 - `libs/shipped/system.ilc`
 - `libs/shipped/diagnostics.ilc`
 - `libs/shipped/text.ilc`
+- `libs/shipped/json.ilc`
+- `libs/shipped/net.ilc`
 - `libs/shipped/collections.ilc`
 
 Current shipped types:
@@ -42,6 +44,7 @@ Current shipped types:
 - `System.IException`
 - `System.Exception`
 - `System.NotSupportedException`
+- `System.NativeHandle`
 - `System.Math`
 - `System.Convert`
 - `System.File`
@@ -56,6 +59,20 @@ Current shipped types:
 - `System.Diagnostics.CompositeTrace`
 - `System.Diagnostics.Trace`
 - `System.Text.Text`
+- `System.Text.Json.JsonKind`
+- `System.Text.Json.JsonValue`
+- `System.Text.Json.JsonNull`
+- `System.Text.Json.JsonBoolean`
+- `System.Text.Json.JsonNumber`
+- `System.Text.Json.JsonString`
+- `System.Text.Json.JsonArray`
+- `System.Text.Json.JsonObject`
+- `System.Text.Json.Json`
+- `System.Net.Uri`
+- `System.Net.TcpClient`
+- `System.Net.HttpClient`
+- `System.Threading.Thread`
+- `System.Threading.Mutex`
 - `System.Collections.IEnumerator<T>`
 - `System.Collections.IEnumerable<T>`
 - `System.Collections.IReadOnlyList<T>`
@@ -118,6 +135,8 @@ Current shipped exception surface:
   - `Message: String`
 - `Exception : IException`
 - `NotSupportedException : Exception`
+- `NativeHandle`
+  - `Null = 0`
 
 This is currently a small bootstrap exception model intended to support
 library-raised failures such as unsupported diagnostics stack traces.
@@ -203,8 +222,8 @@ The current tracing implementation is source-level and intentionally simple:
 - console output uses `Console.Write` / `Console.WriteLine`
 - file output uses `File.AppendAllText(...)`
 - level filtering is handled in ILC code through `MinimumLevel`
-- `WriteErrorWithStackTrace(...)` currently raises `System.NotSupportedException`
-  because bootstrap runtime stack traces/debug symbols are not yet available
+- `WriteErrorWithStackTrace(...)` writes the error plus the current stack trace
+- when debug symbols are present, stack trace lines are source-enriched
 
 ### 3.3 `System.File`
 
@@ -250,9 +269,119 @@ Current shipped text helpers:
 `System.Text.Text` is currently implemented entirely in ILC source and builds on
 the existing `String` intrinsic surface.
 
-## 5) `libs/shipped/collections.ilc`
+## 5) `libs/shipped/json.ilc`
 
-### 5.1 `System.Collections.IEnumerator<T>`
+### 5.1 `System.Text.Json`
+
+Current shipped JSON surface:
+
+- `JsonKind`
+  - `Null`, `Boolean`, `Number`, `String`, `Array`, `Object`
+- `JsonValue`
+  - `Kind: JsonKind`
+  - `IsNull: Boolean`
+- `JsonNull`
+- `JsonBoolean`
+  - `Value: Boolean`
+- `JsonNumber`
+  - `Value: Integer`
+- `JsonString`
+  - `Value: String`
+- `JsonArray`
+  - `Count: Integer`
+  - `Item[index: Integer]: JsonValue`
+  - `Add(value: JsonValue)`
+- `JsonObject`
+  - `Count: Integer`
+  - `Item[name: String]: JsonValue`
+  - `Add(name: String; value: JsonValue)`
+  - `Contains(name: String): Boolean`
+  - `NameAt(index: Integer): String`
+  - `ValueAt(index: Integer): JsonValue`
+- `Json`
+  - `Parse(text: String): JsonValue`
+  - `Stringify(value: JsonValue): String`
+
+The current JSON implementation is source-level and intentionally small. It supports:
+
+- objects
+- arrays
+- strings
+- integer numbers
+- booleans
+- `null`
+- compact serialization back into JSON text
+
+Richer number support and formatting options are future work.
+
+## 6) `libs/shipped/net.ilc`
+
+### 6.1 `System.Net`
+
+Current shipped networking surface:
+
+- `Uri`
+  - `OriginalString: String`
+  - `Scheme: String`
+  - `Host: String`
+  - `Path: String`
+  - `Query: String`
+  - `HasQuery: Boolean`
+  - `Fragment: String`
+  - `Port: Integer`
+  - `IsAbsoluteUri: Boolean`
+  - `Authority: String`
+  - `PathAndQuery: String`
+  - `Parse(text: String): Uri`
+  - `TryParse(text: String; out value: Uri): Boolean`
+  - `ContainsQueryParameter(name: String): Boolean`
+  - `GetQueryParameter(name: String): String`
+- `TcpClient`
+  - `IsConnected: Boolean`
+  - `Connect(host: String; port: Integer): Boolean`
+  - `ReadLine(): String`
+  - `WriteLine(text: String): void`
+  - `Close(): void`
+- `HttpClient`
+  - `GetString(url: String): String`
+
+The current `System.Net` slice now combines:
+
+- URI parsing and normalization
+- a minimal line-oriented TCP client backed by host imports
+- a minimal synchronous HTTP text client for deterministic GET showcases
+
+`TcpClient` is intentionally small and synchronous. It exists as a pragmatic
+transport showcase and bootstrap building block for later socket and HTTP work.
+
+`HttpClient` is intentionally narrow in v1. It currently focuses on
+`GetString(...)` for local demos and bootstrap scenarios.
+
+### 6.2 `System.Threading`
+
+Current shipped threading surface:
+
+- `Thread`
+  - `CurrentManagedId: Integer`
+  - `Sleep(milliseconds: Integer): void`
+- `Mutex`
+  - `IsValid: Boolean`
+  - `WaitOne(): Boolean`
+  - `Release(): void`
+  - `Close(): void`
+
+The current `System.Threading` slice is intentionally foundational:
+
+- current-thread identification
+- sleeping
+- host-backed mutex synchronization
+
+It does not yet include managed thread start/join semantics. That is a later
+step built on top of these host-backed primitives.
+
+## 7) `libs/shipped/collections.ilc`
+
+### 7.1 `System.Collections.IEnumerator<T>`
 
 Current shipped generic enumerator view:
 
@@ -260,7 +389,7 @@ Current shipped generic enumerator view:
 - `MoveNext(): Boolean`
 - `Reset()`
 
-### 5.2 `System.Collections.IEnumerable<T>`
+### 6.2 `System.Collections.IEnumerable<T>`
 
 Current shipped generic enumerable view:
 
@@ -270,7 +399,7 @@ In the current bootstrap this is available as a collection API surface and for
 manual enumerator-driven iteration. It is now also wired into generic `foreach`
 lowering.
 
-### 5.3 `System.Collections.IReadOnlyList<T>`
+### 6.3 `System.Collections.IReadOnlyList<T>`
 
 Current shipped read-only generic list view:
 
@@ -280,7 +409,7 @@ Current shipped read-only generic list view:
 This is the smallest generic collection abstraction currently shipped and is
 intended for APIs that want indexed read access without mutation.
 
-### 5.4 `System.Collections.ICollection<T>`
+### 6.4 `System.Collections.ICollection<T>`
 
 Current shipped mutable generic collection view:
 
@@ -292,7 +421,7 @@ Current shipped mutable generic collection view:
 This is the current minimal mutable collection abstraction beneath list-shaped
 APIs.
 
-### 5.5 `System.Collections.IList<T>`
+### 6.5 `System.Collections.IList<T>`
 
 Current shipped mutable generic list view:
 
@@ -302,7 +431,7 @@ Current shipped mutable generic list view:
 - `IndexOf(value: T): Integer`
 - `ToArray(): array of T`
 
-### 5.6 `System.Collections.StringList`
+### 6.6 `System.Collections.StringList`
 
 `System.Collections.StringList` is now a thin compatibility subclass of:
 
@@ -311,7 +440,7 @@ Current shipped mutable generic list view:
 It remains available for bootstrap code, but the real long-term collection
 surface now starts at the generic `IEnumerator<T>` / `IEnumerable<T>` / `IReadOnlyList<T>` / `ICollection<T>` / `IList<T>` / `List<T>` set.
 
-### 5.7 `System.Collections.ListEnumerator<T>`
+### 6.7 `System.Collections.ListEnumerator<T>`
 
 Current shipped generic list enumerator:
 
@@ -320,7 +449,7 @@ Current shipped generic list enumerator:
 - `MoveNext(): Boolean`
 - `Reset()`
 
-### 5.8 `System.Collections.List<T>`
+### 6.8 `System.Collections.List<T>`
 
 Current shipped first generic collection type:
 
@@ -339,7 +468,7 @@ Current shipped first generic collection type:
 - `IndexOf(value: T): Integer`
 - `ToArray(): array of T`
 
-### 5.9 `System.Collections.Dictionary<TKey, TValue>`
+### 6.9 `System.Collections.Dictionary<TKey, TValue>`
 
 Current shipped generic dictionary surface:
 
@@ -357,7 +486,7 @@ The current implementation is intentionally simple and bootstrap-oriented:
 - lookup is linear
 - the API surface is ahead of any hash-based optimization work
 
-## 6) Binding and Host Mapping
+## 7) Binding and Host Mapping
 
 `extern` methods are resolved in the binder based on exact signature patterns.
 
@@ -398,12 +527,12 @@ Current `DllImport` status:
   - Linux shared-library loading via `dlopen` / `dlsym`
   - free functions only
   - currently supported FFI value types:
-    - parameters: `Integer`, `Boolean`, `String`
-    - return: `Integer`, `Boolean`, `Void`
+    - parameters: `Integer`, `Boolean`, `String`, `NativeHandle`
+    - return: `Integer`, `Boolean`, `Void`, `NativeHandle`
 
 This is intentionally separate from the private shipped `_Core` host bridge methods.
 
-## 7) Built-in Intrinsics Outside the shipped source library
+## 8) Built-in Intrinsics Outside the shipped source library
 
 The following APIs are currently supported even though they are not declared in
 the shipped source file:

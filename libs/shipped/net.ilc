@@ -1,0 +1,587 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                                   I L C   N E T
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the first shipped networking-related surface for ILC. The initial focus is a pragmatic Uri model
+//            that can parse and describe common absolute and relative URI forms without requiring a transport layer yet.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-06
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+namespace System.Net;
+
+uses System, System.Text;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • NetException
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents errors that occur during application execution in the System.Net namespace.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class NetException: Exception
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the NetException class with the specified error message.</summary>
+  /// <param name="message">The error message that explains the reason for the exception.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(message: String);
+  begin
+    MessageValue := message;
+    StackTraceLinesValue := nil;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Uri
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a parsed absolute or relative URI.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Uri
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Contains the original URI string as it was parsed.</summary>
+  private var OriginalStringValue: String;
+  /// <summary>Contains the URI scheme component, or an empty string if not present.</summary>
+  private var SchemeValue: String;
+  /// <summary>Contains the URI host component, or an empty string if not present.</summary>
+  private var HostValue: String;
+  /// <summary>Contains the URI path component, or an empty string if not present.</summary>
+  private var PathValue: String;
+  /// <summary>Contains the URI query component, or an empty string if not present.</summary>
+  private var QueryValue: String;
+  /// <summary>Contains the URI fragment component, or an empty string if not present.</summary>
+  private var FragmentValue: String;
+  /// <summary>Contains the URI port component, or -1 if not present.</summary>
+  private var PortValue: Integer;
+  /// <summary>Indicates whether the URI is absolute.</summary>
+  private var IsAbsoluteValue: Boolean;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the original URI string as it was parsed.</summary>
+  public property OriginalString: String
+  begin
+    get
+    begin
+      return OriginalStringValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI scheme component, or an empty string if not present.</summary>
+  public property Scheme: String
+  begin
+    get
+    begin
+      return SchemeValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI host component, or an empty string if not present.</summary>
+  public property Host: String
+  begin
+    get
+    begin
+      return HostValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI path component, or an empty string if not present.</summary>
+  public property Path: String
+  begin
+    get
+    begin
+      return PathValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI query component, or an empty string if not present.</summary>
+  public property Query: String
+  begin
+    get
+    begin
+      return QueryValue;
+    end;
+  end;
+
+  /// <summary>Gets a value indicating whether the URI has a query component.</summary>
+  public property HasQuery: Boolean
+  begin
+    get
+    begin
+      return QueryValue <> '';
+    end;
+  end;
+
+  /// <summary>Gets the URI fragment component, or an empty string if not present.</summary>
+  public property Fragment: String
+  begin
+    get
+    begin
+      return FragmentValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI port component, or -1 if not present.</summary>
+  public property Port: Integer
+  begin
+    get
+    begin
+      return PortValue;
+    end;
+  end;
+
+  /// <summary>Gets a value indicating whether the URI is absolute.</summary>
+  public property IsAbsoluteUri: Boolean
+  begin
+    get
+    begin
+      return IsAbsoluteValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI authority component.</summary>
+  public property Authority: String
+  begin
+    get
+    begin
+      if HostValue = '' then
+      begin
+        return '';
+      end;
+
+      if PortValue > 0 then
+      begin
+        return HostValue + ':' + PortValue.ToString();
+      end;
+
+      return HostValue;
+    end;
+  end;
+
+  /// <summary>Gets the URI path and query components.</summary>
+  public property PathAndQuery: String
+  begin
+    get
+    begin
+      if QueryValue = '' then
+      begin
+        return PathValue;
+      end;
+
+      return PathValue + '?' + QueryValue;
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <c>Uri</c> class with the specified components.</summary>
+  /// <param name="originalString">The original URI string as it was parsed.</param>
+  /// <param name="scheme">The URI scheme component, or an empty string if not present.</param>
+  /// <param name="host">The URI host component, or an empty string if not present.</param>
+  /// <param name="port">The URI port component, or -1 if not present.</param>
+  /// <param name="path">The URI path component, or an empty string if not present.</param>
+  /// <param name="query">The URI query component, or an empty string if not present.</param>
+  /// <param name="fragment">The URI fragment component, or an empty string if not present.</param>
+  /// <param name="isAbsoluteUri">A value indicating whether the URI is absolute.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(
+    originalString: String;
+    scheme: String;
+    host: String;
+    port: Integer;
+    path: String;
+    query: String;
+    fragment: String;
+    isAbsoluteUri: Boolean);
+  begin
+    OriginalStringValue := originalString;
+    SchemeValue := scheme;
+    HostValue := host;
+    PortValue := port;
+    PathValue := path;
+    QueryValue := query;
+    FragmentValue := fragment;
+    IsAbsoluteValue := isAbsoluteUri;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Parse
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Parses the specified URI string into its components.</summary>
+  /// <param name="text">The URI string to parse.</param>
+  /// <returns>The parsed URI.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public static function Parse(text: String): Uri;
+  begin
+    if Text.IsNullOrEmpty(text) then
+    begin
+      raise new NetException('Invalid URI text.');
+    end;
+
+    var working := text;
+    var fragment := '';
+    var fragmentSeparator := working.IndexOf('#');
+    if fragmentSeparator >= 0 then
+    begin
+      fragment := working.Substring(fragmentSeparator + 1, working.Length - fragmentSeparator - 1);
+      working := working.Substring(0, fragmentSeparator);
+    end;
+
+    var query := '';
+    var querySeparator := working.IndexOf('?');
+    if querySeparator >= 0 then
+    begin
+      query := working.Substring(querySeparator + 1, working.Length - querySeparator - 1);
+      working := working.Substring(0, querySeparator);
+    end;
+
+    var scheme := '';
+    var host := '';
+    var port := 0;
+    var path := working;
+    var isAbsoluteUri := false;
+    var schemeSeparator := working.IndexOf('://');
+    if schemeSeparator >= 0 then
+    begin
+      isAbsoluteUri := true;
+      scheme := working.Substring(0, schemeSeparator);
+      var authorityAndPath := working.Substring(schemeSeparator + 3, working.Length - schemeSeparator - 3);
+      var pathSeparator := authorityAndPath.IndexOf('/');
+      var authority := authorityAndPath;
+      path := '/';
+      if pathSeparator >= 0 then
+      begin
+        authority := authorityAndPath.Substring(0, pathSeparator);
+        path := authorityAndPath.Substring(pathSeparator, authorityAndPath.Length - pathSeparator);
+      end;
+
+      if authority = '' then
+      begin
+        raise new NetException('Invalid URI authority.');
+      end;
+
+      var portSeparator := authority.IndexOf(':');
+      if portSeparator >= 0 then
+      begin
+        if portSeparator = 0 then
+        begin
+          raise new NetException('Invalid URI host.');
+        end;
+
+        if portSeparator >= authority.Length - 1 then
+        begin
+          raise new NetException('Invalid URI port.');
+        end;
+
+        host := authority.Substring(0, portSeparator);
+        var portText := authority.Substring(portSeparator + 1, authority.Length - portSeparator - 1);
+        if Text.IsNullOrEmpty(portText) then
+        begin
+          raise new NetException('Invalid URI port.');
+        end;
+
+        port := Integer.Parse(portText);
+      end
+      else
+      begin
+        host := authority;
+      end;
+
+      if host = '' then
+      begin
+        raise new NetException('Invalid URI host.');
+      end;
+    end;
+
+    if path = '' then
+    begin
+      path := '/';
+    end;
+
+    return new Uri(text, scheme, host, port, path, query, fragment, isAbsoluteUri);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TryParse
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Tries to parse the specified URI string into its components.</summary>
+  /// <param name="text">The URI string to parse.</param>
+  /// <param name="value">When this method returns, contains the parsed URI if the parsing succeeded, or <c>nil</c> if the parsing failed.</param>
+  /// <returns><c>true</c> if the parsing succeeded; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public static function TryParse(text: String; out value: Uri): Boolean;
+  begin
+    try
+      value := Parse(text);
+      return true;
+    except
+      value := nil;
+      return false;
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ContainsQueryParameter
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the URI contains the specified query parameter.</summary>
+  /// <param name="name">The name of the query parameter to locate.</param>
+  /// <returns><c>true</c> if the URI contains the query parameter; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function ContainsQueryParameter(name: String): Boolean;
+  begin
+    return GetQueryParameter(name) <> nil;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetQueryParameter
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the value of the specified query parameter.</summary>
+  /// <param name="name">The name of the query parameter to locate.</param>
+  /// <returns>The value of the query parameter if found; otherwise, <c>nil</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function GetQueryParameter(name: String): String;
+  begin
+    if Text.IsNullOrEmpty(name) or QueryValue = '' then
+    begin
+      return nil;
+    end;
+
+    var queryText := QueryValue;
+    var partStart := 0;
+    while partStart <= queryText.Length do
+    begin
+      var separatorIndex := -1;
+      var scanIndex := partStart;
+      while scanIndex < queryText.Length do
+      begin
+        if queryText.Substring(scanIndex, 1) = '&' then
+        begin
+          separatorIndex := scanIndex;
+          break;
+        end;
+
+        scanIndex := scanIndex + 1;
+      end;
+
+      var partLength := 0;
+      if separatorIndex >= 0 then
+      begin
+        partLength := separatorIndex - partStart;
+      end
+      else
+      begin
+        partLength := queryText.Length - partStart;
+      end;
+
+      var part := queryText.Substring(partStart, partLength);
+      var equalsIndex := part.IndexOf('=');
+      if equalsIndex >= 0 then
+      begin
+        var key := part.Substring(0, equalsIndex);
+        if key = name then
+        begin
+          return part.Substring(equalsIndex + 1, part.Length - equalsIndex - 1);
+        end;
+      end
+      else
+      begin
+        if part = name then
+        begin
+          return '';
+        end;
+      end;
+
+      if separatorIndex < 0 then
+      begin
+        break;
+      end;
+
+      partStart := separatorIndex + 1;
+    end;
+
+    return nil;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TcpClient
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides a minimal line-oriented TCP client for showcase and transport scenarios.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class TcpClient
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Contains the current connection ID, or 0 if not connected.</summary>
+  private var ConnectionIdValue: Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ConnectCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Connects to the specified host and port.</summary>
+  /// <param name="host">The host to connect to.</param>
+  /// <param name="port">The port to connect to.</param>
+  /// <returns>The connection ID if the connection is successful; otherwise, 0.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern function ConnectCore(host: String; port: Integer): Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ReadLineCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads a line from the specified connection.</summary>
+  /// <param name="connectionId">The connection ID.</param>
+  /// <returns>The line read from the connection if successful; otherwise, <c>nil</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern function ReadLineCore(connectionId: Integer): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • WriteLineCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a line to the specified connection.</summary>
+  /// <param name="connectionId">The connection ID.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern method WriteLineCore(connectionId: Integer; text: String);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • CloseCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Closes the specified connection.</summary>
+  /// <param name="connectionId">The connection ID.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern method CloseCore(connectionId: Integer);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTY • IsConnected
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the client is connected.</summary>
+  public property IsConnected: Boolean
+  begin
+    get
+    begin
+      return ConnectionIdValue > 0;
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <c>TcpClient</c> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    ConnectionIdValue := 0;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Connect
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Connects to the specified host and port.</summary>
+  /// <param name="host">The host to connect to.</param>
+  /// <param name="port">The port to connect to.</param>
+  /// <returns><c>true</c> if the connection is successful; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function Connect(host: String; port: Integer): Boolean;
+  begin
+    if IsConnected then
+    begin
+      Close();
+    end;
+
+    ConnectionIdValue := ConnectCore(host, port);
+    return IsConnected;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ReadLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads a line from the specified connection.</summary>
+  /// <param name="connectionId">The connection ID.</param>
+  /// <returns>The line read from the connection if successful; otherwise, <c>nil</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function ReadLine: String;
+  begin
+    if ConnectionIdValue <= 0 then
+    begin
+      raise new NetException('TCP client is not connected.');
+    end;
+
+    return ReadLineCore(ConnectionIdValue);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteLine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a line to the specified connection.</summary>
+  /// <param name="connectionId">The connection ID.</param>
+  /// <param name="text">The text to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method WriteLine(text: String);
+  begin
+    if ConnectionIdValue <= 0 then
+    begin
+      raise new NetException('TCP client is not connected.');
+    end;
+
+    WriteLineCore(ConnectionIdValue, text);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Close
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Closes the specified connection.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Close;
+  begin
+    if ConnectionIdValue <= 0 then
+    begin
+      return;
+    end;
+
+    CloseCore(ConnectionIdValue);
+    ConnectionIdValue := 0;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • HttpClient
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides a minimal synchronous HTTP client for showcase GET requests.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class HttpClient
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • GetStringCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the response string from the specified URL.</summary>
+  /// <param name="url">The URL to send the GET request to.</param>
+  /// <returns>The response string if the request is successful; otherwise, <c>nil</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern function GetStringCore(url: String): String;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetString
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the response string from the specified URL.</summary>
+  /// <param name="url">The URL to send the GET request to.</param>
+  /// <returns>The response string if the request is successful; otherwise, <c>nil</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function GetString(url: String): String;
+  begin
+    return GetStringCore(url);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

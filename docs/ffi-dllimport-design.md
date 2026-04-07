@@ -175,10 +175,12 @@ What is implemented right now in the runtime:
   - `Integer`
   - `Boolean`
   - `String`
+  - `NativeHandle`
 - supported return types:
   - `Integer`
   - `Boolean`
   - `Void`
+  - `NativeHandle`
 
 This is intentionally still a v1 subset, not a full interop system.
 
@@ -222,10 +224,10 @@ The runtime implementation currently supports:
 - `Boolean`
 - `String` as inbound argument only
 - `Void` return
+- `NativeHandle` as an opaque runtime-managed native pointer handle
 
 Not implemented yet in the runtime path:
 
-- `NativeHandle`
 - `Pointer`
 - returned native strings as managed `String`
 - byref native marshalling

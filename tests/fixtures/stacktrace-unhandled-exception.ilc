@@ -1,0 +1,21 @@
+namespace Demo.StackTrace;
+
+uses System;
+
+public class Program
+begin
+  public static procedure ThrowLeaf;
+  begin
+    raise new Exception('stacktrace demo');
+  end;
+
+  public static procedure ThrowMiddle;
+  begin
+    Program.ThrowLeaf();
+  end;
+
+  public static procedure Main;
+  begin
+    Program.ThrowMiddle();
+  end;
+end;

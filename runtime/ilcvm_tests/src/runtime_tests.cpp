@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace
@@ -19,6 +20,19 @@ public:
     mutable std::string input_line;
     mutable std::vector<std::string> command_line_args;
     mutable std::string environment_variable_value = "/home/test";
+    mutable std::string tcp_last_host;
+    mutable std::int32_t tcp_last_port = 0;
+    mutable std::string tcp_last_written_line;
+    mutable std::string tcp_read_line_value = "echo:ping";
+    mutable bool tcp_closed = false;
+    mutable std::int32_t tcp_last_connection_id = 0;
+    mutable std::string http_last_url;
+    mutable std::string http_response_text = "hello:ilc";
+    mutable std::int32_t current_thread_id = 17;
+    mutable std::int32_t sleep_last_milliseconds = 0;
+    mutable std::int32_t mutex_last_id = 0;
+    mutable bool mutex_is_locked = false;
+    mutable bool mutex_closed = false;
 
     void console_write(std::string_view text) const override
     {
@@ -151,6 +165,88 @@ public:
         }
 
         return std::string(path.substr(separator));
+    }
+
+    [[nodiscard]] std::int32_t tcp_connect(std::string_view host, std::int32_t port) const override
+    {
+        tcp_last_host.assign(host);
+        tcp_last_port = port;
+        tcp_closed = false;
+        tcp_last_connection_id = 41;
+        return tcp_last_connection_id;
+    }
+
+    [[nodiscard]] std::string tcp_read_line(std::int32_t connection_id) const override
+    {
+        return connection_id == tcp_last_connection_id ? tcp_read_line_value : std::string();
+    }
+
+    void tcp_write_line(std::int32_t connection_id, std::string_view text) const override
+    {
+        if (connection_id == tcp_last_connection_id)
+        {
+            tcp_last_written_line.assign(text);
+        }
+    }
+
+    void tcp_close(std::int32_t connection_id) const override
+    {
+        if (connection_id == tcp_last_connection_id)
+        {
+            tcp_closed = true;
+        }
+    }
+
+    [[nodiscard]] std::string http_get_string(std::string_view url) const override
+    {
+        http_last_url.assign(url);
+        return http_response_text;
+    }
+
+    void thread_sleep(std::int32_t milliseconds) const override
+    {
+        sleep_last_milliseconds = milliseconds;
+    }
+
+    [[nodiscard]] std::int32_t thread_get_current_managed_id() const override
+    {
+        return current_thread_id;
+    }
+
+    [[nodiscard]] std::int32_t mutex_create() const override
+    {
+        mutex_closed = false;
+        mutex_is_locked = false;
+        mutex_last_id = 73;
+        return mutex_last_id;
+    }
+
+    [[nodiscard]] bool mutex_wait_one(std::int32_t mutex_id) const override
+    {
+        if (mutex_id != mutex_last_id || mutex_closed)
+        {
+            return false;
+        }
+
+        mutex_is_locked = true;
+        return true;
+    }
+
+    void mutex_release(std::int32_t mutex_id) const override
+    {
+        if (mutex_id == mutex_last_id && !mutex_closed)
+        {
+            mutex_is_locked = false;
+        }
+    }
+
+    void mutex_close(std::int32_t mutex_id) const override
+    {
+        if (mutex_id == mutex_last_id)
+        {
+            mutex_is_locked = false;
+            mutex_closed = true;
+        }
     }
 
     [[nodiscard]] std::vector<std::string> get_command_line_args() const override
@@ -1095,7 +1191,7 @@ int main()
         return EXIT_FAILURE;
     }
 
-    const auto expect_runtime_error = [](auto&& action, const char* expected_message) -> bool
+    const auto capture_runtime_error = [](auto&& action) -> std::string
     {
         try
         {
@@ -1103,11 +1199,30 @@ int main()
         }
         catch (const std::runtime_error& error)
         {
-            const std::string actual_message(error.what());
-            return actual_message.starts_with(expected_message);
+            return error.what();
         }
 
-        return false;
+        return {};
+    };
+
+    const auto expect_runtime_error = [&](auto&& action, const char* expected_message) -> bool
+    {
+        const std::string actual_message = capture_runtime_error(std::forward<decltype(action)>(action));
+        return !actual_message.empty() && actual_message.starts_with(expected_message);
+    };
+
+    const auto expect_runtime_error_contains = [&](auto&& action, std::initializer_list<const char*> expected_fragments) -> bool
+    {
+        const std::string actual_message = capture_runtime_error(std::forward<decltype(action)>(action));
+        if (actual_message.empty())
+        {
+            return false;
+        }
+
+        return std::ranges::all_of(expected_fragments, [&](const char* fragment)
+        {
+            return actual_message.find(fragment) != std::string::npos;
+        });
     };
 
     ilcvm::Module null_call_module {
@@ -1169,9 +1284,11 @@ int main()
         .entry_function_id = 1
     };
 
-    if (!expect_runtime_error([&]() { (void)vm.execute(null_field_module); }, "null reference object access"))
+    if (!expect_runtime_error_contains(
+            [&]() { (void)vm.execute(null_field_module); },
+            { "null reference object access", "stack trace:", "   at Main() [function=1, vm-ip=1]" }))
     {
-        std::cerr << "FAIL: null field access should raise a targeted runtime error\n";
+        std::cerr << "FAIL: null field access should include a raw stack trace\n";
         return EXIT_FAILURE;
     }
 
@@ -1273,9 +1390,24 @@ int main()
         .entry_function_id = 1
     };
 
-    if (!expect_runtime_error([&]() { (void)vm.execute(unhandled_throw_module); }, "unhandled managed exception"))
+    if (!expect_runtime_error_contains(
+            [&]() { (void)vm.execute(unhandled_throw_module); },
+            { "unhandled managed exception", "stack trace:", "   at Main() [function=1, vm-ip=1]" }))
     {
-        std::cerr << "FAIL: unhandled throw should raise a targeted runtime error\n";
+        std::cerr << "FAIL: unhandled throw should include a raw stack trace\n";
+        return EXIT_FAILURE;
+    }
+
+    const auto formatted_stack_trace = [](const ilcvm::VirtualMachine::DebugFrame& frame) -> std::string
+    {
+        return "   at Demo." + frame.function_name + "() in /test/demo.ilc:line " + std::to_string(frame.vm_ip + 10);
+    };
+
+    if (!expect_runtime_error_contains(
+            [&]() { (void)vm.execute(unhandled_throw_module, formatted_stack_trace); },
+            { "unhandled managed exception", "stack trace:", "   at Demo.Main() in /test/demo.ilc:line 11" }))
+    {
+        std::cerr << "FAIL: unhandled throw should use the formatted stack trace when symbols are available\n";
         return EXIT_FAILURE;
     }
 
@@ -1982,6 +2114,223 @@ int main()
     if (host_path_get_extension_result != 4)
     {
         std::cerr << "FAIL: vm returned " << host_path_get_extension_result << " for host path extension module\n";
+        return EXIT_FAILURE;
+    }
+
+    host_services.tcp_last_host.clear();
+    host_services.tcp_last_port = 0;
+    host_services.tcp_last_written_line.clear();
+    host_services.tcp_closed = false;
+    ilcvm::Module host_tcp_module {
+        .strings = { "127.0.0.1", "ping" },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "Main",
+                .register_count = 6,
+                .argument_count = 0,
+                .returns_value = true,
+                .instructions = {
+                    { ilcvm::OpCode::ld_str, 1, 0, 0, 0 },
+                    { ilcvm::OpCode::ld_i32, 2, 0, 0, 4242 },
+                    { ilcvm::OpCode::call, 3, 1, 2, 2 },
+                    { ilcvm::OpCode::ld_str, 4, 0, 0, 1 },
+                    { ilcvm::OpCode::call, 0, 3, 2, 3 },
+                    { ilcvm::OpCode::call, 5, 3, 1, 4 },
+                    { ilcvm::OpCode::call, 0, 3, 1, 5 },
+                    { ilcvm::OpCode::ld_len, 0, 5, 0, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .name = "Connect",
+                .register_count = 3,
+                .argument_count = 2,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::tcp_connect
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .name = "WriteLine",
+                .register_count = 3,
+                .argument_count = 2,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::tcp_write_line
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .name = "ReadLine",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::tcp_read_line
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .name = "Close",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::tcp_close
+            }
+        },
+        .entry_function_id = 1
+    };
+
+    const auto host_tcp_result = vm.execute(host_tcp_module);
+    if (host_tcp_result != 9)
+    {
+        std::cerr << "FAIL: vm returned " << host_tcp_result << " for host tcp module\n";
+        return EXIT_FAILURE;
+    }
+
+    if (host_services.tcp_last_host != "127.0.0.1" || host_services.tcp_last_port != 4242)
+    {
+        std::cerr << "FAIL: host tcp connect arguments mismatch\n";
+        return EXIT_FAILURE;
+    }
+
+    if (host_services.tcp_last_written_line != "ping")
+    {
+        std::cerr << "FAIL: host tcp write line mismatch: '" << host_services.tcp_last_written_line << "'\n";
+        return EXIT_FAILURE;
+    }
+
+    if (!host_services.tcp_closed)
+    {
+        std::cerr << "FAIL: host tcp close should be called\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module host_http_module {
+        .strings = { "http://127.0.0.1:8080/demo?name=ilc" },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "main",
+                .register_count = 3,
+                .argument_count = 0,
+                .returns_value = true,
+                .instructions = {
+                    { ilcvm::OpCode::ld_str, 1, 0, 0, 0 },
+                    { ilcvm::OpCode::call, 2, 1, 1, 2 },
+                    { ilcvm::OpCode::ld_len, 0, 2, 0, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .name = "GetString",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::http_get_string
+            }
+        },
+        .entry_function_id = 1
+    };
+
+    const auto host_http_result = vm.execute(host_http_module);
+    if (host_http_result != static_cast<std::int32_t>(host_services.http_response_text.size()))
+    {
+        std::cerr << "FAIL: vm returned " << host_http_result << " for host http module\n";
+        return EXIT_FAILURE;
+    }
+
+    if (host_services.http_last_url != "http://127.0.0.1:8080/demo?name=ilc")
+    {
+        std::cerr << "FAIL: host http get url mismatch: '" << host_services.http_last_url << "'\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module host_threading_module {
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "main",
+                .register_count = 6,
+                .argument_count = 0,
+                .returns_value = true,
+                .instructions = {
+                    { ilcvm::OpCode::call, 1, 0, 0, 2 },
+                    { ilcvm::OpCode::call, 0, 0, 0, 3 },
+                    { ilcvm::OpCode::ld_i32, 2, 0, 0, 15 },
+                    { ilcvm::OpCode::call, 0, 2, 1, 4 },
+                    { ilcvm::OpCode::call, 3, 0, 1, 5 },
+                    { ilcvm::OpCode::call, 0, 0, 1, 6 },
+                    { ilcvm::OpCode::call, 0, 0, 1, 7 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .name = "CurrentThreadId",
+                .register_count = 1,
+                .argument_count = 0,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::thread_get_current_managed_id
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .name = "CreateMutex",
+                .register_count = 1,
+                .argument_count = 0,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::mutex_create
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .name = "Sleep",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::thread_sleep
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .name = "WaitOne",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::mutex_wait_one
+            },
+            ilcvm::Function {
+                .function_id = 6,
+                .name = "Release",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::mutex_release
+            },
+            ilcvm::Function {
+                .function_id = 7,
+                .name = "Close",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::mutex_close
+            }
+        },
+        .entry_function_id = 1
+    };
+
+    const auto host_threading_result = vm.execute(host_threading_module);
+    if (host_threading_result != host_services.mutex_last_id)
+    {
+        std::cerr << "FAIL: vm returned " << host_threading_result << " for host threading module\n";
+        return EXIT_FAILURE;
+    }
+
+    if (host_services.sleep_last_milliseconds != 15)
+    {
+        std::cerr << "FAIL: host thread sleep argument mismatch\n";
+        return EXIT_FAILURE;
+    }
+
+    if (!host_services.mutex_closed || host_services.mutex_is_locked)
+    {
+        std::cerr << "FAIL: host mutex lifecycle should close unlocked\n";
         return EXIT_FAILURE;
     }
 

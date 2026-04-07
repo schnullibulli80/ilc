@@ -17,7 +17,7 @@
 namespace Demo.App;
 
 // Loading shipped libraries to ensure they are included in the bootstrap process
-uses System, System.Diagnostics, System.Text, System.Collections, Demo.Core;
+uses System, System.Diagnostics, System.Text, System.Text.Json, System.Net, System.Threading, System.Collections, Demo.Core;
 
 // Testing constant declaration
 const TopBonus: Integer = 2;
@@ -64,6 +64,14 @@ begin
   // Testing Integer as parameter and Boolean as return type in an external function
   [DllImport('libc.so.6', EntryPoint := 'isdigit', CallingConvention := CallingConvention.Cdecl)]
   public static extern function IsDigit(value: Integer): Boolean;
+
+  // Testing Integer as parameter and NativeHandle as return type in an external function
+  [DllImport('libc.so.6', EntryPoint := 'malloc', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function Allocate(size: Integer): NativeHandle;
+
+  // Testing NativeHandle as parameter and no return type in an external function
+  [DllImport('libc.so.6', EntryPoint := 'free', CallingConvention := CallingConvention.Cdecl)]
+  public static extern procedure Release(handle: NativeHandle);
 end;
 
 // Testing class declaration with inheritance and method/property implementations
@@ -1122,14 +1130,201 @@ begin
     var nativeAtoi := Native.Atoi('123');
     var nativeAbs := Native.Abs(-7);
     var nativeDigit := Native.IsDigit(53);
+    var nativeAllocation := Native.Allocate(32);
+    var nativeAllocationOk := nativeAllocation <> NativeHandle.Null;
     current := current + nativeAtoi + nativeAbs;
     if nativeDigit then
     begin
       current := current + 1;
     end;
+    if nativeAllocationOk then
+    begin
+      current := current + 1;
+      Native.Release(nativeAllocation);
+    end;
 
     Program.Trace('CHECKPOINT ffi-bool=', nativeDigit);
+    Program.Trace('CHECKPOINT ffi-handle=', nativeAllocationOk);
     Program.Trace('CHECKPOINT ffi=', current);
+
+    Program.TraceText('SECTION json');
+    Program.Trace('CHECKPOINT json-seed=', current);
+    var parsedJsonNull := Json.Parse('null');
+    Program.Trace('CHECKPOINT json-null-ok=', parsedJsonNull <> nil);
+    var parsedJsonBool := Json.Parse('true');
+    Program.Trace('CHECKPOINT json-bool-ok=', parsedJsonBool <> nil);
+    var parsedJsonNumber := Json.Parse('7');
+    Program.Trace('CHECKPOINT json-number-ok=', parsedJsonNumber <> nil);
+    var parsedJsonString := Json.Parse('"demo"');
+    Program.Trace('CHECKPOINT json-string-ok=', parsedJsonString <> nil);
+    var parsedJsonArray := Json.Parse('[1,null,"x"]');
+    Program.Trace('CHECKPOINT json-array-ok=', parsedJsonArray <> nil);
+    var parsedJson := Json.Parse('{"name":"ilc","version":1,"enabled":true,"items":[7,null,"demo"],"meta":{"score":9}}');
+    Program.Trace('CHECKPOINT json-after-parse=', current);
+    var jsonRoot := parsedJson as JsonObject;
+    Program.Trace('CHECKPOINT json-root-ok=', jsonRoot <> nil);
+    var jsonItems := jsonRoot['items'] as JsonArray;
+    Program.Trace('CHECKPOINT json-items-ok=', jsonItems <> nil);
+    var jsonMeta := jsonRoot['meta'] as JsonObject;
+    Program.Trace('CHECKPOINT json-meta-ok=', jsonMeta <> nil);
+    var jsonName := jsonRoot['name'] as JsonString;
+    Program.Trace('CHECKPOINT json-name-ok=', jsonName <> nil);
+    var jsonEnabled := jsonRoot['enabled'] as JsonBoolean;
+    Program.Trace('CHECKPOINT json-enabled-ok=', jsonEnabled <> nil);
+    var jsonVersion := jsonRoot['version'] as JsonNumber;
+    Program.Trace('CHECKPOINT json-version-ok=', jsonVersion <> nil);
+    var jsonThirdItem := jsonItems[2] as JsonString;
+    Program.Trace('CHECKPOINT json-third-ok=', jsonThirdItem <> nil);
+    if jsonRoot.Contains('meta') then
+    begin
+      current := current + jsonRoot.Count;
+    end;
+    Program.Trace('CHECKPOINT json-after-root=', current);
+    current := current + jsonItems.Count;
+    Program.Trace('CHECKPOINT json-after-items=', current);
+    current := current + jsonName.Value.Length;
+    Program.Trace('CHECKPOINT json-after-name=', current);
+    current := current + jsonVersion.Value;
+    Program.Trace('CHECKPOINT json-after-version=', current);
+    current := current + jsonThirdItem.Value.Length;
+    Program.Trace('CHECKPOINT json-after-third=', current);
+    if jsonEnabled.Value then
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT json-after-enabled=', current);
+    if jsonItems[1].IsNull then
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT json-after-null=', current);
+    current := current + (jsonMeta['score'] as JsonNumber).Value;
+    var jsonRoundtrip := Json.Stringify(parsedJson);
+    Program.Trace('CHECKPOINT json-roundtrip-length=', jsonRoundtrip.Length);
+    if jsonRoundtrip.Contains('"name":"ilc"') then
+    begin
+      current := current + 5;
+    end;
+    Program.Trace('CHECKPOINT json-after-stringify=', current);
+    var builtJsonObject := new JsonObject();
+    builtJsonObject.Add('demo', new JsonString('text'));
+    builtJsonObject.Add('count', new JsonNumber(2));
+    builtJsonObject.Add('active', new JsonBoolean(true));
+    var builtJsonArray := new JsonArray();
+    builtJsonArray.Add(new JsonString('first'));
+    builtJsonArray.Add(new JsonNull());
+    builtJsonObject.Add('items', builtJsonArray);
+    var builtJsonText := Json.Stringify(builtJsonObject);
+    Program.Trace('CHECKPOINT json-built-length=', builtJsonText.Length);
+    if builtJsonText.Contains('"demo":"text"') then
+    begin
+      if builtJsonText.Contains('"items":["first",null]') then
+      begin
+        current := current + 6;
+      end;
+    end;
+    Program.Trace('CHECKPOINT json=', current);
+
+    Program.TraceText('SECTION net');
+    var parsedUri := Uri.Parse('https://example.com:8443/api/items?mode=full#top');
+    Program.Trace('CHECKPOINT net-uri-absolute=', parsedUri.IsAbsoluteUri);
+    Program.Trace('CHECKPOINT net-uri-port=', parsedUri.Port);
+    Program.Trace('CHECKPOINT net-uri-host=', parsedUri.Host.Length);
+    Program.Trace('CHECKPOINT net-uri-path=', parsedUri.Path.Length);
+    Program.Trace('CHECKPOINT net-uri-query=', parsedUri.Query.Length);
+    Program.Trace('CHECKPOINT net-uri-fragment=', parsedUri.Fragment.Length);
+    Program.Trace('CHECKPOINT net-uri-has-query=', parsedUri.HasQuery);
+    current := current + parsedUri.Authority.Length;
+    current := current + parsedUri.PathAndQuery.Length;
+    if parsedUri.ContainsQueryParameter('mode') then
+    begin
+      current := current + parsedUri.GetQueryParameter('mode').Length;
+    end;
+    var relativeUri: Uri := nil;
+    Program.Trace('CHECKPOINT net-uri-relative-ok=', Uri.TryParse('/docs/intro?lang=de', out relativeUri));
+    if relativeUri <> nil then
+    begin
+      current := current + relativeUri.Path.Length;
+      if relativeUri.Query = 'lang=de' then
+      begin
+        current := current + 1;
+      end;
+    end;
+    var invalidUri: Uri := nil;
+    Program.Trace('CHECKPOINT net-uri-invalid-ok=', Uri.TryParse('https://:443', out invalidUri));
+    if invalidUri = nil then
+    begin
+      current := current + 1;
+    end;
+    var flagUri := Uri.Parse('demo://host/path?flag&value=1');
+    Program.Trace('CHECKPOINT net-uri-flag=', flagUri.ContainsQueryParameter('flag'));
+    if flagUri.GetQueryParameter('flag') = '' then
+    begin
+      current := current + 1;
+    end;
+    var tcpPortText := Environment.Variables['ILC_TCP_SMOKE_PORT'];
+    var tcpClient := new TcpClient();
+    var tcpConnected := false;
+    if tcpPortText <> nil then
+    begin
+      tcpConnected := tcpClient.Connect('127.0.0.1', Integer.Parse(tcpPortText));
+    end;
+    Program.Trace('CHECKPOINT net-tcp-connect=', tcpConnected);
+    if tcpConnected then
+    begin
+      tcpClient.WriteLine('ping');
+      var tcpResponse := tcpClient.ReadLine();
+      Program.Trace('CHECKPOINT net-tcp-response=', tcpResponse = 'echo:ping');
+      if tcpResponse = 'echo:ping' then
+      begin
+        current := current + 9;
+      end;
+      tcpClient.Close();
+      Program.Trace('CHECKPOINT net-tcp-closed=', tcpClient.IsConnected);
+      if not tcpClient.IsConnected then
+      begin
+        current := current + 1;
+      end;
+    end;
+    var httpPortText := Environment.Variables['ILC_HTTP_SMOKE_PORT'];
+    var httpBody := '';
+    if httpPortText <> nil then
+    begin
+      var httpClient := new HttpClient();
+      var httpUrl := 'http://127.0.0.1:' + httpPortText + '/demo?name=ilc';
+      httpBody := httpClient.GetString(httpUrl);
+    end;
+    Program.Trace('CHECKPOINT net-http-body=', httpBody = 'hello:ilc');
+    if httpBody = 'hello:ilc' then
+    begin
+      current := current + 9;
+    end;
+    Program.Trace('CHECKPOINT net=', current);
+
+    Program.TraceText('SECTION threading');
+    var currentThreadId := Thread.CurrentManagedId;
+    Program.Trace('CHECKPOINT threading-id=', currentThreadId > 0);
+    if currentThreadId > 0 then
+    begin
+      current := current + 1;
+    end;
+    var threadMutex := new Mutex();
+    var threadLockTaken := threadMutex.WaitOne();
+    Program.Trace('CHECKPOINT threading-mutex=', threadLockTaken);
+    if threadLockTaken then
+    begin
+      current := current + 1;
+    end;
+    var sleepStopwatch := Stopwatch.StartNew();
+    Thread.Sleep(5);
+    Program.Trace('CHECKPOINT threading-sleep=', sleepStopwatch.ElapsedMilliseconds >= 0);
+    if sleepStopwatch.ElapsedMilliseconds >= 0 then
+    begin
+      current := current + 1;
+    end;
+    threadMutex.Release();
+    threadMutex.Close();
+    Program.Trace('CHECKPOINT threading=', current);
 
     Program.TraceText('SECTION diagnostics');
     var stopwatch := Stopwatch.StartNew();

@@ -32,15 +32,45 @@ VirtualMachine::VirtualMachine(Heap& heap, const IHostServices& host_services) n
 
 std::int32_t VirtualMachine::execute(const Module& module) const
 {
-    return execute(module, static_cast<ExecutionProfile*>(nullptr));
+    return execute(module, static_cast<ExecutionProfile*>(nullptr), nullptr, nullptr, nullptr);
 }
 
 std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile& profile) const
 {
-    return execute(module, &profile);
+    return execute(module, &profile, nullptr, nullptr, nullptr);
 }
 
-std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* profile) const
+std::int32_t VirtualMachine::execute(const Module& module, const StackTraceFormatter& stack_trace_formatter) const
+{
+    return execute(module, static_cast<ExecutionProfile*>(nullptr), nullptr, nullptr, &stack_trace_formatter);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile& profile, const StackTraceFormatter& stack_trace_formatter) const
+{
+    return execute(module, &profile, nullptr, nullptr, &stack_trace_formatter);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, const DebugOptions& debug_options, const DebugSink& debug_sink) const
+{
+    return execute(module, static_cast<ExecutionProfile*>(nullptr), &debug_options, &debug_sink, nullptr);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile& profile, const DebugOptions& debug_options, const DebugSink& debug_sink) const
+{
+    return execute(module, &profile, &debug_options, &debug_sink, nullptr);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, const DebugOptions& debug_options, const DebugSink& debug_sink, const StackTraceFormatter& stack_trace_formatter) const
+{
+    return execute(module, static_cast<ExecutionProfile*>(nullptr), &debug_options, &debug_sink, &stack_trace_formatter);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile& profile, const DebugOptions& debug_options, const DebugSink& debug_sink, const StackTraceFormatter& stack_trace_formatter) const
+{
+    return execute(module, &profile, &debug_options, &debug_sink, &stack_trace_formatter);
+}
+
+std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* profile, const DebugOptions* debug_options, const DebugSink* debug_sink, const StackTraceFormatter* stack_trace_formatter) const
 {
     const auto total_start = std::chrono::steady_clock::now();
     if (module.functions.empty())
@@ -63,6 +93,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     std::vector<ArrayObject> arrays(1);
     std::vector<ManagedObject> objects(1);
     std::vector<std::string> strings = module.strings;
+    std::vector<void*> native_handles(1, nullptr);
     std::unordered_map<std::string, void*> native_library_handles;
     std::unordered_map<std::string, void*> native_symbol_handles;
 
@@ -81,6 +112,14 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         function_returns_value[function.function_id] = function.returns_value ? 1u : 0u;
         function_argument_count_lookup[function.function_id] = function.argument_count;
     }
+    std::vector<DebugFrame> debug_call_stack;
+    std::vector<std::string> last_stack_trace_lines;
+    bool last_stack_trace_from_runtime_error = false;
+    bool debug_tracing_active = false;
+    std::uint64_t debug_steps_remaining = 0;
+    bool debug_step_over_active = false;
+    std::size_t debug_step_over_depth = 0;
+    bool debug_abort_requested = false;
 
     enum class LeafFastpathKind : std::uint8_t
     {
@@ -477,7 +516,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         void_ = 0,
         i32 = 1,
         bool32 = 2,
-        utf8_string = 3
+        utf8_string = 3,
+        native_handle = 4
     };
     const auto get_native_ffi_value_kind = [&require_type](std::uint32_t type_id) -> NativeFfiValueKind
     {
@@ -502,7 +542,36 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             return NativeFfiValueKind::utf8_string;
         }
 
+        if (type.name == "NativeHandle")
+        {
+            return NativeFfiValueKind::native_handle;
+        }
+
         throw std::runtime_error("native ffi type is not supported: " + type.name);
+    };
+    const auto store_native_handle = [&native_handles](void* handle) -> std::int32_t
+    {
+        if (handle == nullptr)
+        {
+            return 0;
+        }
+
+        native_handles.push_back(handle);
+        return static_cast<std::int32_t>(native_handles.size() - 1);
+    };
+    const auto require_native_handle = [&native_handles](std::int32_t handle_id) -> void*
+    {
+        if (handle_id == 0)
+        {
+            return nullptr;
+        }
+
+        if (handle_id < 0 || static_cast<std::size_t>(handle_id) >= native_handles.size())
+        {
+            throw std::runtime_error("native handle is invalid");
+        }
+
+        return native_handles[static_cast<std::size_t>(handle_id)];
     };
     const auto load_native_library = [&](const std::string& library_name) -> void*
     {
@@ -584,6 +653,11 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             return arguments[index];
         };
 
+        auto get_native_handle_argument = [&](std::size_t index) -> void*
+        {
+            return require_native_handle(arguments[index]);
+        };
+
         void* symbol = resolve_native_symbol(function);
 
         if (parameter_kinds.empty())
@@ -597,6 +671,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                     return reinterpret_cast<std::int32_t(*)()>(symbol)();
                 case NativeFfiValueKind::bool32:
                     return reinterpret_cast<std::int32_t(*)()>(symbol)() != 0 ? 1 : 0;
+                case NativeFfiValueKind::native_handle:
+                    return store_native_handle(reinterpret_cast<void*(*)()>(symbol)());
                 default:
                     break;
             }
@@ -615,6 +691,8 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         return reinterpret_cast<std::int32_t(*)(const char*)>(symbol)(arg0);
                     case NativeFfiValueKind::bool32:
                         return reinterpret_cast<std::int32_t(*)(const char*)>(symbol)(arg0) != 0 ? 1 : 0;
+                    case NativeFfiValueKind::native_handle:
+                        return store_native_handle(reinterpret_cast<void*(*)(const char*)>(symbol)(arg0));
                     default:
                         break;
                 }
@@ -631,6 +709,26 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         return reinterpret_cast<std::int32_t(*)(std::int32_t)>(symbol)(arg0);
                     case NativeFfiValueKind::bool32:
                         return reinterpret_cast<std::int32_t(*)(std::int32_t)>(symbol)(arg0) != 0 ? 1 : 0;
+                    case NativeFfiValueKind::native_handle:
+                        return store_native_handle(reinterpret_cast<void*(*)(std::int32_t)>(symbol)(arg0));
+                    default:
+                        break;
+                }
+            }
+            else if (parameter_kinds[0] == NativeFfiValueKind::native_handle)
+            {
+                auto* arg0 = get_native_handle_argument(0);
+                switch (return_kind)
+                {
+                    case NativeFfiValueKind::void_:
+                        reinterpret_cast<void(*)(void*)>(symbol)(arg0);
+                        return 0;
+                    case NativeFfiValueKind::i32:
+                        return reinterpret_cast<std::int32_t(*)(void*)>(symbol)(arg0);
+                    case NativeFfiValueKind::bool32:
+                        return reinterpret_cast<std::int32_t(*)(void*)>(symbol)(arg0) != 0 ? 1 : 0;
+                    case NativeFfiValueKind::native_handle:
+                        return store_native_handle(reinterpret_cast<void*(*)(void*)>(symbol)(arg0));
                     default:
                         break;
                 }
@@ -868,6 +966,213 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         }
 
         return false;
+    };
+    const auto describe_managed_exception = [&](std::int32_t value) -> std::string
+    {
+        if (value == 0)
+        {
+            return "value=0";
+        }
+
+        if (!is_object_handle(value))
+        {
+            return "value=" + std::to_string(value) + " kind=non-object";
+        }
+
+        const auto& object = require_object(value);
+        const auto& object_type = require_type(object.type_id);
+
+        std::string description =
+            "value=" + std::to_string(value) +
+            " type=" + object_type.name;
+
+        std::uint32_t current_type_id = object.type_id;
+        while (current_type_id != 0)
+        {
+            const auto& current_type = require_type(current_type_id);
+            const auto field_it = std::find_if(
+                module.fields.begin(),
+                module.fields.end(),
+                [&](const Field& field)
+                {
+                    return !field.is_static &&
+                        field.owner_type_id == current_type_id &&
+                        (field.name == "Message" || field.name == "__auto_Message");
+                });
+
+            if (field_it != module.fields.end() && field_it->instance_slot < object.fields.size())
+            {
+                const auto message_value = object.fields[field_it->instance_slot];
+                if (message_value == 0)
+                {
+                    description += " message=<null>";
+                }
+                else if (is_string_handle(message_value))
+                {
+                    description += " message=" + require_string(message_value);
+                }
+                else
+                {
+                    description += " messageValue=" + std::to_string(message_value);
+                }
+                break;
+            }
+
+            current_type_id = current_type.base_type_id;
+        }
+
+        return description;
+    };
+    const auto summarize_runtime_value = [&](std::int32_t value) -> std::string
+    {
+        if (value == 0)
+        {
+            return "null";
+        }
+
+        if (is_string_handle(value))
+        {
+            const auto& text = require_string(value);
+            const auto preview = text.size() > 64 ? text.substr(0, 64) + "..." : text;
+            return "string(\"" + preview + "\")";
+        }
+
+        if (is_array_handle(value))
+        {
+            const auto& array = require_array(value);
+            return "array(len=" + std::to_string(array.elements.size()) + ")";
+        }
+
+        if (is_object_handle(value))
+        {
+            const auto& object = require_object(value);
+            return "object(" + require_type(object.type_id).name + ")";
+        }
+
+        return std::to_string(value);
+    };
+    const auto format_raw_stack_frame = [](const DebugFrame& frame) -> std::string
+    {
+        return "   at " + frame.function_name + "() [function=" + std::to_string(frame.function_id) + ", vm-ip=" + std::to_string(frame.vm_ip) + ']';
+    };
+    const auto format_stack_frame = [&](const DebugFrame& frame) -> std::string
+    {
+        if (stack_trace_formatter != nullptr)
+        {
+            return (*stack_trace_formatter)(frame);
+        }
+
+        return format_raw_stack_frame(frame);
+    };
+    const auto capture_stack_trace_lines = [&](std::uint32_t function_id, const std::string& function_name, std::uint32_t vm_ip) -> std::vector<std::string>
+    {
+        std::vector<DebugFrame> frames = debug_call_stack;
+        if (frames.empty() ||
+            frames.back().function_id != function_id)
+        {
+            frames.push_back(DebugFrame {
+                .function_id = function_id,
+                .function_name = function_name,
+                .vm_ip = vm_ip
+            });
+        }
+        else
+        {
+            frames.back().vm_ip = vm_ip;
+        }
+
+        std::vector<std::string> lines;
+        lines.reserve(frames.size());
+        for (auto frame_it = frames.rbegin(); frame_it != frames.rend(); ++frame_it)
+        {
+            lines.push_back(format_stack_frame(*frame_it));
+        }
+
+        return lines;
+    };
+    const auto create_string_array = [&](const std::vector<std::string>& values) -> std::int32_t
+    {
+        arrays.push_back(ArrayObject {
+            .elements = std::vector<std::int32_t>(values.size(), 0)
+        });
+        if (profile != nullptr)
+        {
+            ++profile->arrays_created;
+        }
+        heap_.record_allocation(sizeof(std::int32_t) * values.size());
+        auto& array = arrays.back();
+        for (std::size_t index = 0; index < values.size(); ++index)
+        {
+            strings.push_back(values[index]);
+            if (profile != nullptr)
+            {
+                ++profile->strings_created;
+            }
+            array.elements[index] = encode_string_handle(strings.size() - 1);
+        }
+
+        return encode_array_handle(arrays.size() - 1);
+    };
+    const auto try_set_exception_stack_trace = [&](std::int32_t value, const std::vector<std::string>& lines)
+    {
+        if (value == 0 || !is_object_handle(value))
+        {
+            return;
+        }
+
+        auto& object = require_object(value);
+        std::uint32_t current_type_id = object.type_id;
+        while (current_type_id != 0)
+        {
+            const auto field_it = std::find_if(
+                module.fields.begin(),
+                module.fields.end(),
+                [&](const Field& field)
+                {
+                    return !field.is_static &&
+                        field.owner_type_id == current_type_id &&
+                        (field.name == "StackTraceLinesValue" || field.name == "__auto_StackTraceLinesValue");
+                });
+
+            if (field_it != module.fields.end() && field_it->instance_slot < object.fields.size())
+            {
+                if (object.fields[field_it->instance_slot] == 0)
+                {
+                    object.fields[field_it->instance_slot] = create_string_array(lines);
+                }
+
+                return;
+            }
+
+            current_type_id = require_type(current_type_id).base_type_id;
+        }
+    };
+    const auto append_stack_trace_text = [](const std::string& message, const std::vector<std::string>& lines) -> std::string
+    {
+        if (lines.empty())
+        {
+            return message;
+        }
+
+        std::string text = message;
+        text += "\nstack trace:";
+        for (const auto& line : lines)
+        {
+            text += '\n';
+            text += line;
+        }
+
+        return text;
+    };
+    const auto capture_current_stack_trace_lines = [&]() -> std::vector<std::string>
+    {
+        if (!debug_call_stack.empty())
+        {
+            const auto& frame = debug_call_stack.back();
+            return capture_stack_trace_lines(frame.function_id, frame.function_name, frame.vm_ip);
+        }
+
+        return capture_stack_trace_lines(entry_function->function_id, entry_function->name, 0u);
     };
 
     const auto execute_leaf_fastpath = [&](const Function& function, const std::int32_t* arguments) -> std::int32_t
@@ -1613,6 +1918,21 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
                     }
                     return encode_string_handle(strings.size() - 1);
+                case HostImportKind::exception_get_current_stack_trace:
+                {
+                    std::vector<std::string> stack_trace_lines;
+                    stack_trace_lines.reserve(debug_call_stack.size());
+                    for (auto frame_it = debug_call_stack.rbegin(); frame_it != debug_call_stack.rend(); ++frame_it)
+                    {
+                        stack_trace_lines.push_back(format_stack_frame(*frame_it));
+                    }
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return create_string_array(stack_trace_lines);
+                }
                 case HostImportKind::file_exists:
                     if (profile != nullptr)
                     {
@@ -1681,6 +2001,92 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
                     }
                     return encode_string_handle(strings.size() - 1);
+                case HostImportKind::tcp_connect:
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return host_services_.tcp_connect(require_string(arguments[0]), arguments[1]);
+                case HostImportKind::tcp_read_line:
+                    strings.push_back(host_services_.tcp_read_line(arguments[0]));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return encode_string_handle(strings.size() - 1);
+                case HostImportKind::tcp_write_line:
+                    host_services_.tcp_write_line(arguments[0], require_string(arguments[1]));
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                case HostImportKind::tcp_close:
+                    host_services_.tcp_close(arguments[0]);
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                case HostImportKind::http_get_string:
+                    strings.push_back(host_services_.http_get_string(require_string(arguments[0])));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return encode_string_handle(strings.size() - 1);
+                case HostImportKind::thread_sleep:
+                    host_services_.thread_sleep(arguments[0]);
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                case HostImportKind::thread_get_current_managed_id:
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return host_services_.thread_get_current_managed_id();
+                case HostImportKind::mutex_create:
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return host_services_.mutex_create();
+                case HostImportKind::mutex_wait_one:
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return host_services_.mutex_wait_one(arguments[0]) ? 1 : 0;
+                case HostImportKind::mutex_release:
+                    host_services_.mutex_release(arguments[0]);
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                case HostImportKind::mutex_close:
+                    host_services_.mutex_close(arguments[0]);
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
                 case HostImportKind::none:
                     break;
             }
@@ -1696,6 +2102,26 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         registers.resize(register_count);
         std::fill(registers.begin(), registers.end(), 0);
         auto* register_values = registers.data();
+        debug_call_stack.push_back(DebugFrame {
+            .function_id = function.function_id,
+            .function_name = function.name,
+            .vm_ip = 0
+        });
+        const auto pop_debug_frame = [&debug_call_stack]()
+        {
+            if (!debug_call_stack.empty())
+            {
+                debug_call_stack.pop_back();
+            }
+        };
+        struct DebugFrameGuard
+        {
+            const std::function<void()> pop;
+            ~DebugFrameGuard()
+            {
+                pop();
+            }
+        } debug_frame_guard { pop_debug_frame };
         bool has_current_exception = false;
         std::int32_t current_exception_value = 0;
         for (std::size_t index = 0; index < argument_count; ++index)
@@ -1721,7 +2147,108 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
         {
             try
             {
+                if (!debug_call_stack.empty())
+                {
+                    debug_call_stack.back().vm_ip = static_cast<std::uint32_t>(ip);
+                }
+
                 const auto& instruction = function.instructions[ip];
+                if (debug_options != nullptr && debug_sink != nullptr)
+                {
+                    const bool breakpoint_hit =
+                        (debug_options->break_on_entry && ip == 0) ||
+                        std::any_of(
+                            debug_options->breakpoints.begin(),
+                            debug_options->breakpoints.end(),
+                            [&](const DebugBreakpoint& breakpoint)
+                            {
+                                return breakpoint.function_id == function.function_id &&
+                                    breakpoint.vm_ip == ip;
+                            });
+                    const bool step_over_hit =
+                        debug_step_over_active &&
+                        debug_call_stack.size() <= debug_step_over_depth;
+
+                    if (breakpoint_hit)
+                    {
+                        debug_tracing_active = true;
+                        debug_steps_remaining = debug_options->step_count_after_break;
+                        debug_step_over_active = false;
+                    }
+
+                    if (breakpoint_hit || debug_tracing_active || step_over_hit)
+                    {
+                        std::vector<std::string> register_displays;
+                        register_displays.reserve(register_count);
+                        for (std::size_t register_index = 0; register_index < register_count; ++register_index)
+                        {
+                            register_displays.push_back(summarize_runtime_value(register_values[register_index]));
+                        }
+
+                        DebugEvent event {
+                            .frame = DebugFrame {
+                                .function_id = function.function_id,
+                                .function_name = function.name,
+                                .vm_ip = static_cast<std::uint32_t>(ip)
+                            },
+                            .instruction = DebugInstruction {
+                                .opcode = instruction.opcode,
+                                .destination = instruction.destination,
+                                .left = instruction.left,
+                                .right = instruction.right,
+                                .immediate = instruction.immediate
+                            },
+                            .registers = std::vector<std::int32_t>(register_values, register_values + register_count),
+                            .register_displays = std::move(register_displays),
+                            .call_stack = debug_call_stack,
+                            .breakpoint_hit = breakpoint_hit
+                        };
+                        const auto debug_action = (*debug_sink)(event);
+
+                        switch (debug_action)
+                        {
+                            case DebugAction::none:
+                                break;
+                            case DebugAction::continue_execution:
+                                debug_tracing_active = false;
+                                debug_steps_remaining = 0;
+                                debug_step_over_active = false;
+                                break;
+                            case DebugAction::step_into:
+                                debug_tracing_active = true;
+                                debug_steps_remaining = 1;
+                                debug_step_over_active = false;
+                                break;
+                            case DebugAction::step_over:
+                                debug_tracing_active = false;
+                                debug_steps_remaining = 0;
+                                debug_step_over_active = true;
+                                debug_step_over_depth = debug_call_stack.size();
+                                break;
+                            case DebugAction::quit:
+                                debug_abort_requested = true;
+                                break;
+                        }
+
+                        if (debug_abort_requested)
+                        {
+                            return 0;
+                        }
+
+                        if (!breakpoint_hit && !step_over_hit && debug_tracing_active)
+                        {
+                            if (debug_steps_remaining > 0)
+                            {
+                                --debug_steps_remaining;
+                            }
+
+                            if (debug_steps_remaining == 0)
+                            {
+                                debug_tracing_active = false;
+                            }
+                        }
+                    }
+                }
                 if (profile != nullptr)
                 {
                     ++profile->instructions_executed;
@@ -2572,13 +3099,57 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         if (is_array_handle(source))
                         {
                             auto& array = require_array(source);
-                            const auto index = require_index(index_value, array.elements.size());
+                            if (index_value < 0 || static_cast<std::size_t>(index_value) >= array.elements.size())
+                            {
+                                throw std::runtime_error(
+                                    "index out of bounds during ld_elem at ip=" +
+                                    std::to_string(ip) +
+                                    " function=" +
+                                    std::to_string(function.function_id) +
+                                    " functionName=" +
+                                    function.name +
+                                    " sourceHandle=" +
+                                    std::to_string(source) +
+                                    " index=" +
+                                    std::to_string(index_value) +
+                                    " length=" +
+                                    std::to_string(array.elements.size()) +
+                                    " dst=" +
+                                    std::to_string(instruction.destination) +
+                                    " left=" +
+                                    std::to_string(instruction.left) +
+                                    " right=" +
+                                    std::to_string(instruction.right));
+                            }
+                            const auto index = static_cast<std::size_t>(index_value);
                             register_values[instruction.destination] = array.elements[index];
                         }
                         else if (is_string_handle(source))
                         {
                             const auto& text = require_string(source);
-                            const auto index = require_index(index_value, text.size());
+                            if (index_value < 0 || static_cast<std::size_t>(index_value) >= text.size())
+                            {
+                                throw std::runtime_error(
+                                    "index out of bounds during ld_elem(string) at ip=" +
+                                    std::to_string(ip) +
+                                    " function=" +
+                                    std::to_string(function.function_id) +
+                                    " functionName=" +
+                                    function.name +
+                                    " sourceHandle=" +
+                                    std::to_string(source) +
+                                    " index=" +
+                                    std::to_string(index_value) +
+                                    " length=" +
+                                    std::to_string(text.size()) +
+                                    " dst=" +
+                                    std::to_string(instruction.destination) +
+                                    " left=" +
+                                    std::to_string(instruction.left) +
+                                    " right=" +
+                                    std::to_string(instruction.right));
+                            }
+                            const auto index = static_cast<std::size_t>(index_value);
                             register_values[instruction.destination] = static_cast<std::int32_t>(static_cast<unsigned char>(text[index]));
                         }
                         else
@@ -2622,7 +3193,32 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                         }
 
                         auto& array = require_array(register_values[instruction.destination]);
-                        const auto index = require_index(register_values[instruction.left], array.elements.size());
+                        const auto index_value = register_values[instruction.left];
+                        if (index_value < 0 || static_cast<std::size_t>(index_value) >= array.elements.size())
+                        {
+                            throw std::runtime_error(
+                                "index out of bounds during st_elem at ip=" +
+                                std::to_string(ip) +
+                                " function=" +
+                                std::to_string(function.function_id) +
+                                " functionName=" +
+                                function.name +
+                                " arrayHandle=" +
+                                std::to_string(register_values[instruction.destination]) +
+                                " index=" +
+                                std::to_string(index_value) +
+                                " length=" +
+                                std::to_string(array.elements.size()) +
+                                " value=" +
+                                std::to_string(register_values[instruction.right]) +
+                                " dst=" +
+                                std::to_string(instruction.destination) +
+                                " left=" +
+                                std::to_string(instruction.left) +
+                                " right=" +
+                                std::to_string(instruction.right));
+                        }
+                        const auto index = static_cast<std::size_t>(index_value);
                         array.elements[index] = register_values[instruction.right];
                         if (sample_array_timing)
                         {
@@ -2748,6 +3344,9 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             }
             catch (const ManagedException& ex)
             {
+                last_stack_trace_lines = capture_stack_trace_lines(function.function_id, function.name, static_cast<std::uint32_t>(ip));
+                last_stack_trace_from_runtime_error = false;
+                try_set_exception_stack_trace(ex.value, last_stack_trace_lines);
                 const auto handler = std::find_if(
                     function.exception_handlers.begin(),
                     function.exception_handlers.end(),
@@ -2775,6 +3374,12 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
                 ip = handler->handler_start;
             }
+            catch (const std::runtime_error&)
+            {
+                last_stack_trace_lines = capture_stack_trace_lines(function.function_id, function.name, static_cast<std::uint32_t>(ip));
+                last_stack_trace_from_runtime_error = true;
+                throw;
+            }
         }
 
         copy_back_arguments();
@@ -2792,9 +3397,23 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         return result;
     }
-    catch (const ManagedException&)
+    catch (const std::runtime_error& ex)
     {
-        throw std::runtime_error("unhandled managed exception");
+        throw std::runtime_error(
+            append_stack_trace_text(
+                ex.what(),
+                last_stack_trace_from_runtime_error
+                    ? last_stack_trace_lines
+                    : capture_current_stack_trace_lines()));
+    }
+    catch (const ManagedException& ex)
+    {
+        throw std::runtime_error(
+            append_stack_trace_text(
+                "unhandled managed exception: " + describe_managed_exception(ex.value),
+                last_stack_trace_lines.empty()
+                    ? capture_stack_trace_lines(entry_function->function_id, entry_function->name, debug_call_stack.empty() ? 0u : debug_call_stack.back().vm_ip)
+                    : last_stack_trace_lines));
     }
 }
 } // namespace ilcvm

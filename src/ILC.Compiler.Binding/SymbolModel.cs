@@ -79,6 +79,7 @@ public enum HostImportKind
     ClockGetMonotonicMillisecondsText,
     ClockGetWallMillisecondsText,
     ClockGetWallDateTimeText,
+    ExceptionGetCurrentStackTrace,
     FileExists,
     FileReadAllText,
     FileWriteAllText,
@@ -86,7 +87,18 @@ public enum HostImportKind
     PathCombine,
     PathGetFileName,
     PathGetDirectoryName,
-    PathGetExtension
+    PathGetExtension,
+    TcpConnect,
+    TcpReadLine,
+    TcpWriteLine,
+    TcpClose,
+    HttpGetString,
+    ThreadSleep,
+    ThreadGetCurrentManagedId,
+    MutexCreate,
+    MutexWaitOne,
+    MutexRelease,
+    MutexClose
 }
 
 public enum NativeCallingConvention
@@ -4503,6 +4515,16 @@ public sealed class Binder
             }
         }
 
+        if (declaringTypeName == "Exception" && isStatic)
+        {
+            if (methodName == "GetCurrentStackTraceCore" &&
+                returnType.Name == $"{TypeSymbol.String.Name}[]" &&
+                parameters.Count == 0)
+            {
+                return HostImportKind.ExceptionGetCurrentStackTrace;
+            }
+        }
+
         if (declaringTypeName == "File" && isStatic)
         {
             if (methodName == "ExistsCore" &&
@@ -4573,6 +4595,106 @@ public sealed class Binder
                 parameters[0].Type == TypeSymbol.String)
             {
                 return HostImportKind.PathGetExtension;
+            }
+        }
+
+        if (declaringTypeName == "TcpClient" && isStatic)
+        {
+            if (methodName == "ConnectCore" &&
+                returnType == TypeSymbol.Integer &&
+                parameters.Count == 2 &&
+                parameters[0].Type == TypeSymbol.String &&
+                parameters[1].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.TcpConnect;
+            }
+
+            if (methodName == "ReadLineCore" &&
+                returnType == TypeSymbol.String &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.TcpReadLine;
+            }
+
+            if (methodName == "WriteLineCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 2 &&
+                parameters[0].Type == TypeSymbol.Integer &&
+                parameters[1].Type == TypeSymbol.String)
+            {
+                return HostImportKind.TcpWriteLine;
+            }
+
+            if (methodName == "CloseCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.TcpClose;
+            }
+        }
+
+        if (declaringTypeName == "HttpClient" && isStatic)
+        {
+            if (methodName == "GetStringCore" &&
+                returnType == TypeSymbol.String &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.String)
+            {
+                return HostImportKind.HttpGetString;
+            }
+        }
+
+        if (declaringTypeName == "Thread" && isStatic)
+        {
+            if (methodName == "SleepCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.ThreadSleep;
+            }
+
+            if (methodName == "GetCurrentManagedIdCore" &&
+                returnType == TypeSymbol.Integer &&
+                parameters.Count == 0)
+            {
+                return HostImportKind.ThreadGetCurrentManagedId;
+            }
+        }
+
+        if (declaringTypeName == "Mutex" && isStatic)
+        {
+            if (methodName == "CreateCore" &&
+                returnType == TypeSymbol.Integer &&
+                parameters.Count == 0)
+            {
+                return HostImportKind.MutexCreate;
+            }
+
+            if (methodName == "WaitOneCore" &&
+                returnType == TypeSymbol.Boolean &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.MutexWaitOne;
+            }
+
+            if (methodName == "ReleaseCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.MutexRelease;
+            }
+
+            if (methodName == "CloseCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.MutexClose;
             }
         }
 
@@ -5596,6 +5718,30 @@ public static class SemanticFacts
             return null;
         }
 
+        var valueType = target.Parts.Count == 1
+            ? TryResolveValueReferenceType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
+            : null;
+        if (valueType is not null)
+        {
+            var valueHierarchyIndexer = GetReceiverTypeHierarchy(valueType, knownTypes ?? []).ToArray()
+                .SelectMany(type => type.Properties.Where(property => property.IsIndexer && !property.IsStatic))
+                .FirstOrDefault();
+            if (valueHierarchyIndexer is not null)
+            {
+                return valueHierarchyIndexer;
+            }
+
+            var valueIndexer = knownProperties.FirstOrDefault(property =>
+                property.IsIndexer &&
+                !property.IsStatic &&
+                GetReceiverTypeHierarchy(valueType, knownTypes ?? [])
+                    .Any(type => type.Name == property.DeclaringTypeName));
+            if (valueIndexer is not null)
+            {
+                return valueIndexer;
+            }
+        }
+
         TypeSymbol? receiverType = null;
         if (target.Parts.Count == 1 && locals.TryGetValue(target.Parts[0].Text, out var localReceiverType))
         {
@@ -5648,26 +5794,41 @@ public static class SemanticFacts
         MethodSymbol? currentMethod,
         IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
+        if (target is NameExpressionSyntax nameTarget)
+        {
+            var resolvedIndexer = ResolveIndexerReference(nameTarget.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            if (resolvedIndexer is not null)
+            {
+                return resolvedIndexer;
+            }
+        }
+
+        var targetType = InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (targetType == TypeSymbol.String || IsArrayType(targetType) || IsSetType(targetType))
+        {
+            return null;
+        }
+
         return target switch
         {
-            NameExpressionSyntax name => ResolveIndexerReference(name.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+            NameExpressionSyntax => null,
             MemberAccessExpressionSyntax memberAccess => ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Property is { IsIndexer: true } property
                 ? property
-                : GetReceiverTypeHierarchy(InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes), knownTypes ?? [])
+                : GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
                     .SelectMany(type => type.Properties.Where(candidate => candidate.IsIndexer && !candidate.IsStatic))
                     .FirstOrDefault()
                     ?? knownProperties.FirstOrDefault(candidate =>
                         candidate.IsIndexer &&
                         !candidate.IsStatic &&
-                        GetReceiverTypeHierarchy(InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes), knownTypes ?? [])
+                        GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
                             .Any(type => type.Name == candidate.DeclaringTypeName)),
-            _ => GetReceiverTypeHierarchy(InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes), knownTypes ?? [])
+            _ => GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
                     .SelectMany(type => type.Properties.Where(property => property.IsIndexer && !property.IsStatic))
                     .FirstOrDefault()
                 ?? knownProperties.FirstOrDefault(property =>
                     property.IsIndexer &&
                     !property.IsStatic &&
-                    GetReceiverTypeHierarchy(InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes), knownTypes ?? [])
+                    GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
                         .Any(type => type.Name == property.DeclaringTypeName))
         };
     }
@@ -6635,7 +6796,7 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
-        var receiverType = InferExpressionType(receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var receiverType = InferExpressionType(receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         return receiver switch
         {
             NameExpressionSyntax nameExpression => BindReceiver(nameExpression.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
@@ -6658,6 +6819,28 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
+        if (target is NameExpressionSyntax targetName &&
+            targetName.Name.Parts.Count == 1 &&
+            ResolvePropertyReference(targetName.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is { IndexParameter: not null } targetIndexerProperty)
+        {
+            var currentDeclaringTypeName = currentMethod?.DeclaringTypeName;
+            if (currentDeclaringTypeName is not null &&
+                targetIndexerProperty.DeclaringTypeName == currentDeclaringTypeName)
+            {
+                return BindImplicitReceiver(currentMethod);
+            }
+        }
+
+        var targetValueType = target switch
+        {
+            NameExpressionSyntax nameExpression => TryResolveValueReferenceType(nameExpression.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+            _ => null
+        };
+        if (targetValueType is not null)
+        {
+            return new BoundReceiver(BoundReceiverKind.Expression, targetValueType, SourceExpression: target);
+        }
+
         if (BindRead(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod) is { Receiver: not null } boundRead)
         {
             return boundRead.Receiver;

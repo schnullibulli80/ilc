@@ -3,6 +3,7 @@ using ILC.Compiler.Bytecode;
 using ILC.Compiler.Core;
 using ILC.Compiler.Lowering;
 using ILC.Compiler.Syntax;
+using System.Text;
 
 var debugEnabled = args.Contains("--debug", StringComparer.Ordinal);
 var positionalArgs = args.Where(argument => !string.Equals(argument, "--debug", StringComparison.Ordinal)).ToArray();
@@ -22,6 +23,10 @@ if (!File.Exists(sourcePath))
 
 var sourceText = await File.ReadAllTextAsync(sourcePath);
 var syntaxTree = SyntaxTree.Parse(sourceText);
+var sourceInputs = new List<(string Path, string Text, SyntaxTree Tree)>
+{
+    (sourcePath, sourceText, syntaxTree)
+};
 
 var importedSyntaxTrees = new List<SyntaxTree>();
 if (positionalArgs.Length > 1)
@@ -39,6 +44,7 @@ if (positionalArgs.Length > 1)
 
         var importedText = await File.ReadAllTextAsync(importedPath);
         var importedTree = SyntaxTree.Parse(importedText);
+        sourceInputs.Add((importedPath, importedText, importedTree));
         var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
         if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
         {
@@ -49,6 +55,36 @@ if (positionalArgs.Length > 1)
 
 var mergedSyntaxTree = SyntaxTree.Merge(syntaxTree, importedSyntaxTrees);
 var bindingResult = new Binder().Bind(mergedSyntaxTree);
+var syntaxDumpPath = Path.ChangeExtension(sourcePath, ".syntax.txt");
+var bindingDumpPath = Path.ChangeExtension(sourcePath, ".binding.txt");
+var symbolsDumpPath = Path.ChangeExtension(sourcePath, ".symbols.txt");
+var irDumpPath = Path.ChangeExtension(sourcePath, ".ir.txt");
+var ilbPath = Path.ChangeExtension(sourcePath, ".ilb");
+var ildbgPath = Path.ChangeExtension(sourcePath, ".ildbg");
+var listingPath = Path.ChangeExtension(sourcePath, ".listing.txt");
+
+if (debugEnabled)
+{
+    await File.WriteAllTextAsync(
+        syntaxDumpPath,
+        BuildSyntaxDump(
+            sourcePath,
+            syntaxTree,
+            importedSyntaxTrees,
+            mergedSyntaxTree));
+
+    await File.WriteAllTextAsync(
+        bindingDumpPath,
+        BuildBindingDump(
+            sourcePath,
+            bindingResult));
+
+    await File.WriteAllTextAsync(
+        symbolsDumpPath,
+        BuildSymbolDump(
+            sourcePath,
+            bindingResult));
+}
 
 if (bindingResult.Diagnostics.Count > 0)
 {
@@ -88,9 +124,19 @@ if (bindingResult.HasErrors)
 if (moduleMethods.Length > 0)
 {
     var lowerer = new Lowerer(moduleMethods, declaredFields, bindingResult.Compilation.Types, declaredProperties, bindingResult.Compilation.GetAllConstants());
+    if (debugEnabled)
+    {
+        await File.WriteAllTextAsync(
+            irDumpPath,
+            BuildIrDump(
+                sourcePath,
+                moduleMethods,
+                lowerer));
+    }
+
     var module = new BytecodeEmitter().EmitModule(moduleMethods, declaredFields, bindingResult.Compilation.Types, lowerer);
     var ilbImage = new IlbSerializer().Serialize(module, moduleMethods, declaredFields, bindingResult.Compilation.Types, bindingResult.Compilation.EntryPoint);
-    var ilbPath = Path.ChangeExtension(sourcePath, ".ilb");
+    var functionCodeOffsets = BuildFunctionCodeOffsets(module.Functions);
     await File.WriteAllBytesAsync(ilbPath, ilbImage.Bytes);
     var entryPoint = bindingResult.Compilation.EntryPoint;
     Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
@@ -98,6 +144,28 @@ if (moduleMethods.Length > 0)
 
     if (debugEnabled)
     {
+        await File.WriteAllTextAsync(
+            listingPath,
+            BuildListing(
+                sourcePath,
+                mergedSyntaxTree,
+                bindingResult,
+                declaredMethods,
+                declaredFields,
+                module,
+                functionCodeOffsets,
+                ilbImage,
+                entryPoint));
+
+        await File.WriteAllTextAsync(
+            ildbgPath,
+            BuildDebugSymbols(
+                sourcePath,
+                moduleMethods,
+                module,
+                lowerer,
+                sourceInputs));
+
         Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
         Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
         Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
@@ -107,6 +175,12 @@ if (moduleMethods.Length > 0)
         Console.WriteLine($"module functions: {module.Functions.Count}");
         Console.WriteLine($"module array-shapes: {module.ArrayShapes.Count}");
         Console.WriteLine($"ilb file: {Path.GetFileName(ilbPath)} bytes={ilbImage.Bytes.Length} sections={ilbImage.Sections.Count}");
+        Console.WriteLine($"listing file: {Path.GetFileName(listingPath)}");
+        Console.WriteLine($"syntax dump: {Path.GetFileName(syntaxDumpPath)}");
+        Console.WriteLine($"binding dump: {Path.GetFileName(bindingDumpPath)}");
+        Console.WriteLine($"symbol dump: {Path.GetFileName(symbolsDumpPath)}");
+        Console.WriteLine($"ir dump: {Path.GetFileName(irDumpPath)}");
+        Console.WriteLine($"debug symbols: {Path.GetFileName(ildbgPath)}");
         Console.WriteLine($"entry point: {FormatMethod(entryPoint)}");
 
         foreach (var shape in module.ArrayShapes)
@@ -116,15 +190,20 @@ if (moduleMethods.Length > 0)
 
         foreach (var function in module.Functions)
         {
-            Console.WriteLine($"function {function.FunctionId}: {function.Name} regs={function.RegisterCount} argc={function.ArgumentCount} instr={function.Instructions.Count}");
+            var (codeOffset, codeSize) = functionCodeOffsets.TryGetValue(function.FunctionId, out var codeInfo)
+                ? codeInfo
+                : (0u, 0u);
+            Console.WriteLine($"function {function.FunctionId}: {function.Name} regs={function.RegisterCount} argc={function.ArgumentCount} instr={function.Instructions.Count} vm-ip-range=0..{Math.Max(function.Instructions.Count - 1, 0)} code-offset={codeOffset} code-size={codeSize}");
             foreach (var shape in function.ArrayShapes)
             {
                 Console.WriteLine($"  array-shape r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
             }
 
-            foreach (var instruction in function.Instructions)
+            for (var instructionIndex = 0; instructionIndex < function.Instructions.Count; instructionIndex++)
             {
-                Console.WriteLine($"  {instruction.OpCode} dst={instruction.Destination} left={instruction.Left} right={instruction.Right} imm={instruction.Immediate}");
+                var instruction = function.Instructions[instructionIndex];
+                var instructionIp = codeOffset + (uint)(instructionIndex * 11);
+                Console.WriteLine($"  vm-ip={instructionIndex} code-ip={instructionIp} {instruction.OpCode} dst={instruction.Destination} left={instruction.Left} right={instruction.Right} imm={instruction.Immediate}");
             }
         }
     }
@@ -153,6 +232,479 @@ static string FormatMethod(MethodSymbol? method) =>
         : method.DeclaringTypeName is null
             ? method.Name
             : $"{method.DeclaringTypeName}.{method.Name}";
+
+static string BuildListing(
+    string sourcePath,
+    SyntaxTree mergedSyntaxTree,
+    BindingResult bindingResult,
+    IReadOnlyList<MethodSymbol> declaredMethods,
+    IReadOnlyList<FieldSymbol> declaredFields,
+    BytecodeModule module,
+    IReadOnlyDictionary<uint, (uint CodeOffset, uint CodeSize)> functionCodeOffsets,
+    IlbImage ilbImage,
+    MethodSymbol? entryPoint)
+{
+    var builder = new StringBuilder();
+    builder.AppendLine($"source: {Path.GetFileName(sourcePath)}");
+    builder.AppendLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
+    builder.AppendLine($"members: {mergedSyntaxTree.Root.Members.Count}");
+    builder.AppendLine($"globals: {bindingResult.Compilation.Globals.Count}");
+    builder.AppendLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
+    builder.AppendLine($"declared methods: {declaredMethods.Count}");
+    builder.AppendLine($"declared fields: {declaredFields.Count}");
+    builder.AppendLine($"module functions: {module.Functions.Count}");
+    builder.AppendLine($"module array-shapes: {module.ArrayShapes.Count}");
+    builder.AppendLine($"ilb bytes: {ilbImage.Bytes.Length}");
+    builder.AppendLine($"ilb sections: {ilbImage.Sections.Count}");
+    builder.AppendLine($"entry point: {FormatMethod(entryPoint)}");
+    builder.AppendLine();
+
+    foreach (var shape in module.ArrayShapes)
+    {
+        builder.AppendLine($"module-array-shape fn={shape.FunctionId} r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
+    }
+
+    if (module.ArrayShapes.Count > 0)
+    {
+        builder.AppendLine();
+    }
+
+    foreach (var function in module.Functions)
+    {
+        var (codeOffset, codeSize) = functionCodeOffsets.TryGetValue(function.FunctionId, out var codeInfo)
+            ? codeInfo
+            : (0u, 0u);
+        builder.AppendLine($"function {function.FunctionId}: {function.Name} regs={function.RegisterCount} argc={function.ArgumentCount} instr={function.Instructions.Count} vm-ip-range=0..{Math.Max(function.Instructions.Count - 1, 0)} code-offset={codeOffset} code-size={codeSize}");
+
+        foreach (var shape in function.ArrayShapes)
+        {
+            builder.AppendLine($"  array-shape r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
+        }
+
+        for (var instructionIndex = 0; instructionIndex < function.Instructions.Count; instructionIndex++)
+        {
+            var instruction = function.Instructions[instructionIndex];
+            var instructionIp = codeOffset + (uint)(instructionIndex * 11);
+            builder.AppendLine($"  vm-ip={instructionIndex} code-ip={instructionIp} {instruction.OpCode} dst={instruction.Destination} left={instruction.Left} right={instruction.Right} imm={instruction.Immediate}");
+        }
+
+        builder.AppendLine();
+    }
+
+    return builder.ToString();
+}
+
+static string BuildSyntaxDump(
+    string sourcePath,
+    SyntaxTree syntaxTree,
+    IReadOnlyList<SyntaxTree> importedSyntaxTrees,
+    SyntaxTree mergedSyntaxTree)
+{
+    var builder = new StringBuilder();
+    builder.AppendLine($"source: {Path.GetFileName(sourcePath)}");
+    builder.AppendLine($"source-namespace: {syntaxTree.Root.Namespace?.Name.ToDisplayString() ?? "<global>"}");
+    builder.AppendLine($"source-members: {syntaxTree.Root.Members.Count}");
+    builder.AppendLine($"source-uses: {syntaxTree.Root.Uses?.Imports.Count ?? 0}");
+    builder.AppendLine($"source-diagnostics: {syntaxTree.Diagnostics.Count}");
+    builder.AppendLine($"imported-trees: {importedSyntaxTrees.Count}");
+    builder.AppendLine($"merged-namespace: {mergedSyntaxTree.Root.Namespace?.Name.ToDisplayString() ?? "<global>"}");
+    builder.AppendLine($"merged-members: {mergedSyntaxTree.Root.Members.Count}");
+    builder.AppendLine($"merged-diagnostics: {mergedSyntaxTree.Diagnostics.Count}");
+    builder.AppendLine();
+
+    builder.AppendLine("[source uses]");
+    foreach (var importSyntax in syntaxTree.Root.Uses?.Imports ?? [])
+    {
+        builder.AppendLine($"- {importSyntax.NamespaceName.ToDisplayString()}");
+    }
+
+    builder.AppendLine();
+    builder.AppendLine("[merged top-level members]");
+    foreach (var member in mergedSyntaxTree.Root.Members)
+    {
+        builder.AppendLine($"- {DescribeTopLevelMember(member)}");
+    }
+
+    builder.AppendLine();
+    builder.AppendLine("[source diagnostics]");
+    foreach (var diagnostic in syntaxTree.Diagnostics)
+    {
+        builder.AppendLine($"- {diagnostic.Id}: {diagnostic.Message} @{diagnostic.Span.Start}:{diagnostic.Span.Length}");
+    }
+
+    builder.AppendLine();
+    builder.AppendLine("[merged diagnostics]");
+    foreach (var diagnostic in mergedSyntaxTree.Diagnostics)
+    {
+        builder.AppendLine($"- {diagnostic.Id}: {diagnostic.Message} @{diagnostic.Span.Start}:{diagnostic.Span.Length}");
+    }
+
+    return builder.ToString();
+}
+
+static string BuildBindingDump(
+    string sourcePath,
+    BindingResult bindingResult)
+{
+    var builder = new StringBuilder();
+    builder.AppendLine($"source: {Path.GetFileName(sourcePath)}");
+    builder.AppendLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
+    builder.AppendLine($"has-errors: {bindingResult.HasErrors}");
+    builder.AppendLine($"diagnostics: {bindingResult.Diagnostics.Count}");
+    builder.AppendLine($"globals: {bindingResult.Compilation.Globals.Count}");
+    builder.AppendLine($"types: {bindingResult.Compilation.Types.Count}");
+    builder.AppendLine($"methods: {bindingResult.Compilation.GetAllMethods().Count}");
+    builder.AppendLine($"fields: {bindingResult.Compilation.GetAllFields().Count}");
+    builder.AppendLine($"properties: {bindingResult.Compilation.GetAllProperties().Count}");
+    builder.AppendLine($"constants: {bindingResult.Compilation.GetAllConstants().Count}");
+    builder.AppendLine($"entry-point: {FormatMethod(bindingResult.Compilation.EntryPoint)}");
+    builder.AppendLine();
+
+    builder.AppendLine("[diagnostics]");
+    foreach (var diagnostic in bindingResult.Diagnostics)
+    {
+        builder.AppendLine($"- {diagnostic.Severity} {diagnostic.Id}: {diagnostic.Message} @{diagnostic.Span.Start}:{diagnostic.Span.Length}");
+    }
+
+    return builder.ToString();
+}
+
+static string BuildSymbolDump(
+    string sourcePath,
+    BindingResult bindingResult)
+{
+    var builder = new StringBuilder();
+    builder.AppendLine($"source: {Path.GetFileName(sourcePath)}");
+    builder.AppendLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
+    builder.AppendLine();
+
+    builder.AppendLine("[types]");
+    foreach (var type in bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().OrderBy(type => type.Name, StringComparer.Ordinal))
+    {
+        var kind = type.IsInterface
+            ? "interface"
+            : SemanticFacts.IsEnumType(type)
+                ? "enum"
+                : type.IsRecord
+                    ? "record"
+                    : "class";
+        builder.AppendLine($"type {type.Name} kind={kind} base={(type.BaseType?.Name ?? "<none>")} generic-arity={type.GenericArity} args=[{string.Join(", ", type.TypeArguments?.Select(arg => arg.Name) ?? [])}]");
+
+        if (type.InterfaceTypes.Count > 0)
+        {
+            builder.AppendLine($"  interfaces: {string.Join(", ", type.InterfaceTypes.Select(interfaceType => interfaceType.Name))}");
+        }
+
+        foreach (var field in type.Fields.OrderBy(field => field.Name, StringComparer.Ordinal))
+        {
+            builder.AppendLine($"  field {(field.IsStatic ? "static " : string.Empty)}{field.Name}: {field.Type.Name}");
+        }
+
+        foreach (var property in type.Properties.OrderBy(property => property.Name, StringComparer.Ordinal))
+        {
+            var indexText = property.IsIndexer
+                ? $" index({property.IndexParameter?.Name}:{property.IndexParameter?.Type.Name})"
+                : string.Empty;
+            builder.AppendLine($"  property {(property.IsStatic ? "static " : string.Empty)}{property.Name}: {property.Type.Name}{indexText} getter={(property.GetterMethod?.Name ?? "<none>")} setter={(property.SetterMethod?.Name ?? "<none>")}");
+        }
+
+        foreach (var method in type.Methods.OrderBy(method => method.Name, StringComparer.Ordinal))
+        {
+            builder.AppendLine($"  method {(method.IsStatic ? "static " : string.Empty)}{method.Name}({string.Join(", ", method.Parameters.Select(FormatParameter))}): {method.ReturnType.Name} virtual={method.IsVirtual} override={method.IsOverride} ctor={method.IsConstructor}");
+        }
+    }
+
+    return builder.ToString();
+}
+
+static string BuildIrDump(
+    string sourcePath,
+    IReadOnlyList<MethodSymbol> methods,
+    Lowerer lowerer)
+{
+    var builder = new StringBuilder();
+    builder.AppendLine($"source: {Path.GetFileName(sourcePath)}");
+    builder.AppendLine($"methods: {methods.Count}");
+    builder.AppendLine();
+
+    foreach (var method in methods.OrderBy(method => $"{method.DeclaringTypeName ?? "<global>"}.{method.Name}", StringComparer.Ordinal))
+    {
+        builder.AppendLine($"method {FormatMethod(method)}({string.Join(", ", method.Parameters.Select(FormatParameter))}): {method.ReturnType.Name}");
+        try
+        {
+            var ir = lowerer.Lower(method);
+            builder.AppendLine($"  registers: {ir.Registers.Count}");
+            foreach (var register in ir.Registers)
+            {
+                builder.AppendLine($"    reg r{register.Index} {register.Name}: {register.Type.Name}");
+            }
+
+            if (ir.ArrayShapes.Count > 0)
+            {
+                builder.AppendLine("  array-shapes:");
+                foreach (var shape in ir.ArrayShapes)
+                {
+                    builder.AppendLine($"    [{string.Join(", ", shape.Extents.Select(ext => $"r{ext.Index}:{ext.Type.Name}"))}]");
+                }
+            }
+
+            if (ir.ExceptionHandlers.Count > 0)
+            {
+                builder.AppendLine("  exception-handlers:");
+                foreach (var handler in ir.ExceptionHandlers)
+                {
+                    builder.AppendLine($"    try={handler.TryStartLabel}..{handler.TryEndLabel} catch={handler.CatchTypeName ?? "<any>"} handler={handler.HandlerStartLabel}..{handler.HandlerEndLabel} target={handler.TargetRegister}");
+                }
+            }
+
+            foreach (var block in ir.Blocks)
+            {
+                builder.AppendLine($"  block {block.Name}");
+                var instructionIndex = 0;
+                foreach (var instruction in block.Instructions)
+                {
+                    builder.AppendLine($"    vm-ip={instructionIndex} {FormatIrInstruction(instruction)}");
+                    instructionIndex++;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            builder.AppendLine($"  lowering-error: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        builder.AppendLine();
+    }
+
+    return builder.ToString();
+}
+
+static string BuildDebugSymbols(
+    string sourcePath,
+    IReadOnlyList<MethodSymbol> methods,
+    BytecodeModule module,
+    Lowerer lowerer,
+    IReadOnlyList<(string Path, string Text, SyntaxTree Tree)> sourceInputs)
+{
+    var builder = new StringBuilder();
+    builder.AppendLine($"module\t{sourcePath}");
+    var functionIdsByMethod = methods
+        .Select((method, index) => (method, functionId: (uint)(index + 1)))
+        .ToDictionary(pair => pair.method, pair => pair.functionId);
+    var functionsById = module.Functions.ToDictionary(function => function.FunctionId);
+
+    foreach (var method in methods.OrderBy(method => $"{method.DeclaringTypeName ?? "<global>"}.{method.Name}", StringComparer.Ordinal))
+    {
+        var ir = lowerer.Lower(method);
+        var functionDisplayName = FormatMethod(method);
+        var functionId = functionIdsByMethod.TryGetValue(method, out var resolvedFunctionId) ? resolvedFunctionId : 0u;
+        if (!functionsById.TryGetValue(functionId, out var bytecodeFunction))
+        {
+            continue;
+        }
+
+        var irToBytecodeRanges = bytecodeFunction.DebugVmIpRanges.ToDictionary(range => range.IrVmIp);
+        var lastVmIp = Math.Max(bytecodeFunction.Instructions.Count - 1, 0);
+        var (methodSourcePath, methodSourceText) = ResolveMethodSourceInfo(method, sourcePath, sourceInputs);
+        builder.Append("function");
+        builder.Append('\t').Append(functionId);
+        builder.Append('\t').Append(method.Name);
+        builder.Append('\t').Append(functionDisplayName);
+        builder.Append('\t').Append(method.DeclaringTypeName ?? "<global>");
+        builder.Append('\t').Append(bytecodeFunction.Instructions.Count);
+        builder.Append('\t').Append(lastVmIp);
+        builder.Append('\t').Append(methodSourcePath);
+        builder.AppendLine();
+
+        foreach (var variable in ir.DebugVariables)
+        {
+            if (!TryMapVmIpRange(variable.VmIpStart, variable.VmIpEnd, irToBytecodeRanges, out var vmIpStart, out var vmIpEnd))
+            {
+                continue;
+            }
+
+            builder.Append(variable.Kind == IrDebugVariableKind.Parameter || variable.Kind == IrDebugVariableKind.Self ? "arg" : "local");
+            builder.Append('\t').Append(functionId);
+            builder.Append('\t').Append(functionDisplayName);
+            builder.Append('\t').Append(variable.Name);
+            builder.Append('\t').Append(variable.Type.Name);
+            builder.Append('\t').Append(variable.RegisterIndex);
+            builder.Append('\t').Append(vmIpStart);
+            builder.Append('\t').Append(vmIpEnd);
+            builder.AppendLine();
+        }
+
+        foreach (var sourceMap in ir.DebugSourceMaps)
+        {
+            if (!TryMapVmIpRange(sourceMap.VmIpStart, sourceMap.VmIpEnd, irToBytecodeRanges, out var vmIpStart, out var vmIpEnd))
+            {
+                continue;
+            }
+
+            var start = GetPositionInfo(methodSourceText, sourceMap.Span.Start);
+            var end = GetPositionInfo(methodSourceText, Math.Max(sourceMap.Span.End, sourceMap.Span.Start));
+            builder.Append("map");
+            builder.Append('\t').Append(functionId);
+            builder.Append('\t').Append(functionDisplayName);
+            builder.Append('\t').Append(vmIpStart);
+            builder.Append('\t').Append(vmIpEnd);
+            builder.Append('\t').Append(methodSourcePath);
+            builder.Append('\t').Append(start.Line);
+            builder.Append('\t').Append(start.Column);
+            builder.Append('\t').Append(end.Line);
+            builder.Append('\t').Append(end.Column);
+            builder.Append('\t').Append(sourceMap.Span.Start);
+            builder.Append('\t').Append(sourceMap.Span.Length);
+            builder.AppendLine();
+        }
+    }
+
+    return builder.ToString();
+}
+
+static bool TryMapVmIpRange(
+    int irVmIpStart,
+    int irVmIpEnd,
+    IReadOnlyDictionary<int, BytecodeDebugVmIpRange> irToBytecodeRanges,
+    out int vmIpStart,
+    out int vmIpEnd)
+{
+    vmIpStart = 0;
+    vmIpEnd = 0;
+
+    if (!irToBytecodeRanges.TryGetValue(irVmIpStart, out var startRange) ||
+        !irToBytecodeRanges.TryGetValue(irVmIpEnd, out var endRange))
+    {
+        return false;
+    }
+
+    vmIpStart = startRange.BytecodeVmIpStart;
+    vmIpEnd = endRange.BytecodeVmIpEnd;
+    if (vmIpEnd < vmIpStart)
+    {
+        vmIpEnd = vmIpStart;
+    }
+
+    return true;
+}
+
+static (string Path, string Text) ResolveMethodSourceInfo(
+    MethodSymbol method,
+    string defaultSourcePath,
+    IReadOnlyList<(string Path, string Text, SyntaxTree Tree)> sourceInputs)
+{
+    if (method.Declaration is null)
+    {
+        var defaultText = sourceInputs.FirstOrDefault(input => string.Equals(input.Path, defaultSourcePath, StringComparison.Ordinal)).Text;
+        return (defaultSourcePath, defaultText);
+    }
+
+    foreach (var sourceInput in sourceInputs)
+    {
+        if (ContainsMethodDeclarationInMembers(sourceInput.Tree.Root.Members, method.Declaration))
+        {
+            return (sourceInput.Path, sourceInput.Text);
+        }
+    }
+
+    var fallbackText = sourceInputs.FirstOrDefault(input => string.Equals(input.Path, defaultSourcePath, StringComparison.Ordinal)).Text;
+    return (defaultSourcePath, fallbackText);
+}
+
+static bool ContainsMethodDeclarationInMembers(IReadOnlyList<MemberSyntax> members, MethodDeclarationSyntax declaration)
+{
+    foreach (var member in members)
+    {
+        if (member is ClassDeclarationSyntax classDeclaration)
+        {
+            if (ContainsMethodDeclarationInTypeMembers(classDeclaration.Members, declaration))
+            {
+                return true;
+            }
+
+            continue;
+        }
+
+        if (member is InterfaceDeclarationSyntax interfaceDeclaration)
+        {
+            if (ContainsMethodDeclarationInTypeMembers(interfaceDeclaration.Members, declaration))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static bool ContainsMethodDeclarationInTypeMembers(IReadOnlyList<TypeMemberSyntax> members, MethodDeclarationSyntax declaration)
+{
+    foreach (var member in members)
+    {
+        if (ReferenceEquals(member, declaration))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static IReadOnlyDictionary<uint, (uint CodeOffset, uint CodeSize)> BuildFunctionCodeOffsets(IReadOnlyList<BytecodeFunction> functions)
+{
+    var offsets = new Dictionary<uint, (uint CodeOffset, uint CodeSize)>();
+    uint nextOffset = 0;
+    foreach (var function in functions)
+    {
+        var codeSize = (uint)(function.Instructions.Count * 11);
+        offsets[function.FunctionId] = (nextOffset, codeSize);
+        nextOffset += codeSize;
+    }
+
+    return offsets;
+}
+
+static string DescribeTopLevelMember(MemberSyntax member) =>
+    member switch
+    {
+        ClassDeclarationSyntax classDeclaration => $"{(classDeclaration.ClassKeyword.Kind == SyntaxKind.RecordKeyword ? "record" : "class")} {classDeclaration.Identifier.Text}",
+        InterfaceDeclarationSyntax interfaceDeclaration => $"interface {interfaceDeclaration.Identifier.Text}",
+        EnumDeclarationSyntax enumDeclaration => $"enum {enumDeclaration.Identifier.Text}",
+        TopLevelVariableDeclarationSyntax variableDeclaration => $"global {string.Join(", ", variableDeclaration.Declarators.Select(declarator => declarator.Identifier.Text))}",
+        TopLevelConstantDeclarationSyntax constantDeclaration => $"top-const {string.Join(", ", constantDeclaration.Declarators.Select(declarator => declarator.Identifier.Text))}",
+        TopLevelExpressionStatementSyntax expressionStatement => $"expr {expressionStatement.Expression.Kind}",
+        _ => member.Kind.ToString()
+    };
+
+static string FormatParameter(ParameterSymbol parameter) =>
+    $"{(parameter.PassingKind == ParameterPassingKind.Value ? string.Empty : parameter.PassingKind.ToString().ToLowerInvariant() + " ")}{parameter.Name}: {parameter.Type.Name}";
+
+static string FormatIrInstruction(IrInstruction instruction)
+{
+    var destination = instruction.Destination is null
+        ? "-"
+        : $"r{instruction.Destination.Index}:{instruction.Destination.Type.Name}";
+    var operand = instruction.Operand switch
+    {
+        null => "<none>",
+        IrValue value => $"r{value.Index}:{value.Type.Name}",
+        (IrValue left, IrValue right) => $"(r{left.Index}:{left.Type.Name}, r{right.Index}:{right.Type.Name})",
+        IrCallTarget call => $"call target={FormatMethod(call.Method)} display={call.DisplayName} recv={(call.Receiver is null ? "<none>" : $"r{call.Receiver.Index}:{call.Receiver.Type.Name}")} args=[{string.Join(", ", call.Arguments.Select(arg => $"r{arg.Index}:{arg.Type.Name}"))}] virtual={call.IsVirtual}",
+        IrFieldTarget field => $"field {field.Field.DeclaringTypeName}.{field.Field.Name}:{field.Field.Type.Name} recv={(field.Receiver is null ? "<none>" : $"r{field.Receiver.Index}:{field.Receiver.Type.Name}")}",
+        IrNewArrayTarget newArray => $"newarr {newArray.ElementTypeName} len=r{newArray.LengthRegister.Index}:{newArray.LengthRegister.Type.Name} shape=[{string.Join(", ", newArray.Shape.Extents.Select(ext => $"r{ext.Index}:{ext.Type.Name}"))}]",
+        IrArrayTarget array => $"array r{array.Array.Index}:{array.Array.Type.Name} index={(array.Index is null ? "<none>" : $"r{array.Index.Index}:{array.Index.Type.Name}")} shape={(array.Shape is null ? "<none>" : "[" + string.Join(", ", array.Shape.Extents.Select(ext => $"r{ext.Index}:{ext.Type.Name}")) + "]")}",
+        IrStringSliceTarget slice => $"slice src=r{slice.Source.Index}:{slice.Source.Type.Name} start=r{slice.Start.Index}:{slice.Start.Type.Name} end=r{slice.End.Index}:{slice.End.Type.Name}",
+        IrStringReplaceTarget replace => $"replace src=r{replace.Source.Index}:{replace.Source.Type.Name} old=r{replace.OldValue.Index}:{replace.OldValue.Type.Name} new=r{replace.NewValue.Index}:{replace.NewValue.Type.Name}",
+        IrStringInsertTarget insert => $"insert src=r{insert.Source.Index}:{insert.Source.Type.Name} idx=r{insert.Index.Index}:{insert.Index.Type.Name} value=r{insert.Value.Index}:{insert.Value.Type.Name}",
+        IrStringRemoveTarget remove => $"remove src=r{remove.Source.Index}:{remove.Source.Type.Name} idx=r{remove.Index.Index}:{remove.Index.Type.Name} len=r{remove.Length.Index}:{remove.Length.Type.Name}",
+        IrStringTryParseTarget tryParse => $"tryparse src=r{tryParse.Source.Index}:{tryParse.Source.Type.Name} parsed=r{tryParse.ParsedValue.Index}:{tryParse.ParsedValue.Type.Name}",
+        IrTypeCheckTarget typeCheck => $"typecheck value=r{typeCheck.Value.Index}:{typeCheck.Value.Type.Name} type={typeCheck.TypeName}",
+        string text => text,
+        _ => instruction.Operand.ToString() ?? "<unknown>"
+    };
+
+    return $"{instruction.OpCode} dst={destination} op={operand}";
+}
 
 static void WriteDiagnostic(string sourcePath, string sourceText, Diagnostic diagnostic)
 {
@@ -210,6 +762,33 @@ static (int Line, int Column, string LineText) GetLineInfo(string sourceText, Te
     }
 
     return (line, column, sourceText[lineStart..lineEnd]);
+}
+
+static (int Line, int Column) GetPositionInfo(string sourceText, int position)
+{
+    if (sourceText.Length == 0)
+    {
+        return (1, 1);
+    }
+
+    var clampedPosition = Math.Clamp(position, 0, sourceText.Length);
+    var line = 1;
+    var column = 1;
+
+    for (var index = 0; index < clampedPosition; index++)
+    {
+        if (sourceText[index] == '\n')
+        {
+            line++;
+            column = 1;
+        }
+        else
+        {
+            column++;
+        }
+    }
+
+    return (line, column);
 }
 
 static string ExpandTabs(string text) => text.Replace("\t", "    ");

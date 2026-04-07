@@ -168,6 +168,7 @@ end;
 public class StringExamples
     var singleQuote: String := 'Hello';
     var doubleQuote: String := "World";
+    var slash: String := '\';
     var rawString: String := '''This is a raw string''';
     var interpolated: String := $"Value is {42}";
 end;
