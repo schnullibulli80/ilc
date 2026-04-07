@@ -70,3 +70,5 @@ docs/bound-semantics-design.md
 docs/compiler-stabilization-plan.md
 .codex
 docs/generics-and-collections-plan.md
+docs/debugger-design.md
+docs/debug-symbols-design.md
