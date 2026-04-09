@@ -1694,14 +1694,261 @@ public sealed class Lowerer
             return;
         }
 
-        if (!genericParameters.Any(parameter =>
-                constructedObjectType.Name.Contains(parameter.Name, StringComparison.Ordinal)))
+        if (constructedObjectType is NamedTypeSymbol namedConstructedType &&
+            namedConstructedType.GenericDefinition is not null &&
+            namedConstructedType.TypeArguments is { Count: > 0 } constructedArguments)
+        {
+            if (!constructedArguments.Any(argument =>
+                    argument is TypeParameterSymbol parameter &&
+                    genericParameters.Any(genericParameter => genericParameter.Name == parameter.Name)))
+            {
+                return;
+            }
+        }
+        else if (constructedObjectType is TypeParameterSymbol typeParameter &&
+                 genericParameters.Any(parameter => parameter.Name == typeParameter.Name))
+        {
+        }
+        else if (TryParseConstructedTypeReference(constructedObjectType.Name, out _, out var genericArgumentNames) &&
+                 genericArgumentNames.Any(argumentName => genericParameters.Any(parameter => parameter.Name == argumentName)))
+        {
+        }
+        else
         {
             return;
         }
 
         throw new InvalidOperationException(
             $"Generic new-expression was not specialized: syntax='{newExpression.TypeName.ToDisplayString()}', inferred='{constructedObjectType.Name}', method='{currentMethod.Name}', declaringType='{currentMethod.DeclaringTypeName}'.");
+    }
+
+    private static bool TryParseConstructedTypeReference(string displayName, out string genericTypeName, out IReadOnlyList<string> genericArgumentNames)
+    {
+        genericTypeName = string.Empty;
+        genericArgumentNames = [];
+        var lessThanIndex = displayName.IndexOf('<');
+        if (lessThanIndex <= 0 || !displayName.EndsWith(">", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        genericTypeName = displayName[..lessThanIndex].Trim();
+        genericArgumentNames = SplitGenericArgumentNames(displayName[(lessThanIndex + 1)..^1]);
+        return genericArgumentNames.Count > 0;
+    }
+
+    private static IReadOnlyList<string> SplitGenericArgumentNames(string value)
+    {
+        var arguments = new List<string>();
+        var start = 0;
+        var depth = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            switch (value[index])
+            {
+                case '<':
+                    depth++;
+                    break;
+                case '>':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    arguments.Add(value[start..index].Trim());
+                    start = index + 1;
+                    break;
+            }
+        }
+
+        var finalArgument = value[start..].Trim();
+        if (!string.IsNullOrEmpty(finalArgument))
+        {
+            arguments.Add(finalArgument);
+        }
+
+        return arguments;
+    }
+
+    private static TypeSymbol? TryCloseTypeReferenceForCurrentMethod(TypeSymbol type, MethodSymbol? currentMethod, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (currentMethod?.DeclaringTypeName is null)
+        {
+            return null;
+        }
+
+        if (SemanticFacts.ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is not NamedTypeSymbol currentDeclaringType ||
+            currentDeclaringType.GenericDefinition?.GenericParameters is not { Count: > 0 } genericParameters ||
+            currentDeclaringType.TypeArguments is not { Count: > 0 } typeArguments)
+        {
+            return null;
+        }
+
+        var substitution = genericParameters
+            .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
+            .ToDictionary(entry => entry.Name, entry => entry.argument, StringComparer.Ordinal);
+
+        TypeSymbol? ResolveWithSubstitution(string displayName)
+        {
+            if (substitution.TryGetValue(displayName, out var replacement))
+            {
+                return replacement;
+            }
+
+            if (!TryParseConstructedTypeReference(displayName, out var genericTypeName, out var genericArgumentNames))
+            {
+                return SemanticFacts.ResolveTypeReference(displayName, knownTypes);
+            }
+
+            var resolvedArguments = genericArgumentNames
+                .Select(ResolveWithSubstitution)
+                .ToArray();
+            if (resolvedArguments.Any(argument => argument is null))
+            {
+                return null;
+            }
+
+            var simpleTypeName = genericTypeName.Contains('.')
+                ? genericTypeName[(genericTypeName.LastIndexOf('.') + 1)..]
+                : genericTypeName;
+            var definition = knownTypes
+                .OfType<NamedTypeSymbol>()
+                .FirstOrDefault(candidate =>
+                    candidate.Name == simpleTypeName &&
+                    candidate.GenericArity == resolvedArguments.Length &&
+                    candidate.GenericDefinition is null);
+            if (definition is null)
+            {
+                return SemanticFacts.ResolveTypeReference(displayName, knownTypes);
+            }
+
+            return ConstructClosedGenericTypeLocal(definition, resolvedArguments!.Cast<TypeSymbol>().ToArray(), knownTypes);
+        }
+
+        return ResolveWithSubstitution(type.Name);
+    }
+
+    private static NamedTypeSymbol ConstructClosedGenericTypeLocal(
+        NamedTypeSymbol definition,
+        IReadOnlyList<TypeSymbol> typeArguments,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (definition.GenericParameters is null || definition.GenericParameters.Count != typeArguments.Count)
+        {
+            return definition;
+        }
+
+        var substitution = definition.GenericParameters
+            .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
+            .ToDictionary(entry => entry.Name, entry => entry.argument, StringComparer.Ordinal);
+
+        TypeSymbol Substitute(TypeSymbol type)
+        {
+            if (substitution.TryGetValue(type.Name, out var replacement))
+            {
+                return replacement;
+            }
+
+            if (type is NamedTypeSymbol namedType &&
+                namedType.GenericDefinition is not null &&
+                namedType.TypeArguments is { Count: > 0 })
+            {
+                var substitutedArguments = namedType.TypeArguments.Select(Substitute).ToArray();
+                return ConstructClosedGenericTypeLocal(namedType.GenericDefinition, substitutedArguments, knownTypes);
+            }
+
+            if (TryParseConstructedTypeReference(type.Name, out var genericTypeName, out var genericArgumentNames))
+            {
+                var substitutedArguments = genericArgumentNames
+                    .Select(argumentName =>
+                    {
+                        if (substitution.TryGetValue(argumentName, out var substitutedArgument))
+                        {
+                            return substitutedArgument;
+                        }
+
+                        return SemanticFacts.ResolveTypeReference(argumentName, knownTypes) ?? new TypeSymbol(argumentName, true);
+                    })
+                    .Select(Substitute)
+                    .ToArray();
+                var simpleTypeName = genericTypeName.Contains('.')
+                    ? genericTypeName[(genericTypeName.LastIndexOf('.') + 1)..]
+                    : genericTypeName;
+                var genericDefinition = knownTypes
+                    .OfType<NamedTypeSymbol>()
+                    .FirstOrDefault(candidate =>
+                        candidate.Name == simpleTypeName &&
+                        candidate.GenericArity == substitutedArguments.Length &&
+                        candidate.GenericDefinition is null);
+                if (genericDefinition is not null)
+                {
+                    return ConstructClosedGenericTypeLocal(genericDefinition, substitutedArguments, knownTypes);
+                }
+            }
+
+            return type;
+        }
+
+        var closedName = $"{definition.Name}<{string.Join(", ", typeArguments.Select(argument => argument.Name))}>";
+        var fields = definition.Fields
+            .Select(field => field with
+            {
+                Type = Substitute(field.Type),
+                DeclaringTypeName = closedName
+            })
+            .ToArray();
+        var methods = definition.Methods
+            .Select(method => method with
+            {
+                ReturnType = Substitute(method.ReturnType),
+                Parameters = method.Parameters
+                    .Select(parameter => parameter with
+                    {
+                        Type = Substitute(parameter.Type)
+                    })
+                    .ToArray(),
+                DeclaringTypeName = closedName
+            })
+            .ToArray();
+        var properties = definition.Properties
+            .Select(property => property with
+            {
+                Type = Substitute(property.Type),
+                IndexParameter = property.IndexParameter is null
+                    ? null
+                    : property.IndexParameter with
+                    {
+                        Type = Substitute(property.IndexParameter.Type)
+                    },
+                GetterMethod = property.GetterMethod is null
+                    ? null
+                    : methods.FirstOrDefault(method => method.Name == property.GetterMethod.Name && method.Parameters.Count == property.GetterMethod.Parameters.Count),
+                SetterMethod = property.SetterMethod is null
+                    ? null
+                    : methods.FirstOrDefault(method => method.Name == property.SetterMethod.Name && method.Parameters.Count == property.SetterMethod.Parameters.Count),
+                ReadField = property.ReadField is null
+                    ? null
+                    : fields.FirstOrDefault(field => field.Name == property.ReadField.Name),
+                WriteField = property.WriteField is null
+                    ? null
+                    : fields.FirstOrDefault(field => field.Name == property.WriteField.Name),
+                DeclaringTypeName = closedName
+            })
+            .ToArray();
+
+        return new NamedTypeSymbol(
+            closedName,
+            definition.IsReferenceType,
+            definition.IsRecord,
+            definition.IsInterface,
+            definition.BaseType is null ? null : Substitute(definition.BaseType),
+            definition.InterfaceTypes.Select(Substitute).ToArray(),
+            methods,
+            fields,
+            definition.Constants,
+            properties,
+            definition.GenericArity,
+            null,
+            definition,
+            typeArguments);
     }
 
     private void LowerExpressionInto(
@@ -1740,7 +1987,7 @@ public sealed class Lowerer
                         new IrArrayShape(GetShapeRegisters(newArrayExpression.LengthExpressions, arrayShapesByName, registerByName, registers, instructions, currentMethod)))));
                 return;
             case NewExpressionSyntax newExpression:
-                var constructedObjectType = SemanticFacts.InferExpressionType(
+                var inferredConstructedObjectType = SemanticFacts.InferExpressionType(
                     newExpression,
                     registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
                     _knownMethods,
@@ -1749,6 +1996,8 @@ public sealed class Lowerer
                     _knownProperties,
                     currentMethod,
                     _knownTypes);
+                var constructedObjectType = TryCloseTypeReferenceForCurrentMethod(inferredConstructedObjectType, currentMethod, _knownTypes)
+                    ?? inferredConstructedObjectType;
                 ValidateConstructedObjectType(newExpression, constructedObjectType, currentMethod);
                 instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, constructedObjectType.Name));
                 var constructorArgs = new List<IrValue>();

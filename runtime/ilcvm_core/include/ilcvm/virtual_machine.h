@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,15 @@ public:
 
 private:
     [[nodiscard]] std::int32_t execute(const Module& module, ExecutionProfile* profile, const DebugOptions* debug_options, const DebugSink* debug_sink, const StackTraceFormatter* stack_trace_formatter) const;
+    [[nodiscard]] std::int32_t execute(
+        const Module& module,
+        const std::shared_ptr<ExecutionState>& execution_state,
+        ExecutionProfile* profile,
+        const DebugOptions* debug_options,
+        const DebugSink* debug_sink,
+        const StackTraceFormatter* stack_trace_formatter,
+        std::uint32_t entry_function_override,
+        const std::vector<std::int32_t>* entry_arguments) const;
 
     Heap& heap_;
     const IHostServices& host_services_;

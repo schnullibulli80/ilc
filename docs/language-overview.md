@@ -287,8 +287,10 @@ The shipped library lives under `libs/shipped` and currently includes:
   - `HttpClient`
 - `System.Threading`
   - `Thread`
+  - `Task`
+  - `Task<T>`
   - `Mutex`
-  - currently supports absolute and relative URI parsing, `TryParse`, simple query-parameter access, and a small synchronous line-oriented TCP client
+  - currently supports `IRunnable`, `ITaskRunnable<T>`, managed thread start/join, first `Task` / `Task<T>` abstractions, current thread id, sleeping, and host-backed mutex synchronization
 - `System.Collections.IEnumerator<T>`, `System.Collections.IEnumerable<T>`, `System.Collections.IReadOnlyList<T>`, `System.Collections.ICollection<T>`, `System.Collections.IList<T>`, `System.Collections.ListEnumerator<T>`, `System.Collections.List<T>`, `System.Collections.StringList`, `System.Collections.Dictionary<TKey, TValue>`
 - `System.File`
 - `System.Path`

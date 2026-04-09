@@ -43,7 +43,10 @@ enum class HostImportKind : std::uint32_t
     mutex_create = 31,
     mutex_wait_one = 32,
     mutex_release = 33,
-    mutex_close = 34
+    mutex_close = 34,
+    thread_start_runnable = 35,
+    thread_join = 36,
+    thread_is_alive = 37
 };
 
 enum class NativeCallingConvention : std::uint32_t

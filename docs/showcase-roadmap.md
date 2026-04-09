@@ -165,8 +165,8 @@ Good demo outcomes:
 
 Important note:
 
-- for showcase purposes, raw thread support is enough at first;
-- `Task` / `Task<T>` and `async` / `await` should come later on top of a stable runtime model.
+- the raw thread substrate and first `Task` / `Task<T>` abstractions are now in place;
+- `async` / `await` should still come later on top of the stabilized runtime model.
 
 ### Stage 6. SQLite / local persistence
 

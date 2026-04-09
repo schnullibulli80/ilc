@@ -2334,6 +2334,120 @@ int main()
         return EXIT_FAILURE;
     }
 
+    ilcvm::Module host_thread_failure_module {
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "IRunnable",
+                .kind = 2,
+                .flags = 0,
+                .base_type_id = 0,
+                .first_field_id = 0,
+                .field_count = 0,
+                .first_method_id = 1,
+                .method_count = 1,
+                .is_reference_type = true,
+                .is_interface = true,
+                .is_record = false,
+                .instance_field_count = 0
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "FailingRunnable",
+                .kind = 1,
+                .flags = 0,
+                .base_type_id = 0,
+                .first_field_id = 0,
+                .field_count = 0,
+                .first_method_id = 2,
+                .method_count = 1,
+                .is_reference_type = true,
+                .is_interface = false,
+                .is_record = false,
+                .instance_field_count = 0
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .owner_type_id = 1,
+                .name = "Run",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = false,
+                .is_virtual = true
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .owner_type_id = 2,
+                .name = "Run",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .instructions = {
+                    { ilcvm::OpCode::ld_i32, 1, 0, 0, 7 },
+                    { ilcvm::OpCode::throw_, 1, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .name = "Start",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::thread_start_runnable
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .name = "Join",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::thread_join
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .name = "main",
+                .register_count = 3,
+                .argument_count = 0,
+                .returns_value = true,
+                .instructions = {
+                    { ilcvm::OpCode::new_obj, 0, 0, 0, 2 },
+                    { ilcvm::OpCode::call, 1, 0, 1, 3 },
+                    { ilcvm::OpCode::call, 0, 1, 1, 4 },
+                    { ilcvm::OpCode::ld_i32, 0, 0, 0, 1 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .interface_dispatch_entries = {
+            ilcvm::InterfaceDispatchEntry {
+                .owner_type_id = 2,
+                .interface_type_id = 1,
+                .interface_method_id = 1,
+                .implementation_method_id = 2
+            }
+        },
+        .entry_function_id = 5
+    };
+
+    try
+    {
+        (void)vm.execute(host_thread_failure_module);
+        std::cerr << "FAIL: worker thread failure should be rethrown by Join\n";
+        return EXIT_FAILURE;
+    }
+    catch (const std::runtime_error& ex)
+    {
+        const std::string text = ex.what();
+        if (text.find("unhandled managed exception") == std::string::npos ||
+            text.find("value=7") == std::string::npos)
+        {
+            std::cerr << "FAIL: worker thread failure did not preserve exception context: '" << text << "'\n";
+            return EXIT_FAILURE;
+        }
+    }
+
     ilcvm::StandardHostServices standard_host_services;
     if (standard_host_services.get_monotonic_timestamp_ms() == 0)
     {

@@ -98,7 +98,10 @@ public enum HostImportKind
     MutexCreate,
     MutexWaitOne,
     MutexRelease,
-    MutexClose
+    MutexClose,
+    ThreadStartRunnable,
+    ThreadJoin,
+    ThreadIsAlive
 }
 
 public enum NativeCallingConvention
@@ -4661,6 +4664,30 @@ public sealed class Binder
                 parameters.Count == 0)
             {
                 return HostImportKind.ThreadGetCurrentManagedId;
+            }
+
+            if (methodName == "StartCore" &&
+                returnType == TypeSymbol.Integer &&
+                parameters.Count == 1 &&
+                parameters[0].Type.Name == "IRunnable")
+            {
+                return HostImportKind.ThreadStartRunnable;
+            }
+
+            if (methodName == "JoinCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.ThreadJoin;
+            }
+
+            if (methodName == "IsAliveCore" &&
+                returnType == TypeSymbol.Boolean &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.ThreadIsAlive;
             }
         }
 

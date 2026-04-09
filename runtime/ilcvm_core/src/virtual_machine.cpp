@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <array>
 #include <string>
@@ -72,30 +73,33 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile& pro
 
 std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* profile, const DebugOptions* debug_options, const DebugSink* debug_sink, const StackTraceFormatter* stack_trace_formatter) const
 {
+    auto execution_state = heap_.create_execution_state(module.strings, module.fields.size() + 1);
+    return execute(module, execution_state, profile, debug_options, debug_sink, stack_trace_formatter, 0u, nullptr);
+}
+
+std::int32_t VirtualMachine::execute(
+    const Module& module,
+    const std::shared_ptr<ExecutionState>& execution_state,
+    ExecutionProfile* profile,
+    const DebugOptions* debug_options,
+    const DebugSink* debug_sink,
+    const StackTraceFormatter* stack_trace_formatter,
+    const std::uint32_t entry_function_override,
+    const std::vector<std::int32_t>* entry_arguments) const
+{
     const auto total_start = std::chrono::steady_clock::now();
     if (module.functions.empty())
     {
         throw std::runtime_error("module contains no functions");
     }
 
-    struct ArrayObject
-    {
-        std::vector<std::int32_t> elements;
-    };
-
-    struct ManagedObject
-    {
-        std::uint32_t type_id {};
-        std::vector<std::int32_t> fields;
-    };
-
-    std::vector<std::int32_t> static_fields(module.fields.size() + 1, 0);
-    std::vector<ArrayObject> arrays(1);
-    std::vector<ManagedObject> objects(1);
-    std::vector<std::string> strings = module.strings;
-    std::vector<void*> native_handles(1, nullptr);
-    std::unordered_map<std::string, void*> native_library_handles;
-    std::unordered_map<std::string, void*> native_symbol_handles;
+    auto& static_fields = execution_state->static_fields;
+    auto& arrays = execution_state->arrays;
+    auto& objects = execution_state->objects;
+    auto& strings = execution_state->strings;
+    auto& native_handles = execution_state->native_handles;
+    auto& native_library_handles = execution_state->native_library_handles;
+    auto& native_symbol_handles = execution_state->native_symbol_handles;
 
     std::uint32_t max_function_id = 0;
     for (const auto& function : module.functions)
@@ -341,14 +345,15 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     };
 
     const auto* entry_function = &module.functions.front();
-    if (module.entry_function_id != 0)
+    const auto selected_entry_function_id = entry_function_override != 0 ? entry_function_override : module.entry_function_id;
+    if (selected_entry_function_id != 0)
     {
-        if (module.entry_function_id >= function_lookup.size() || function_lookup[module.entry_function_id] == nullptr)
+        if (selected_entry_function_id >= function_lookup.size() || function_lookup[selected_entry_function_id] == nullptr)
         {
             throw std::runtime_error("module entry point does not reference a known function");
         }
 
-        entry_function = function_lookup[module.entry_function_id];
+        entry_function = function_lookup[selected_entry_function_id];
     }
 
     std::uint32_t max_type_id = 0;
@@ -428,7 +433,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     {
         return static_cast<std::size_t>((-value - 2) / 4);
     };
-    const auto require_array = [&](std::int32_t handle) -> ArrayObject&
+    const auto require_array = [&](std::int32_t handle) -> RuntimeArray&
     {
         if (handle == 0)
         {
@@ -482,7 +487,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         return require_string(left) == require_string(right);
     };
-    const auto require_object = [&](std::int32_t handle) -> ManagedObject&
+    const auto require_object = [&](std::int32_t handle) -> RuntimeObject&
     {
         if (handle == 0)
         {
@@ -506,7 +511,11 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     {
         if (type_id >= type_lookup.size() || type_lookup[type_id] == nullptr)
         {
-            throw std::runtime_error("object allocation references an unknown type");
+            throw std::runtime_error(
+                "object allocation references an unknown type: type_id=" +
+                std::to_string(type_id) +
+                " type_table_size=" +
+                std::to_string(type_lookup.size()));
         }
 
         return *type_lookup[type_id];
@@ -868,6 +877,40 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             receiver_rows +
             "]");
     };
+    const auto resolve_runnable_run_target = [&](std::int32_t receiver_handle) -> std::uint32_t
+    {
+        std::uint32_t runnable_type_id = 0;
+        for (const auto& type : module.types)
+        {
+            if (type.is_interface && type.name == "IRunnable")
+            {
+                runnable_type_id = type.type_id;
+                break;
+            }
+        }
+
+        if (runnable_type_id == 0)
+        {
+            throw std::runtime_error("IRunnable type is not present in the module");
+        }
+
+        std::uint32_t runnable_run_function_id = 0;
+        for (const auto& function : module.functions)
+        {
+            if (function.owner_type_id == runnable_type_id && function.name == "Run")
+            {
+                runnable_run_function_id = function.function_id;
+                break;
+            }
+        }
+
+        if (runnable_run_function_id == 0)
+        {
+            throw std::runtime_error("IRunnable.Run is not present in the module");
+        }
+
+        return resolve_virtual_callee(runnable_run_function_id, receiver_handle, 0u);
+    };
     const auto require_index = [](std::int32_t index, std::size_t length) -> std::size_t
     {
         if (index < 0 || static_cast<std::size_t>(index) >= length)
@@ -997,7 +1040,10 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                 {
                     return !field.is_static &&
                         field.owner_type_id == current_type_id &&
-                        (field.name == "Message" || field.name == "__auto_Message");
+                        (field.name == "Message" ||
+                         field.name == "__auto_Message" ||
+                         field.name == "MessageValue" ||
+                         field.name == "__auto_MessageValue");
                 });
 
             if (field_it != module.fields.end() && field_it->instance_slot < object.fields.size())
@@ -1092,7 +1138,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
     };
     const auto create_string_array = [&](const std::vector<std::string>& values) -> std::int32_t
     {
-        arrays.push_back(ArrayObject {
+        arrays.push_back(RuntimeArray {
             .elements = std::vector<std::int32_t>(values.size(), 0)
         });
         if (profile != nullptr)
@@ -1164,6 +1210,57 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
         return text;
     };
+    const auto try_create_managed_exception_with_message = [&](const std::string& message) -> std::int32_t
+    {
+        std::uint32_t exception_type_id = 0;
+        for (const auto& type : module.types)
+        {
+            if (type.name == "Exception")
+            {
+                exception_type_id = type.type_id;
+                break;
+            }
+        }
+
+        if (exception_type_id == 0)
+        {
+            return 0;
+        }
+
+        const auto& exception_type = require_type(exception_type_id);
+        objects.push_back(RuntimeObject {
+            .type_id = exception_type.type_id,
+            .fields = std::vector<std::int32_t>(exception_type.instance_field_count, 0)
+        });
+        heap_.record_allocation(sizeof(ObjectHeader) + exception_type.instance_field_count * sizeof(std::int32_t));
+        const auto object_handle = encode_object_handle(objects.size() - 1);
+
+        strings.push_back(message);
+        const auto message_handle = encode_string_handle(strings.size() - 1);
+
+        auto& object = require_object(object_handle);
+        std::uint32_t current_type_id = exception_type.type_id;
+        while (current_type_id != 0)
+        {
+            const auto& current_type = require_type(current_type_id);
+            for (const auto& field : module.fields)
+            {
+                if (field.is_static || field.owner_type_id != current_type_id || field.instance_slot >= object.fields.size())
+                {
+                    continue;
+                }
+
+                if (field.name == "MessageValue" || field.name == "__auto_MessageValue")
+                {
+                    object.fields[field.instance_slot] = message_handle;
+                }
+            }
+
+            current_type_id = current_type.base_type_id;
+        }
+
+        return object_handle;
+    };
     const auto capture_current_stack_trace_lines = [&]() -> std::vector<std::string>
     {
         if (!debug_call_stack.empty())
@@ -1208,7 +1305,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             }
 
             const auto new_arr_start = std::chrono::steady_clock::now();
-            arrays.push_back(ArrayObject {
+            arrays.push_back(RuntimeArray {
                 .elements = std::vector<std::int32_t>(static_cast<std::size_t>(iterations), 0)
             });
             heap_.record_allocation(sizeof(std::int32_t) * static_cast<std::size_t>(iterations));
@@ -1267,7 +1364,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
             }
 
             const auto new_arr_start = std::chrono::steady_clock::now();
-            arrays.push_back(ArrayObject {
+            arrays.push_back(RuntimeArray {
                 .elements = std::vector<std::int32_t>(static_cast<std::size_t>(iterations), 0)
             });
             heap_.record_allocation(sizeof(std::int32_t) * static_cast<std::size_t>(iterations));
@@ -1803,7 +1900,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                 case HostImportKind::environment_get_command_line_args:
                 {
                     const auto command_line_args = host_services_.get_command_line_args();
-                    arrays.push_back(ArrayObject {
+                    arrays.push_back(RuntimeArray {
                         .elements = std::vector<std::int32_t>(command_line_args.size(), 0)
                     });
                     if (profile != nullptr)
@@ -2057,6 +2154,148 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
                     }
                     return host_services_.thread_get_current_managed_id();
+                case HostImportKind::thread_start_runnable:
+                {
+                    if (arguments[0] == 0)
+                    {
+                        throw std::runtime_error("thread start target must not be null");
+                    }
+
+                    if (!is_object_handle(arguments[0]))
+                    {
+                        throw std::runtime_error("thread start target must be an object implementing IRunnable");
+                    }
+
+                    const auto target_handle = arguments[0];
+                    const auto target_function_id = resolve_runnable_run_target(target_handle);
+                    const auto module_snapshot = std::make_shared<Module>(module);
+                    const auto formatter_snapshot =
+                        stack_trace_formatter != nullptr
+                            ? std::make_shared<StackTraceFormatter>(*stack_trace_formatter)
+                            : nullptr;
+                    const auto thread_state = std::make_shared<ExecutionState::ManagedThreadState>();
+
+                    std::int32_t thread_id = 0;
+                    {
+                        std::lock_guard<std::mutex> state_lock(execution_state->sync_root);
+                        thread_id = execution_state->next_managed_thread_id++;
+                        execution_state->managed_threads.emplace(thread_id, thread_state);
+                    }
+
+                    thread_state->started = true;
+                    thread_state->worker = std::thread(
+                        [this, module_snapshot, execution_state, thread_state, target_handle, target_function_id, formatter_snapshot]()
+                        {
+                            try
+                            {
+                                std::vector<std::int32_t> worker_arguments { target_handle };
+                                if (formatter_snapshot != nullptr)
+                                {
+                                    execute(
+                                        *module_snapshot,
+                                        execution_state,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        formatter_snapshot.get(),
+                                        target_function_id,
+                                        &worker_arguments);
+                                }
+                                else
+                                {
+                                    execute(
+                                        *module_snapshot,
+                                        execution_state,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        target_function_id,
+                                        &worker_arguments);
+                                }
+                            }
+                            catch (const std::exception& exception)
+                            {
+                                std::lock_guard<std::mutex> state_lock(execution_state->sync_root);
+                                thread_state->failure_message = exception.what();
+                            }
+
+                            std::lock_guard<std::mutex> state_lock(execution_state->sync_root);
+                            thread_state->completed = true;
+                        });
+
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+
+                    return thread_id;
+                }
+                case HostImportKind::thread_join:
+                {
+                    std::shared_ptr<ExecutionState::ManagedThreadState> thread_state;
+                    {
+                        std::lock_guard<std::mutex> state_lock(execution_state->sync_root);
+                        const auto thread_it = execution_state->managed_threads.find(arguments[0]);
+                        if (thread_it == execution_state->managed_threads.end())
+                        {
+                            throw std::runtime_error("thread handle is invalid");
+                        }
+
+                        thread_state = thread_it->second;
+                    }
+
+                    if (thread_state != nullptr && thread_state->worker.joinable())
+                    {
+                        thread_state->worker.join();
+                    }
+
+                    std::string failure_message;
+                    {
+                        std::lock_guard<std::mutex> state_lock(execution_state->sync_root);
+                        if (thread_state != nullptr)
+                        {
+                            failure_message = thread_state->failure_message;
+                        }
+                    }
+
+                    if (!failure_message.empty())
+                    {
+                        if (const auto exception_handle = try_create_managed_exception_with_message(failure_message); exception_handle != 0)
+                        {
+                            throw ManagedException { exception_handle };
+                        }
+
+                        throw std::runtime_error(failure_message);
+                    }
+
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                }
+                case HostImportKind::thread_is_alive:
+                {
+                    bool is_alive = false;
+                    {
+                        std::lock_guard<std::mutex> state_lock(execution_state->sync_root);
+                        const auto thread_it = execution_state->managed_threads.find(arguments[0]);
+                        if (thread_it != execution_state->managed_threads.end() && thread_it->second != nullptr)
+                        {
+                            is_alive = thread_it->second->started && !thread_it->second->completed;
+                        }
+                    }
+
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return is_alive ? 1 : 0;
+                }
                 case HostImportKind::mutex_create:
                     if (profile != nullptr)
                     {
@@ -2915,7 +3154,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             ++profile->objects_created;
                         }
                         const auto& type = require_type(static_cast<std::uint32_t>(instruction.immediate));
-                        objects.push_back(ManagedObject {
+                        objects.push_back(RuntimeObject {
                             .type_id = type.type_id,
                             .fields = std::vector<std::int32_t>(type.instance_field_count, 0)
                         });
@@ -3068,7 +3307,7 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
                             throw std::runtime_error("array length cannot be negative");
                         }
 
-                        arrays.push_back(ArrayObject { .elements = std::vector<std::int32_t>(static_cast<std::size_t>(length), 0) });
+                        arrays.push_back(RuntimeArray { .elements = std::vector<std::int32_t>(static_cast<std::size_t>(length), 0) });
                         register_values[instruction.destination] = encode_array_handle(arrays.size() - 1);
                         if (sample_array_timing)
                         {
@@ -3388,7 +3627,11 @@ std::int32_t VirtualMachine::execute(const Module& module, ExecutionProfile* pro
 
     try
     {
-        const auto result = execute_function(*entry_function, nullptr, 0, 0);
+        const auto result = execute_function(
+            *entry_function,
+            entry_arguments == nullptr || entry_arguments->empty() ? nullptr : const_cast<std::int32_t*>(entry_arguments->data()),
+            entry_arguments == nullptr ? 0 : entry_arguments->size(),
+            0);
         if (profile != nullptr)
         {
             profile->total_execution_ns = static_cast<std::uint64_t>(

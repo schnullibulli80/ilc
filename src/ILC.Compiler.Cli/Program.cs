@@ -123,19 +123,27 @@ if (bindingResult.HasErrors)
 
 if (moduleMethods.Length > 0)
 {
-    var lowerer = new Lowerer(moduleMethods, declaredFields, bindingResult.Compilation.Types, declaredProperties, bindingResult.Compilation.GetAllConstants());
+    var reachableClosure = ReachableCompilationBuilder.Build(
+        bindingResult.Compilation.EntryPoint is null ? moduleMethods : [bindingResult.Compilation.EntryPoint],
+        moduleMethods,
+        declaredFields,
+        bindingResult.Compilation.Types,
+        declaredProperties,
+        bindingResult.Compilation.GetAllConstants());
+    var closure = reachableClosure!;
+    var lowerer = new Lowerer(closure.Methods, closure.Fields, closure.Types, closure.Properties, bindingResult.Compilation.GetAllConstants());
     if (debugEnabled)
     {
         await File.WriteAllTextAsync(
             irDumpPath,
             BuildIrDump(
                 sourcePath,
-                moduleMethods,
+                closure.Methods,
                 lowerer));
     }
 
-    var module = new BytecodeEmitter().EmitModule(moduleMethods, declaredFields, bindingResult.Compilation.Types, lowerer);
-    var ilbImage = new IlbSerializer().Serialize(module, moduleMethods, declaredFields, bindingResult.Compilation.Types, bindingResult.Compilation.EntryPoint);
+    var module = new BytecodeEmitter().EmitModule(closure.Methods, closure.Fields, closure.Types, lowerer);
+    var ilbImage = new IlbSerializer().Serialize(module, closure.Methods, closure.Fields, closure.Types, bindingResult.Compilation.EntryPoint);
     var functionCodeOffsets = BuildFunctionCodeOffsets(module.Functions);
     await File.WriteAllBytesAsync(ilbPath, ilbImage.Bytes);
     var entryPoint = bindingResult.Compilation.EntryPoint;
@@ -161,7 +169,7 @@ if (moduleMethods.Length > 0)
             ildbgPath,
             BuildDebugSymbols(
                 sourcePath,
-                moduleMethods,
+                closure.Methods,
                 module,
                 lowerer,
                 sourceInputs));
@@ -259,6 +267,16 @@ static string BuildListing(
     builder.AppendLine($"entry point: {FormatMethod(entryPoint)}");
     builder.AppendLine();
 
+    var moduleTypes = CollectListingTypes(declaredMethods, declaredFields, bindingResult.Compilation.Types);
+    builder.AppendLine("[module types]");
+    for (var typeIndex = 0; typeIndex < moduleTypes.Count; typeIndex++)
+    {
+        var type = moduleTypes[typeIndex];
+        builder.AppendLine($"type {typeIndex + 1}: {type.Name}");
+    }
+
+    builder.AppendLine();
+
     foreach (var shape in module.ArrayShapes)
     {
         builder.AppendLine($"module-array-shape fn={shape.FunctionId} r{shape.ArrayRegister} extents=[{string.Join(", ", shape.ExtentRegisters.Select(index => $"r{index}"))}]");
@@ -292,6 +310,93 @@ static string BuildListing(
     }
 
     return builder.ToString();
+}
+
+static IReadOnlyList<TypeSymbol> CollectListingTypes(
+    IReadOnlyList<MethodSymbol> methods,
+    IReadOnlyList<FieldSymbol> fields,
+    IReadOnlyList<TypeSymbol> declaredTypes)
+{
+    var declaredTypeList = declaredTypes.ToArray();
+    var collected = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
+
+    void AddOrPreferRicherType(TypeSymbol candidate)
+    {
+        if (!collected.TryGetValue(candidate.Name, out var existing))
+        {
+            collected[candidate.Name] = candidate;
+            return;
+        }
+
+        if (candidate is NamedTypeSymbol && existing is not NamedTypeSymbol)
+        {
+            collected[candidate.Name] = candidate;
+            return;
+        }
+
+        if (candidate is not NamedTypeSymbol candidateNamed || existing is not NamedTypeSymbol existingNamed)
+        {
+            return;
+        }
+
+        var candidateScore =
+            candidateNamed.Methods.Count +
+            candidateNamed.Fields.Count +
+            candidateNamed.Properties.Count +
+            candidateNamed.InterfaceTypes.Count +
+            (candidateNamed.BaseType is null ? 0 : 1) +
+            (candidateNamed.GenericParameters?.Count ?? 0) +
+            (candidateNamed.TypeArguments?.Count ?? 0);
+        var existingScore =
+            existingNamed.Methods.Count +
+            existingNamed.Fields.Count +
+            existingNamed.Properties.Count +
+            existingNamed.InterfaceTypes.Count +
+            (existingNamed.BaseType is null ? 0 : 1) +
+            (existingNamed.GenericParameters?.Count ?? 0) +
+            (existingNamed.TypeArguments?.Count ?? 0);
+
+        if (candidateScore > existingScore)
+        {
+            collected[candidate.Name] = candidate;
+        }
+    }
+
+    foreach (var type in declaredTypeList)
+    {
+        AddOrPreferRicherType(type);
+    }
+
+    foreach (var field in fields)
+    {
+        AddOrPreferRicherType(field.Type);
+        if (!string.IsNullOrEmpty(field.DeclaringTypeName) &&
+            SemanticFacts.ResolveTypeReference(field.DeclaringTypeName, declaredTypeList) is { } resolvedFieldDeclaringType)
+        {
+            AddOrPreferRicherType(resolvedFieldDeclaringType);
+        }
+    }
+
+    foreach (var method in methods)
+    {
+        if (!string.IsNullOrEmpty(method.DeclaringTypeName) &&
+            SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, declaredTypeList) is { } resolvedMethodDeclaringType)
+        {
+            AddOrPreferRicherType(resolvedMethodDeclaringType);
+        }
+
+        if (method.ReturnType != TypeSymbol.Void)
+        {
+            AddOrPreferRicherType(method.ReturnType);
+        }
+
+        foreach (var parameter in method.Parameters)
+        {
+            AddOrPreferRicherType(parameter.Type);
+        }
+    }
+
+    return collected.Values.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray();
 }
 
 static string BuildSyntaxDump(

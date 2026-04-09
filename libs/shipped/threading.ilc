@@ -3,9 +3,9 @@
 //
 // Author   : Patrik Graf
 // GitHub   : https://github.com/schnullibulli80
-// Comment  : This file contains the first shipped threading and synchronization surface for ILC. The initial focus is pragmatic:
-//            sleeping, identifying the current thread, and basic mutex-based synchronization without opening a full managed thread-start
-//            model yet.
+// Comment  : This file contains the shipped threading and synchronization surface for ILC. The current focus is pragmatic:
+//            sleeping, identifying the current thread, basic mutex-based synchronization, managed thread start/join through IRunnable,
+//            and a first Task abstraction on top of that substrate.
 //
 // Type     : ILC source code fixture
 // Date     : 2026-04-06
@@ -16,12 +16,61 @@ namespace System.Threading;
 uses System;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • IRunnable
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a managed unit of work that can later be executed by a Thread.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public interface IRunnable
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Executes the managed work item.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Run;
+end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • ITaskRunnable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a managed unit of work that produces a result for a Task.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public interface ITaskRunnable<T>
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Executes the managed work item and returns its result.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function Run: T;
+end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • ITaskResultSink<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents the internal completion sink for a Task result worker.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public interface ITaskResultSink<T>
+begin
+  public method Complete(value: T);
+  public method Fault(message: String);
+end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • CLASS • Thread
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 /// <summary>Provides minimal current-thread information and sleeping support.</summary>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Thread
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private var HandleValue: Integer;
+
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • SleepCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -31,6 +80,29 @@ begin
   // • EXTERNAL • GetCurrentManagedIdCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetCurrentManagedIdCore: Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • StartCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern function StartCore(target: IRunnable): Integer;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • JoinCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern method JoinCore(handle: Integer);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • IsAliveCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  private static extern function IsAliveCore(handle: Integer): Boolean;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    HandleValue := 0;
+  end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • PROPERTY • CurrentManagedId
@@ -44,6 +116,37 @@ begin
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTY • IsAlive
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public property IsAlive: Boolean
+  begin
+    get
+    begin
+      if HandleValue <= 0 then
+      begin
+        return false;
+      end;
+
+      return IsAliveCore(HandleValue);
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Start
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public static function Start(target: IRunnable): Thread;
+  begin
+    if target = nil then
+    begin
+      raise new Exception('Thread target must not be nil.');
+    end;
+
+    var thread := new Thread();
+    thread.HandleValue := StartCore(target);
+    return thread;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Sleep
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method Sleep(milliseconds: Integer);
@@ -54,6 +157,19 @@ begin
     end;
 
     SleepCore(milliseconds);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Join
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Join;
+  begin
+    if HandleValue <= 0 then
+    begin
+      return;
+    end;
+
+    JoinCore(HandleValue);
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -147,6 +263,274 @@ begin
 
     CloseCore(HandleValue);
     HandleValue := 0;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TaskWorker
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Internal helper that executes an IRunnable for a Task.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class TaskWorker: IRunnable
+begin
+  private var OwnerValue: Task;
+  private var TargetValue: IRunnable;
+
+  public constructor(owner: Task; target: IRunnable);
+  begin
+    OwnerValue := owner;
+    TargetValue := target;
+  end;
+
+  public method Run;
+  begin
+    try
+      TargetValue.Run();
+    except
+      on ex: Exception do
+      begin
+        OwnerValue.Fault(ex.Message);
+      end;
+    end;
+
+    OwnerValue.Complete();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TaskResultWorker<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Internal helper that executes an ITaskRunnable for a Task&lt;T&gt;.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class TaskResultWorker<T>: IRunnable
+begin
+  private var OwnerValue: ITaskResultSink<T>;
+  private var TargetValue: ITaskRunnable<T>;
+
+  public constructor(owner: ITaskResultSink<T>; target: ITaskRunnable<T>);
+  begin
+    OwnerValue := owner;
+    TargetValue := target;
+  end;
+
+  public method Run;
+  begin
+    try
+      var value := TargetValue.Run();
+      OwnerValue.Complete(value);
+    except
+      on ex: Exception do
+      begin
+        OwnerValue.Fault(ex.Message);
+      end;
+    end;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Task
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a minimal asynchronous operation running on a managed thread.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Task
+begin
+  private var ThreadValue: Thread;
+  private var CompletedValue: Boolean;
+  private var FaultedValue: Boolean;
+  private var ErrorMessageValue: String;
+
+  public constructor;
+  begin
+    ThreadValue := nil;
+    CompletedValue := false;
+    FaultedValue := false;
+    ErrorMessageValue := nil;
+  end;
+
+  public property IsCompleted: Boolean
+  begin
+    get
+    begin
+      return CompletedValue;
+    end;
+  end;
+
+  public property IsFaulted: Boolean
+  begin
+    get
+    begin
+      return FaultedValue;
+    end;
+  end;
+
+  public property ErrorMessage: String
+  begin
+    get
+    begin
+      return ErrorMessageValue;
+    end;
+  end;
+
+  public static function Run(target: IRunnable): Task;
+  begin
+    if target = nil then
+    begin
+      raise new Exception('Task target must not be nil.');
+    end;
+
+    var task := new Task();
+    var worker := new TaskWorker(task, target);
+    task.ThreadValue := Thread.Start(worker);
+    return task;
+  end;
+
+  public method Wait;
+  begin
+    if ThreadValue = nil then
+    begin
+      return;
+    end;
+
+    ThreadValue.Join();
+    CompletedValue := true;
+
+    if FaultedValue and ErrorMessageValue <> nil then
+    begin
+      raise new Exception(ErrorMessageValue);
+    end;
+  end;
+
+  public method Complete;
+  begin
+    CompletedValue := true;
+  end;
+
+  public method Fault(message: String);
+  begin
+    FaultedValue := true;
+    ErrorMessageValue := message;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Task<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a minimal asynchronous operation running on a managed thread and producing a result.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Task<T>: ITaskResultSink<T>
+begin
+  private var ThreadValue: Thread;
+  private var CompletedValue: Boolean;
+  private var FaultedValue: Boolean;
+  private var ErrorMessageValue: String;
+  private var HasResultValue: Boolean;
+  private var ResultValue: T;
+
+  public constructor;
+  begin
+    ThreadValue := nil;
+    CompletedValue := false;
+    FaultedValue := false;
+    ErrorMessageValue := nil;
+    HasResultValue := false;
+  end;
+
+  public constructor(target: ITaskRunnable<T>);
+  begin
+    ThreadValue := nil;
+    CompletedValue := false;
+    FaultedValue := false;
+    ErrorMessageValue := nil;
+    HasResultValue := false;
+
+    if target = nil then
+    begin
+      raise new Exception('Task target must not be nil.');
+    end;
+
+    var worker := new TaskResultWorker<T>(self, target);
+    ThreadValue := Thread.Start(worker);
+  end;
+
+  public property IsCompleted: Boolean
+  begin
+    get
+    begin
+      return CompletedValue;
+    end;
+  end;
+
+  public property IsFaulted: Boolean
+  begin
+    get
+    begin
+      return FaultedValue;
+    end;
+  end;
+
+  public property ErrorMessage: String
+  begin
+    get
+    begin
+      return ErrorMessageValue;
+    end;
+  end;
+
+  public property Result: T
+  begin
+    get
+    begin
+      if not CompletedValue then
+      begin
+        raise new Exception('Task result is not available yet.');
+      end;
+
+      if FaultedValue and ErrorMessageValue <> nil then
+      begin
+        raise new Exception(ErrorMessageValue);
+      end;
+
+      if not HasResultValue then
+      begin
+        raise new Exception('Task completed without a result value.');
+      end;
+
+      return ResultValue;
+    end;
+  end;
+
+  public method Wait;
+  begin
+    if ThreadValue = nil then
+    begin
+      return;
+    end;
+
+    ThreadValue.Join();
+    CompletedValue := true;
+
+    if FaultedValue and ErrorMessageValue <> nil then
+    begin
+      raise new Exception(ErrorMessageValue);
+    end;
+  end;
+
+  public method Complete(value: T);
+  begin
+    ResultValue := value;
+    HasResultValue := true;
+    CompletedValue := true;
+  end;
+
+  public method Fault(message: String);
+  begin
+    FaultedValue := true;
+    ErrorMessageValue := message;
+    CompletedValue := true;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

@@ -108,6 +108,48 @@ begin
   end;
 end;
 
+public class ThreadProbe: IRunnable
+begin
+  private var ValueField: Integer;
+
+  public property Value: Integer
+  begin
+    get
+    begin
+      return ValueField;
+    end;
+  end;
+
+  public method Run;
+  begin
+    ValueField := 42;
+  end;
+end;
+
+public class ThreadFailingProbe: IRunnable
+begin
+  public method Run;
+  begin
+    raise new Exception('thread-probe-failure');
+  end;
+end;
+
+public class TaskResultProbe: ITaskRunnable<Integer>
+begin
+  public function Run: Integer;
+  begin
+    return 21 * 2;
+  end;
+end;
+
+public class TaskFailingResultProbe: ITaskRunnable<Integer>
+begin
+  public function Run: Integer;
+  begin
+    raise new Exception('task-result-probe-failure');
+  end;
+end;
+
 // Testing variable declaration and initialization
 var value := 42;
 // Testing method invocation
@@ -1319,6 +1361,79 @@ begin
     Thread.Sleep(5);
     Program.Trace('CHECKPOINT threading-sleep=', sleepStopwatch.ElapsedMilliseconds >= 0);
     if sleepStopwatch.ElapsedMilliseconds >= 0 then
+    begin
+      current := current + 1;
+    end;
+    var threadProbe := new ThreadProbe();
+    var workerThread := Thread.Start(threadProbe);
+    workerThread.Join();
+    Program.Trace('CHECKPOINT threading-start=', threadProbe.Value = 42);
+    if threadProbe.Value = 42 then
+    begin
+      current := current + 1;
+    end;
+    Program.Trace('CHECKPOINT threading-joined=', workerThread.IsAlive);
+    if not workerThread.IsAlive then
+    begin
+      current := current + 1;
+    end;
+    var failingThreadProbe := new ThreadFailingProbe();
+    var failingThread := Thread.Start(failingThreadProbe);
+    var threadFailureSeen := false;
+    try
+      failingThread.Join();
+    except
+      on ex: Exception do
+      begin
+        threadFailureSeen := ex.Message.Contains('thread-probe-failure');
+      end;
+    end;
+    Program.Trace('CHECKPOINT threading-failure=', threadFailureSeen);
+    if threadFailureSeen then
+    begin
+      current := current + 1;
+    end;
+    var successTask := Task.Run(new ThreadProbe());
+    successTask.Wait();
+    Program.Trace('CHECKPOINT task-success=', successTask.IsCompleted and not successTask.IsFaulted);
+    if successTask.IsCompleted and not successTask.IsFaulted then
+    begin
+      current := current + 1;
+    end;
+    var failingTask := Task.Run(new ThreadFailingProbe());
+    var taskFailureSeen := false;
+    try
+      failingTask.Wait();
+    except
+      on ex: Exception do
+      begin
+        taskFailureSeen := ex.Message.Contains('thread-probe-failure');
+      end;
+    end;
+    Program.Trace('CHECKPOINT task-failure=', taskFailureSeen);
+    if taskFailureSeen then
+    begin
+      current := current + 1;
+    end;
+    var successResultTask := new Task<Integer>(new TaskResultProbe());
+    successResultTask.Wait();
+    Program.Trace('CHECKPOINT task-result=', successResultTask.Result = 42);
+    if successResultTask.Result = 42 then
+    begin
+      current := current + 1;
+    end;
+    var failingResultTask := new Task<Integer>(new TaskFailingResultProbe());
+    var taskResultFailureSeen := false;
+    try
+      failingResultTask.Wait();
+    except
+      on ex: Exception do
+      begin
+        taskResultFailureSeen := ex.Message.Contains('task-result-probe-failure');
+      end;
+    end;
+    Program.Trace('CHECKPOINT task-result-failure=', taskResultFailureSeen);
+    if taskResultFailureSeen then
     begin
       current := current + 1;
     end;

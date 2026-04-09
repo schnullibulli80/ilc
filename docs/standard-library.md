@@ -72,6 +72,7 @@ Current shipped types:
 - `System.Net.TcpClient`
 - `System.Net.HttpClient`
 - `System.Threading.Thread`
+- `System.Threading.Task`
 - `System.Threading.Mutex`
 - `System.Collections.IEnumerator<T>`
 - `System.Collections.IEnumerable<T>`
@@ -361,23 +362,48 @@ transport showcase and bootstrap building block for later socket and HTTP work.
 
 Current shipped threading surface:
 
+- `IRunnable`
+  - `Run(): void`
 - `Thread`
   - `CurrentManagedId: Integer`
+  - `Start(target: IRunnable): Thread`
+  - `Join(): void`
+  - `IsAlive: Boolean`
   - `Sleep(milliseconds: Integer): void`
+- `Task`
+  - `Run(target: IRunnable): Task`
+  - `Wait(): void`
+  - `IsCompleted: Boolean`
+  - `IsFaulted: Boolean`
+  - `ErrorMessage: String`
+- `ITaskRunnable<T>`
+  - `Run(): T`
+- `ITaskResultSink<T>`
+  - internal completion sink used by the shipped `Task<T>` worker path
+- `Task<T>`
+  - `Task(target: ITaskRunnable<T>)`
+  - `Wait(): void`
+  - `IsCompleted: Boolean`
+  - `IsFaulted: Boolean`
+  - `ErrorMessage: String`
+  - `Result: T`
 - `Mutex`
   - `IsValid: Boolean`
   - `WaitOne(): Boolean`
   - `Release(): void`
   - `Close(): void`
 
-The current `System.Threading` slice is intentionally foundational:
+The current `System.Threading` slice now covers:
 
 - current-thread identification
 - sleeping
 - host-backed mutex synchronization
+- managed `IRunnable`-based thread start/join
+- a first `Task` / `Task<T>` abstraction on top of managed threads
 
-It does not yet include managed thread start/join semantics. That is a later
-step built on top of these host-backed primitives.
+`Task` and `Task<T>` are currently intentionally small and pragmatic. They wrap
+managed thread execution and expose completion/fault state, but higher-level
+shapes such as `async` / `await` are still future work.
 
 ## 7) `libs/shipped/collections.ilc`
 

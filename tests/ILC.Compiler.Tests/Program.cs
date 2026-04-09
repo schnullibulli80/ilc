@@ -74,7 +74,7 @@ else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" |
     failures.Add("Parser should capture imported namespaces.");
 }
 
-if (tree.Root.Members.Count != 10)
+if (tree.Root.Members.Count != 14)
 {
     failures.Add("Parser should capture top-level members.");
 }
@@ -393,11 +393,84 @@ if (threadType is null || !threadType.IsReferenceType)
     failures.Add("Binder should surface System.Threading.Thread as a reference type.");
 }
 else if (!threadType.Properties.Any(property => property.Name == "CurrentManagedId" && property.Type == TypeSymbol.Integer) ||
+         !threadType.Properties.Any(property => property.Name == "IsAlive" && property.Type == TypeSymbol.Boolean) ||
+         !threadType.Methods.Any(method => method.Name == "Start" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IRunnable" && method.ReturnType.Name == "Thread") ||
+         !threadType.Methods.Any(method => method.Name == "Join" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) ||
          !threadType.Methods.Any(method => method.Name == "Sleep" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void) ||
          !threadType.Methods.Any(method => method.Name == "SleepCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadSleep) ||
-         !threadType.Methods.Any(method => method.Name == "GetCurrentManagedIdCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadGetCurrentManagedId))
+         !threadType.Methods.Any(method => method.Name == "GetCurrentManagedIdCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadGetCurrentManagedId) ||
+         !threadType.Methods.Any(method => method.Name == "StartCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadStartRunnable) ||
+         !threadType.Methods.Any(method => method.Name == "JoinCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadJoin) ||
+         !threadType.Methods.Any(method => method.Name == "IsAliveCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadIsAlive))
 {
     failures.Add("Binder should expose the expected System.Threading.Thread surface.");
+}
+
+var runnableType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IRunnable");
+if (runnableType is null || !runnableType.IsInterface)
+{
+    failures.Add("Binder should surface System.Threading.IRunnable as an interface type.");
+}
+else if (!runnableType.Methods.Any(method => method.Name == "Run" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should expose the expected System.Threading.IRunnable surface.");
+}
+
+var taskRunnableType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ITaskRunnable" && type.GenericArity == 1);
+if (taskRunnableType is null || !taskRunnableType.IsInterface || taskRunnableType.GenericParameters?.Count != 1 || taskRunnableType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Threading.ITaskRunnable<T> as an interface type.");
+}
+else if (!taskRunnableType.Methods.Any(method => method.Name == "Run" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType.Name == "T"))
+{
+    failures.Add("Binder should expose the expected System.Threading.ITaskRunnable<T> surface.");
+}
+
+var taskResultSinkType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ITaskResultSink" && type.GenericArity == 1);
+if (taskResultSinkType is null || !taskResultSinkType.IsInterface || taskResultSinkType.GenericParameters?.Count != 1 || taskResultSinkType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Threading.ITaskResultSink<T> as an interface type.");
+}
+else if (!taskResultSinkType.Methods.Any(method => method.Name == "Complete" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T") ||
+         !taskResultSinkType.Methods.Any(method => method.Name == "Fault" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String))
+{
+    failures.Add("Binder should expose the expected System.Threading.ITaskResultSink<T> surface.");
+}
+
+var taskType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Task" && type.GenericArity == 0);
+if (taskType is null || !taskType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Threading.Task as a reference type.");
+}
+else if (!taskType.Properties.Any(property => property.Name == "IsCompleted" && property.Type == TypeSymbol.Boolean) ||
+         !taskType.Properties.Any(property => property.Name == "IsFaulted" && property.Type == TypeSymbol.Boolean) ||
+         !taskType.Properties.Any(property => property.Name == "ErrorMessage" && property.Type == TypeSymbol.String) ||
+         !taskType.Methods.Any(method => method.Name == "Run" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IRunnable" && method.ReturnType.Name == "Task") ||
+         !taskType.Methods.Any(method => method.Name == "Wait" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should expose the expected System.Threading.Task surface.");
+}
+
+var genericTaskType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Task" && type.GenericArity == 1);
+if (genericTaskType is null || !genericTaskType.IsReferenceType || genericTaskType.GenericParameters?.Count != 1 || genericTaskType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Threading.Task<T> as a generic reference type.");
+}
+else if (!genericTaskType.InterfaceTypes.Any(type => type.Name == "ITaskResultSink<T>"))
+{
+    failures.Add("Binder should model System.Threading.Task<T> as an ITaskResultSink<T> implementation.");
+}
+else if (!genericTaskType.Properties.Any(property => property.Name == "IsCompleted" && property.Type == TypeSymbol.Boolean) ||
+         !genericTaskType.Properties.Any(property => property.Name == "IsFaulted" && property.Type == TypeSymbol.Boolean) ||
+         !genericTaskType.Properties.Any(property => property.Name == "ErrorMessage" && property.Type == TypeSymbol.String) ||
+         !genericTaskType.Properties.Any(property => property.Name == "Result" && property.Type.Name == "T") ||
+         !genericTaskType.Methods.Any(method => method.IsConstructor && method.Parameters.Count == 0) ||
+         !genericTaskType.Methods.Any(method => method.IsConstructor && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "ITaskRunnable<T>") ||
+         !genericTaskType.Methods.Any(method => method.Name == "Wait" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) ||
+         !genericTaskType.Methods.Any(method => method.Name == "Complete" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T") ||
+         !genericTaskType.Methods.Any(method => method.Name == "Fault" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String))
+{
+    failures.Add("Binder should expose the expected System.Threading.Task<T> surface.");
 }
 
 var mutexType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Mutex");
