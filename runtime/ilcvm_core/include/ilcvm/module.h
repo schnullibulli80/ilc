@@ -38,15 +38,21 @@ enum class HostImportKind : std::uint32_t
     tcp_write_line = 26,
     tcp_close = 27,
     http_get_string = 28,
-    thread_sleep = 29,
-    thread_get_current_managed_id = 30,
-    mutex_create = 31,
-    mutex_wait_one = 32,
-    mutex_release = 33,
-    mutex_close = 34,
-    thread_start_runnable = 35,
-    thread_join = 36,
-    thread_is_alive = 37
+    websocket_connect = 29,
+    websocket_receive_text = 30,
+    websocket_send_text = 31,
+    websocket_close = 32,
+    thread_sleep = 33,
+    thread_get_current_managed_id = 34,
+    mutex_create = 35,
+    mutex_wait_one = 36,
+    mutex_release = 37,
+    mutex_close = 38,
+    thread_start_runnable = 39,
+    thread_join = 40,
+    thread_is_alive = 41,
+    delegate_bind = 42,
+    delegate_invoke = 43
 };
 
 enum class NativeCallingConvention : std::uint32_t

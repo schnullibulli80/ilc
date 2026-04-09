@@ -42,6 +42,10 @@ public:
     void tcp_write_line(std::int32_t connection_id, std::string_view text) const override;
     void tcp_close(std::int32_t connection_id) const override;
     [[nodiscard]] std::string http_get_string(std::string_view url) const override;
+    [[nodiscard]] std::int32_t websocket_connect(std::string_view url) const override;
+    [[nodiscard]] std::string websocket_receive_text(std::int32_t connection_id) const override;
+    void websocket_send_text(std::int32_t connection_id, std::string_view text) const override;
+    void websocket_close(std::int32_t connection_id) const override;
     void thread_sleep(std::int32_t milliseconds) const override;
     [[nodiscard]] std::int32_t thread_get_current_managed_id() const override;
     [[nodiscard]] std::int32_t mutex_create() const override;
@@ -61,6 +65,8 @@ private:
     std::vector<std::string> command_line_args_;
     mutable std::unordered_map<std::int32_t, int> tcp_connections_;
     mutable std::int32_t next_tcp_connection_id_ { 1 };
+    mutable std::unordered_map<std::int32_t, int> websocket_connections_;
+    mutable std::int32_t next_websocket_connection_id_ { 1 };
     mutable std::unordered_map<std::int32_t, std::unique_ptr<HostMutex>> mutexes_;
     mutable std::int32_t next_mutex_id_ { 1 };
 };

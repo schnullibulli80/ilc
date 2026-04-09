@@ -285,6 +285,7 @@ The shipped library lives under `libs/shipped` and currently includes:
   - `Uri`
   - `TcpClient`
   - `HttpClient`
+  - `WebSocketClient`
 - `System.Threading`
   - `Thread`
   - `Task`

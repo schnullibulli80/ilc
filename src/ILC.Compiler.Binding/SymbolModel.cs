@@ -93,6 +93,10 @@ public enum HostImportKind
     TcpWriteLine,
     TcpClose,
     HttpGetString,
+    WebSocketConnect,
+    WebSocketReceiveText,
+    WebSocketSendText,
+    WebSocketClose,
     ThreadSleep,
     ThreadGetCurrentManagedId,
     MutexCreate,
@@ -101,7 +105,9 @@ public enum HostImportKind
     MutexClose,
     ThreadStartRunnable,
     ThreadJoin,
-    ThreadIsAlive
+    ThreadIsAlive,
+    DelegateBind,
+    DelegateInvoke
 }
 
 public enum NativeCallingConvention
@@ -161,7 +167,8 @@ public sealed record MethodSymbol(
     bool IsVirtual = false,
     bool IsOverride = false,
     HostImportKind HostImportKind = HostImportKind.None,
-    DllImportMetadata? DllImport = null) : Symbol(Name);
+    DllImportMetadata? DllImport = null,
+    LambdaExpressionSyntax? LambdaSource = null) : Symbol(Name);
 
 public sealed record EnumerablePatternResolution(
     TypeSymbol ElementType,
@@ -228,7 +235,8 @@ public sealed record NamedTypeSymbol(
     int GenericArity = 0,
     IReadOnlyList<TypeParameterSymbol>? GenericParameters = null,
     NamedTypeSymbol? GenericDefinition = null,
-    IReadOnlyList<TypeSymbol>? TypeArguments = null) : TypeSymbol(Name, IsReferenceType);
+    IReadOnlyList<TypeSymbol>? TypeArguments = null,
+    bool IsDelegate = false) : TypeSymbol(Name, IsReferenceType);
 
 public enum NameResolutionKind
 {
@@ -410,6 +418,20 @@ public sealed class Binder
                         [],
                         interfaceDeclaration.TypeParameters?.Parameters.Count ?? 0));
                     break;
+                case DelegateDeclarationSyntax delegateDeclaration:
+                    declaredTypeShells.Add(new NamedTypeSymbol(
+                        delegateDeclaration.Identifier.Text,
+                        true,
+                        false,
+                        false,
+                        null,
+                        [],
+                        [],
+                        [],
+                        [],
+                        [],
+                        delegateDeclaration.TypeParameters?.Parameters.Count ?? 0));
+                    break;
                 case EnumDeclarationSyntax enumDeclaration:
                     declaredTypeShells.Add(new TypeSymbol(enumDeclaration.Identifier.Text, false));
                     break;
@@ -427,6 +449,9 @@ public sealed class Binder
                 case InterfaceDeclarationSyntax interfaceDeclaration:
                     provisionalDeclaredTypes.Add(BindInterface(interfaceDeclaration, declaredTypeShells));
                     break;
+                case DelegateDeclarationSyntax delegateDeclaration:
+                    provisionalDeclaredTypes.Add(BindDelegate(delegateDeclaration, declaredTypeShells));
+                    break;
                 case EnumDeclarationSyntax enumDeclaration:
                     provisionalDeclaredTypes.Add(ResolveDeclaredType(enumDeclaration.Identifier.Text, declaredTypeShells, false));
                     break;
@@ -443,6 +468,9 @@ public sealed class Binder
                     break;
                 case InterfaceDeclarationSyntax interfaceDeclaration:
                     declaredTypes.Add(BindInterface(interfaceDeclaration, provisionalDeclaredTypes));
+                    break;
+                case DelegateDeclarationSyntax delegateDeclaration:
+                    declaredTypes.Add(BindDelegate(delegateDeclaration, provisionalDeclaredTypes));
                     break;
                 case EnumDeclarationSyntax enumDeclaration:
                     declaredTypes.Add(ResolveDeclaredType(enumDeclaration.Identifier.Text, provisionalDeclaredTypes, false));
@@ -555,9 +583,20 @@ public sealed class Binder
                 syntheticMembers));
         }
 
+        var lambdaArtifacts = CollectSyntheticLambdaArtifacts(syntaxTree.Root.Members, declaredTypes);
+        foreach (var lambdaType in lambdaArtifacts.Types)
+        {
+            if (declaredTypes.All(existing => existing.Name != lambdaType.Name))
+            {
+                declaredTypes.Add(lambdaType);
+            }
+        }
+
+        methods.AddRange(lambdaArtifacts.Methods);
+
         var allMethods = methods.Concat(knownMethods).ToArray();
         var allKnownConstants = knownConstants.Concat(topLevelConstants).ToArray();
-        ValidateSemantics(syntaxTree.Root.Members, globals, topLevelConstants, declaredTypes, knownMethods, knownFields, allKnownConstants, knownProperties, diagnostics);
+        ValidateSemantics(syntaxTree.Root.Members, globals, topLevelConstants, declaredTypes, allMethods, knownFields, allKnownConstants, knownProperties, diagnostics);
         var explicitEntryPoints = knownMethods
             .Where(method => method.Name == "Main")
             .ToArray();
@@ -628,6 +667,8 @@ public sealed class Binder
                     break;
                 case InterfaceDeclarationSyntax interfaceDeclaration:
                     ValidateInterfaceSemantics(interfaceDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics);
+                    break;
+                case DelegateDeclarationSyntax:
                     break;
                 case EnumDeclarationSyntax:
                     break;
@@ -1067,7 +1108,17 @@ public sealed class Binder
                     {
                         if (declarator.Initializer is not null)
                         {
-                            ValidateExpression(declarator.Initializer, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                            ValidateExpressionForExpectedType(
+                                declarator.Initializer,
+                                declarator.TypeName is not null ? BindType(declarator.TypeName, knownTypes) : null,
+                                locals,
+                                knownTypes,
+                                knownMethods,
+                                knownFields,
+                                knownConstants,
+                                knownProperties,
+                                currentMethod,
+                                diagnostics);
                         }
 
                         locals[declarator.Identifier.Text] = declarator.TypeName is not null
@@ -1844,7 +1895,17 @@ public sealed class Binder
                 break;
             case AssignmentExpressionSyntax assignment:
                 ValidateAssignmentTarget(assignment.Target, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                ValidateExpression(assignment.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                ValidateExpressionForExpectedType(
+                    assignment.Expression,
+                    SemanticFacts.InferExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+                    locals,
+                    knownTypes,
+                    knownMethods,
+                    knownFields,
+                    knownConstants,
+                    knownProperties,
+                    currentMethod,
+                    diagnostics);
                 break;
             case CompoundAssignmentExpressionSyntax assignment:
                 ValidateAssignmentTarget(assignment.Target, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -2318,7 +2379,17 @@ public sealed class Binder
                     }
                     else
                     {
-                        ValidateExpression(argument.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        ValidateExpressionForExpectedType(
+                            argument.Expression,
+                            parameter?.Type,
+                            locals,
+                            knownTypes,
+                            knownMethods,
+                            knownFields,
+                            knownConstants,
+                            knownProperties,
+                            currentMethod,
+                            diagnostics);
                     }
                 }
 
@@ -2375,7 +2446,130 @@ public sealed class Binder
                 }
 
                 break;
+            case LambdaExpressionSyntax lambda:
+                diagnostics.Report(
+                    "ILC2219",
+                    "Lambda expressions require a delegate target type in the current bootstrap compiler.",
+                    DiagnosticSeverity.Error,
+                    GetExpressionDiagnosticSpan(lambda, knownTypes));
+                break;
         }
+    }
+
+    private static void ValidateExpressionForExpectedType(
+        ExpressionSyntax expression,
+        TypeSymbol? expectedType,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (TryValidateDelegateMethodGroupConversion(
+                expression,
+                expectedType,
+                locals,
+                knownTypes,
+                knownMethods,
+                knownFields,
+                knownConstants,
+                knownProperties,
+                currentMethod,
+                diagnostics))
+        {
+            return;
+        }
+
+        if (TryValidateDelegateLambdaConversion(
+                expression,
+                expectedType,
+                locals,
+                knownTypes,
+                knownMethods,
+                knownFields,
+                knownConstants,
+                knownProperties,
+                currentMethod,
+                diagnostics))
+        {
+            return;
+        }
+
+        ValidateExpression(expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+    }
+
+    private static bool TryValidateDelegateMethodGroupConversion(
+        ExpressionSyntax expression,
+        TypeSymbol? expectedType,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (expectedType is null ||
+            ResolveNamedType(expectedType, knownTypes) is not { IsDelegate: true } delegateType)
+        {
+            return false;
+        }
+
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        if (invokeMethod is null)
+        {
+            return false;
+        }
+
+        MethodSymbol? methodGroup = null;
+        TextSpan diagnosticSpan;
+
+        switch (expression)
+        {
+            case NameExpressionSyntax name:
+            {
+                var resolution = SemanticFacts.ResolveName(name.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                if (resolution.Kind != NameResolutionKind.MethodGroup || resolution.Method is null)
+                {
+                    return false;
+                }
+
+                methodGroup = resolution.Method;
+                diagnosticSpan = GetReferenceDiagnosticSpan(name.Name, knownTypes);
+                break;
+            }
+            case MemberAccessExpressionSyntax memberAccess:
+            {
+                ValidateExpression(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                var memberResolution = SemanticFacts.ResolveMemberAccess(memberAccess, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                if (memberResolution.Method is null)
+                {
+                    return false;
+                }
+
+                methodGroup = memberResolution.Method;
+                diagnosticSpan = memberAccess.MemberName.Span;
+                break;
+            }
+            default:
+                return false;
+        }
+
+        if (AreDelegateMethodSignaturesCompatible(invokeMethod, methodGroup, knownTypes))
+        {
+            return true;
+        }
+
+        diagnostics.Report(
+            "ILC2218",
+            $"Method group '{methodGroup.Name}' is not compatible with delegate '{delegateType.Name}'.",
+            DiagnosticSeverity.Error,
+            diagnosticSpan);
+        return true;
     }
 
     private static void ValidateSetLiteral(
@@ -3537,6 +3731,7 @@ public sealed class Binder
             ElementAccessExpressionSyntax element => GetReferenceDiagnosticSpan(element.Target, knownTypes),
             PostfixElementAccessExpressionSyntax element => GetExpressionDiagnosticSpan(element.Target, knownTypes),
             CallExpressionSyntax call => GetExpressionDiagnosticSpan(call.Target, knownTypes),
+            LambdaExpressionSyntax lambda => lambda.SignatureKeyword.Span,
             ParenthesizedExpressionSyntax parenthesized => parenthesized.OpenParenToken.Span,
             MatchNotPatternSyntax notPattern => notPattern.NotKeyword.Span,
             MatchOrPatternSyntax orPattern => orPattern.Patterns.Count > 0
@@ -3553,6 +3748,7 @@ public sealed class Binder
     private static string GetExpressionDisplayName(ExpressionSyntax expression) =>
         expression switch
         {
+            LambdaExpressionSyntax lambda => $"{lambda.SignatureKeyword.Text}(...) => ...",
             _ => SemanticFacts.GetExpressionDisplayName(expression)
         };
 
@@ -3907,6 +4103,121 @@ public sealed class Binder
         return true;
     }
 
+    private static bool TryValidateDelegateLambdaConversion(
+        ExpressionSyntax expression,
+        TypeSymbol? expectedType,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (expression is not LambdaExpressionSyntax lambda)
+        {
+            return false;
+        }
+
+        if (expectedType is null ||
+            ResolveNamedType(expectedType, knownTypes) is not { IsDelegate: true } delegateType)
+        {
+            diagnostics.Report(
+                "ILC2219",
+                "Lambda expressions require a delegate target type in the current bootstrap compiler.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(lambda, knownTypes));
+            return true;
+        }
+
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        if (invokeMethod is null)
+        {
+            diagnostics.Report(
+                "ILC2220",
+                $"Delegate type '{delegateType.Name}' does not expose a callable Invoke signature.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(lambda, knownTypes));
+            return true;
+        }
+
+        if (lambda.Parameters.Count != invokeMethod.Parameters.Count)
+        {
+            diagnostics.Report(
+                "ILC2221",
+                $"Lambda parameter count {lambda.Parameters.Count} is not compatible with delegate '{delegateType.Name}' parameter count {invokeMethod.Parameters.Count}.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(lambda, knownTypes));
+            return true;
+        }
+
+        var lambdaLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal);
+        for (var parameterIndex = 0; parameterIndex < lambda.Parameters.Count; parameterIndex++)
+        {
+            var parameter = lambda.Parameters[parameterIndex];
+            var delegateParameter = invokeMethod.Parameters[parameterIndex];
+            var parameterType = BindType(parameter.TypeName, knownTypes);
+            if (parameterType != delegateParameter.Type)
+            {
+                diagnostics.Report(
+                    "ILC2222",
+                    $"Lambda parameter '{parameter.Identifier.Text}' must have type '{delegateParameter.Type.Name}' to match delegate '{delegateType.Name}', but was '{parameterType.Name}'.",
+                    DiagnosticSeverity.Error,
+                    parameter.TypeName.Parts[0].Span);
+                return true;
+            }
+
+            lambdaLocals[parameter.Identifier.Text] = parameterType;
+        }
+
+        if (lambda.SignatureKeyword.Kind == SyntaxKind.FunctionKeyword)
+        {
+            if (lambda.ReturnType is null)
+            {
+                diagnostics.Report(
+                    "ILC2223",
+                    "Function lambdas must declare an explicit return type in the current bootstrap compiler.",
+                    DiagnosticSeverity.Error,
+                    lambda.SignatureKeyword.Span);
+                return true;
+            }
+
+            var declaredReturnType = BindType(lambda.ReturnType, knownTypes);
+            if (declaredReturnType != invokeMethod.ReturnType)
+            {
+                diagnostics.Report(
+                    "ILC2224",
+                    $"Lambda return type '{declaredReturnType.Name}' is not compatible with delegate '{delegateType.Name}' return type '{invokeMethod.ReturnType.Name}'.",
+                    DiagnosticSeverity.Error,
+                    GetReferenceDiagnosticSpan(lambda.ReturnType, knownTypes));
+                return true;
+            }
+        }
+        else if (invokeMethod.ReturnType != TypeSymbol.Void)
+        {
+            diagnostics.Report(
+                "ILC2225",
+                $"Procedure lambda is not compatible with non-void delegate '{delegateType.Name}'.",
+                DiagnosticSeverity.Error,
+                lambda.SignatureKeyword.Span);
+            return true;
+        }
+
+        ValidateExpression(lambda.Body, lambdaLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+        var bodyType = SemanticFacts.InferExpressionType(lambda.Body, lambdaLocals, knownMethods, knownFields, knownConstants, knownProperties, null, knownTypes);
+        if (invokeMethod.ReturnType != TypeSymbol.Void && bodyType != invokeMethod.ReturnType)
+        {
+            diagnostics.Report(
+                "ILC2226",
+                $"Lambda body type '{bodyType.Name}' is not compatible with delegate '{delegateType.Name}' return type '{invokeMethod.ReturnType.Name}'.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(lambda.Body, knownTypes));
+        }
+
+        return true;
+    }
+
     private static bool AreInterfaceMethodSignaturesCompatible(MethodSymbol contractMethod, MethodSymbol implementationMethod, IReadOnlyList<TypeSymbol> knownTypes)
     {
         if (contractMethod.Parameters.Count != implementationMethod.Parameters.Count)
@@ -3939,6 +4250,9 @@ public sealed class Binder
 
         return SemanticFacts.IsCompatibleReferenceType(implementationMethod.ReturnType, contractMethod.ReturnType, knownTypes);
     }
+
+    private static bool AreDelegateMethodSignaturesCompatible(MethodSymbol delegateInvokeMethod, MethodSymbol targetMethod, IReadOnlyList<TypeSymbol> knownTypes) =>
+        AreInterfaceMethodSignaturesCompatible(delegateInvokeMethod, targetMethod, knownTypes);
 
     private static TypeSymbol BindType(QualifiedNameSyntax? typeName, IEnumerable<TypeSymbol>? knownTypes = null)
     {
@@ -4073,6 +4387,73 @@ public sealed class Binder
             properties,
             typeParameters.Count,
             typeParameters);
+    }
+
+    private static NamedTypeSymbol BindDelegate(DelegateDeclarationSyntax delegateDeclaration, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var typeParameters = BindTypeParameters(delegateDeclaration.TypeParameters);
+        var typeScope = knownTypes.Concat(typeParameters).ToArray();
+        var invokeReturnType = delegateDeclaration.ReturnType is null
+            ? TypeSymbol.Void
+            : BindType(delegateDeclaration.ReturnType, typeScope);
+        var delegateTypeName = delegateDeclaration.Identifier.Text;
+        var invokeParameters = delegateDeclaration.Parameters
+            .Select(parameter => new ParameterSymbol(
+                parameter.Identifier.Text,
+                BindType(parameter.TypeName, typeScope),
+                BindParameterPassingKind(parameter.ModifierKeyword)))
+            .ToArray();
+        var targetField = new FieldSymbol("TargetObjectValue", TypeSymbol.Object, delegateTypeName, false, null);
+        var methodIdField = new FieldSymbol("TargetFunctionIdValue", TypeSymbol.Integer, delegateTypeName, false, null);
+        var constructor = new MethodSymbol(
+            Name: ".ctor",
+            ReturnType: TypeSymbol.Void,
+            Parameters:
+            [
+                new ParameterSymbol("target", TypeSymbol.Object),
+                new ParameterSymbol("methodId", TypeSymbol.Integer)
+            ],
+            DeclaringTypeName: delegateTypeName,
+            IsStatic: false,
+            Declaration: null,
+            IsConstructor: true,
+            IsSynthetic: true,
+            SyntheticMembers: null,
+            IsExtern: false,
+            IsVirtual: false,
+            IsOverride: false,
+            HostImportKind: HostImportKind.DelegateBind);
+        var invokeMethod = new MethodSymbol(
+            Name: "Invoke",
+            ReturnType: invokeReturnType,
+            Parameters: invokeParameters,
+            DeclaringTypeName: delegateTypeName,
+            IsStatic: false,
+            Declaration: null,
+            IsConstructor: false,
+            IsSynthetic: true,
+            SyntheticMembers: null,
+            IsExtern: false,
+            IsVirtual: false,
+            IsOverride: false,
+            HostImportKind: HostImportKind.DelegateInvoke);
+
+        return new NamedTypeSymbol(
+            delegateTypeName,
+            true,
+            false,
+            false,
+            TypeSymbol.Object,
+            [],
+            [constructor, invokeMethod],
+            [targetField, methodIdField],
+            [],
+            [],
+            typeParameters.Count,
+            typeParameters,
+            null,
+            null,
+            true);
     }
 
     private static IReadOnlyList<TypeParameterSymbol> BindTypeParameters(TypeParameterListSyntax? typeParameters) =>
@@ -4290,6 +4671,272 @@ public sealed class Binder
                 methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword),
                 methodDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.ExternKeyword)),
             DllImport: BindDllImportMetadata(methodDeclaration));
+    }
+
+    private sealed record SyntheticLambdaArtifact(
+        LambdaExpressionSyntax Lambda,
+        NamedTypeSymbol? ClosureType,
+        MethodSymbol Method);
+
+    private sealed record SyntheticLambdaArtifacts(
+        IReadOnlyList<NamedTypeSymbol> Types,
+        IReadOnlyList<MethodSymbol> Methods);
+
+    private static SyntheticLambdaArtifacts CollectSyntheticLambdaArtifacts(
+        IReadOnlyList<MemberSyntax> members,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var types = new List<NamedTypeSymbol>();
+        var methods = new List<MethodSymbol>();
+        var nextLambdaId = 0;
+
+        foreach (var classDeclaration in members.OfType<ClassDeclarationSyntax>())
+        {
+            var typeScope = knownTypes.Concat(BindTypeParameters(classDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
+            foreach (var methodDeclaration in classDeclaration.Members.OfType<MethodDeclarationSyntax>())
+            {
+                foreach (var artifact in CollectLambdaArtifacts(methodDeclaration, classDeclaration.Identifier.Text, typeScope, ref nextLambdaId))
+                {
+                    if (artifact.ClosureType is not null)
+                    {
+                        types.Add(artifact.ClosureType);
+                    }
+
+                    if (artifact.Method.IsStatic)
+                    {
+                        methods.Add(artifact.Method);
+                    }
+                }
+            }
+        }
+
+        return new SyntheticLambdaArtifacts(types, methods);
+    }
+
+    private static IReadOnlyList<SyntheticLambdaArtifact> CollectLambdaArtifacts(
+        MethodDeclarationSyntax methodDeclaration,
+        string declaringTypeName,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        ref int nextLambdaId)
+    {
+        var outerLocals = CollectMethodLambdaCaptureScope(methodDeclaration, knownTypes);
+        var lambdas = new List<LambdaExpressionSyntax>();
+        CollectLambdaExpressions(methodDeclaration.ExpressionBody, lambdas);
+        CollectLambdaExpressions(methodDeclaration.Body, lambdas);
+
+        var artifacts = new List<SyntheticLambdaArtifact>();
+        foreach (var lambda in lambdas)
+        {
+            var captures = CollectLambdaCaptures(lambda, outerLocals);
+            if (captures.Count == 0)
+            {
+                artifacts.Add(new SyntheticLambdaArtifact(
+                    lambda,
+                    null,
+                    BindSyntheticLambdaMethod(lambda, declaringTypeName, ++nextLambdaId, knownTypes)));
+                continue;
+            }
+
+            var closureTypeName = $"__LambdaClosure_{++nextLambdaId}";
+            var closureFields = captures
+                .Select(capture => new FieldSymbol(capture.Key, capture.Value, closureTypeName, false, null))
+                .ToArray();
+            var closureMethod = BindSyntheticLambdaMethod(lambda, closureTypeName, nextLambdaId, knownTypes, isStatic: false);
+            var closureType = new NamedTypeSymbol(
+                closureTypeName,
+                true,
+                false,
+                false,
+                TypeSymbol.Object,
+                [],
+                [closureMethod],
+                closureFields,
+                [],
+                [],
+                0,
+                []);
+            artifacts.Add(new SyntheticLambdaArtifact(lambda, closureType, closureMethod));
+        }
+
+        return artifacts;
+    }
+
+    private static MethodSymbol BindSyntheticLambdaMethod(
+        LambdaExpressionSyntax lambda,
+        string? declaringTypeName,
+        int ordinal,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        bool isStatic = true)
+    {
+        var identifier = new SyntaxToken(
+            SyntaxKind.IdentifierToken,
+            $"__lambda_{ordinal}",
+            $"__lambda_{ordinal}",
+            lambda.SignatureKeyword.Span);
+        var declaration = new MethodDeclarationSyntax(
+            Attributes: [],
+            Modifiers: isStatic ? [new SyntaxToken(SyntaxKind.StaticKeyword, "static", null, lambda.SignatureKeyword.Span)] : [],
+            Keyword: lambda.SignatureKeyword,
+            Identifier: identifier,
+            OpenParenToken: lambda.OpenParenToken,
+            Parameters: lambda.Parameters,
+            CloseParenToken: lambda.CloseParenToken,
+            ColonToken: lambda.ColonToken,
+            ReturnType: lambda.ReturnType,
+            ArrowToken: lambda.ArrowToken,
+            ExpressionBody: lambda.Body,
+            Body: null,
+            TerminatorToken: lambda.ArrowToken);
+        var boundMethod = BindMethod(declaration, declaringTypeName, knownTypes);
+        return boundMethod with
+        {
+            IsSynthetic = true,
+            LambdaSource = lambda
+        };
+    }
+
+    private static Dictionary<string, TypeSymbol> CollectMethodLambdaCaptureScope(
+        MethodDeclarationSyntax methodDeclaration,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var locals = methodDeclaration.Parameters.ToDictionary(
+            parameter => parameter.Identifier.Text,
+            parameter => BindType(parameter.TypeName, knownTypes),
+            StringComparer.Ordinal);
+
+        if (methodDeclaration.Body is not null)
+        {
+            CollectDeclaredLocals(methodDeclaration.Body, locals, knownTypes);
+        }
+
+        return locals;
+    }
+
+    private static void CollectDeclaredLocals(
+        object? value,
+        Dictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (value is null or string or SyntaxToken or LambdaExpressionSyntax)
+        {
+            return;
+        }
+
+        if (value is LocalVariableDeclarationStatementSyntax localDeclaration)
+        {
+            foreach (var declarator in localDeclaration.Declarators)
+            {
+                locals[declarator.Identifier.Text] = declarator.TypeName is not null
+                    ? BindType(declarator.TypeName, knownTypes)
+                    : TypeSymbol.Integer;
+            }
+        }
+
+        if (value is System.Collections.IEnumerable enumerable and not SyntaxNode)
+        {
+            foreach (var item in enumerable)
+            {
+                CollectDeclaredLocals(item, locals, knownTypes);
+            }
+
+            return;
+        }
+
+        var valueType = value.GetType();
+        foreach (var property in valueType.GetProperties())
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            CollectDeclaredLocals(property.GetValue(value), locals, knownTypes);
+        }
+    }
+
+    private static Dictionary<string, TypeSymbol> CollectLambdaCaptures(
+        LambdaExpressionSyntax lambda,
+        IReadOnlyDictionary<string, TypeSymbol> outerLocals)
+    {
+        var lambdaParameters = lambda.Parameters
+            .Select(parameter => parameter.Identifier.Text)
+            .ToHashSet(StringComparer.Ordinal);
+        var referencedNames = new HashSet<string>(StringComparer.Ordinal);
+        CollectReferencedNames(lambda.Body, referencedNames);
+
+        return referencedNames
+            .Where(name => !lambdaParameters.Contains(name) && outerLocals.ContainsKey(name))
+            .ToDictionary(name => name, name => outerLocals[name], StringComparer.Ordinal);
+    }
+
+    private static void CollectReferencedNames(object? value, HashSet<string> names)
+    {
+        if (value is null or string or SyntaxToken or LambdaExpressionSyntax)
+        {
+            return;
+        }
+
+        if (value is NameExpressionSyntax nameExpression && nameExpression.Name.Parts.Count == 1)
+        {
+            names.Add(nameExpression.Name.Parts[0].Text);
+            return;
+        }
+
+        if (value is System.Collections.IEnumerable enumerable and not SyntaxNode)
+        {
+            foreach (var item in enumerable)
+            {
+                CollectReferencedNames(item, names);
+            }
+
+            return;
+        }
+
+        var valueType = value.GetType();
+        foreach (var property in valueType.GetProperties())
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            CollectReferencedNames(property.GetValue(value), names);
+        }
+    }
+
+    private static void CollectLambdaExpressions(object? value, List<LambdaExpressionSyntax> lambdas)
+    {
+        if (value is null or string or SyntaxToken)
+        {
+            return;
+        }
+
+        if (value is LambdaExpressionSyntax lambda)
+        {
+            lambdas.Add(lambda);
+            return;
+        }
+
+        if (value is System.Collections.IEnumerable enumerable and not SyntaxNode)
+        {
+            foreach (var item in enumerable)
+            {
+                CollectLambdaExpressions(item, lambdas);
+            }
+
+            return;
+        }
+
+        var valueType = value.GetType();
+        foreach (var property in valueType.GetProperties())
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            CollectLambdaExpressions(property.GetValue(value), lambdas);
+        }
     }
 
     private static void ValidateDllImportMethod(
@@ -4649,6 +5296,42 @@ public sealed class Binder
             }
         }
 
+        if (declaringTypeName == "WebSocketClient" && isStatic)
+        {
+            if (methodName == "ConnectCore" &&
+                returnType == TypeSymbol.Integer &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.String)
+            {
+                return HostImportKind.WebSocketConnect;
+            }
+
+            if (methodName == "ReceiveTextCore" &&
+                returnType == TypeSymbol.String &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.WebSocketReceiveText;
+            }
+
+            if (methodName == "SendTextCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 2 &&
+                parameters[0].Type == TypeSymbol.Integer &&
+                parameters[1].Type == TypeSymbol.String)
+            {
+                return HostImportKind.WebSocketSendText;
+            }
+
+            if (methodName == "CloseCore" &&
+                returnType == TypeSymbol.Void &&
+                parameters.Count == 1 &&
+                parameters[0].Type == TypeSymbol.Integer)
+            {
+                return HostImportKind.WebSocketClose;
+            }
+        }
+
         if (declaringTypeName == "Thread" && isStatic)
         {
             if (methodName == "SleepCore" &&
@@ -5003,6 +5686,10 @@ public static class SemanticFacts
                     method.IsStatic) is { } staticMethod
                     ? staticMethod.ReturnType
                     : ResolveInvocation(call.Target, call.Arguments.Count, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)?.Method.ReturnType ?? TypeSymbol.Integer,
+            LambdaExpressionSyntax lambda => lambda.SignatureKeyword.Kind == SyntaxKind.FunctionKeyword && lambda.ReturnType is not null
+                ? ResolveTypeReferenceInGenericContext(lambda.ReturnType.ToDisplayString(), currentMethod, knownTypes ?? [])
+                    ?? new TypeSymbol(lambda.ReturnType.ToDisplayString(), true)
+                : TypeSymbol.Void,
             MatchExpressionSyntax matchExpression => matchExpression.Arms.Count > 0
                 ? InferExpressionType(
                     matchExpression.Arms[0].Expression,
@@ -5157,12 +5844,18 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
-        return target switch
+        var directResolution = target switch
         {
             NameExpressionSyntax name => ResolveInvocation(name.Name, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
             MemberAccessExpressionSyntax memberAccess => ResolveMemberInvocation(memberAccess, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
             _ => null
         };
+        if (directResolution is not null)
+        {
+            return directResolution;
+        }
+
+        return TryResolveDelegateInvocation(target, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
     }
 
     public static InvocationResolution? ResolveInvocationIgnoringAccess(
@@ -5176,12 +5869,42 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
-        return target switch
+        var directResolution = target switch
         {
             NameExpressionSyntax name => ResolveInvocationIgnoringAccess(name.Name, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
             MemberAccessExpressionSyntax memberAccess => ResolveMemberInvocation(memberAccess, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, ignoreAccess: true),
             _ => null
         };
+        if (directResolution is not null)
+        {
+            return directResolution;
+        }
+
+        return TryResolveDelegateInvocation(target, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+    }
+
+    private static InvocationResolution? TryResolveDelegateInvocation(
+        ExpressionSyntax target,
+        int argumentCount,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var targetType = InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (ResolveNamedType(targetType, knownTypes) is not NamedTypeSymbol { IsDelegate: true } delegateType)
+        {
+            return null;
+        }
+
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method =>
+            method.Name == "Invoke" &&
+            !method.IsStatic &&
+            SupportsArgumentCount(method, argumentCount));
+        return invokeMethod is null ? null : new InvocationResolution(invokeMethod, delegateType, true);
     }
 
     public static MemberResolution ResolveMemberAccess(
@@ -6773,9 +7496,19 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
+        var isExplicitInvokeMemberAccess =
+            call.Target is MemberAccessExpressionSyntax { MemberName.Text: "Invoke" };
+        var isDirectDelegateInvoke =
+            !isExplicitInvokeMemberAccess &&
+            ResolveTypeReference(invocation.Method.DeclaringTypeName, knownTypes) is NamedTypeSymbol { IsDelegate: true } &&
+            invocation.Method.Name == "Invoke" &&
+            !invocation.Method.IsStatic;
+
         var receiver = invocation.Method.IsStatic
             ? null
-            : call.Target switch
+            : isDirectDelegateInvoke
+                ? BindReceiver(call.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                : call.Target switch
             {
                 MemberAccessExpressionSyntax memberAccess => BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
                 NameExpressionSyntax nameExpression when nameExpression.Name.Parts.Count > 1 => BindReceiver(

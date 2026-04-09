@@ -38,6 +38,10 @@ public:
     virtual void tcp_write_line(std::int32_t connection_id, std::string_view text) const = 0;
     virtual void tcp_close(std::int32_t connection_id) const = 0;
     [[nodiscard]] virtual std::string http_get_string(std::string_view url) const = 0;
+    [[nodiscard]] virtual std::int32_t websocket_connect(std::string_view url) const = 0;
+    [[nodiscard]] virtual std::string websocket_receive_text(std::int32_t connection_id) const = 0;
+    virtual void websocket_send_text(std::int32_t connection_id, std::string_view text) const = 0;
+    virtual void websocket_close(std::int32_t connection_id) const = 0;
     virtual void thread_sleep(std::int32_t milliseconds) const = 0;
     [[nodiscard]] virtual std::int32_t thread_get_current_managed_id() const = 0;
     [[nodiscard]] virtual std::int32_t mutex_create() const = 0;

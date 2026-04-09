@@ -50,6 +50,9 @@ begin
   public function Bonus(): Integer;
 end;
 
+// Testing delegate declaration
+public delegate function IntProjector(value: Integer): Integer;
+
 // Testing external method declaration
 public class Native
 begin
@@ -216,6 +219,11 @@ begin
   public static procedure Bump(ref value: Integer);
   begin
     value := value + 1;
+  end;
+
+  public static function ProjectDouble(value: Integer): Integer;
+  begin
+    return value * 2;
   end;
 
   public static procedure ReadOnly(in value: Integer);
@@ -1341,6 +1349,31 @@ begin
     begin
       current := current + 9;
     end;
+    var wsPortText := Environment.Variables['ILC_WS_SMOKE_PORT'];
+    var wsConnected := false;
+    var wsResponse := '';
+    var wsClient := new WebSocketClient();
+    if wsPortText <> nil then
+    begin
+      wsConnected := wsClient.Connect('ws://127.0.0.1:' + wsPortText + '/echo');
+    end;
+    Program.Trace('CHECKPOINT net-ws-connect=', wsConnected);
+    if wsConnected then
+    begin
+      wsClient.SendText('ping');
+      wsResponse := wsClient.ReceiveText();
+      Program.Trace('CHECKPOINT net-ws-response=', wsResponse = 'echo:ping');
+      if wsResponse = 'echo:ping' then
+      begin
+        current := current + 9;
+      end;
+      wsClient.Close();
+      Program.Trace('CHECKPOINT net-ws-closed=', wsClient.IsConnected);
+      if not wsClient.IsConnected then
+      begin
+        current := current + 1;
+      end;
+    end;
     Program.Trace('CHECKPOINT net=', current);
 
     Program.TraceText('SECTION threading');
@@ -1439,6 +1472,28 @@ begin
     end;
     threadMutex.Release();
     threadMutex.Close();
+    var projector: IntProjector := ProjectDouble;
+    var projected := projector(21);
+    Program.Trace('CHECKPOINT delegate-invoke=', projected = 42);
+    if projected = 42 then
+    begin
+      current := current + 1;
+    end;
+    var lambdaProjector: IntProjector := function(value: Integer): Integer => value * 3;
+    var lambdaProjected := lambdaProjector(14);
+    Program.Trace('CHECKPOINT delegate-lambda=', lambdaProjected = 42);
+    if lambdaProjected = 42 then
+    begin
+      current := current + 1;
+    end;
+    var lambdaFactor := 3;
+    var capturingProjector: IntProjector := function(value: Integer): Integer => value * lambdaFactor;
+    var capturedProjected := capturingProjector(14);
+    Program.Trace('CHECKPOINT delegate-capture=', capturedProjected = 42);
+    if capturedProjected = 42 then
+    begin
+      current := current + 1;
+    end;
     Program.Trace('CHECKPOINT threading=', current);
 
     Program.TraceText('SECTION diagnostics');

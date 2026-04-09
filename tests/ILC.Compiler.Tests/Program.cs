@@ -74,7 +74,7 @@ else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" |
     failures.Add("Parser should capture imported namespaces.");
 }
 
-if (tree.Root.Members.Count != 14)
+if (tree.Root.Members.Count != 15)
 {
     failures.Add("Parser should capture top-level members.");
 }
@@ -166,11 +166,14 @@ if (binding.Diagnostics.Any(diagnostic => diagnostic.Id is "ILC2151" or "ILC2152
     failures.Add("Valid fixture code should not produce bootstrap set diagnostics.");
 }
 
-if (binding.Compilation.Methods.Count != 1)
+var topLevelMethods = binding.Compilation.Methods.Where(method => method.Name == "__TopLevelMain").ToArray();
+if (topLevelMethods.Length != 1)
 {
-    failures.Add("Binder should synthesize one top-level method when top-level code exists.");
+    failures.Add(
+        "Binder should synthesize exactly one top-level entry method when top-level code exists. Actual top-level methods: " +
+        string.Join(", ", binding.Compilation.Methods.Select(method => method.Name)));
 }
-else if (binding.Compilation.Methods[0].Name != "__TopLevelMain")
+else if (topLevelMethods[0].Name != "__TopLevelMain")
 {
     failures.Add("Synthetic top-level entry stubs should not collide with declared Main methods.");
 }
@@ -200,6 +203,31 @@ var pointType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefau
 if (pointType is null || pointType.Fields.Count != 2 || !pointType.IsReferenceType || !pointType.IsRecord)
 {
     failures.Add("Binder should surface records on the existing object/field path and mark them as records.");
+}
+
+var intProjectorType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IntProjector");
+if (intProjectorType is null || !intProjectorType.IsReferenceType || !intProjectorType.IsDelegate)
+{
+    failures.Add("Binder should surface nominal delegate declarations as reference delegate types.");
+}
+else if (!intProjectorType.Methods.Any(method =>
+             method.Name == "Invoke" &&
+             !method.IsStatic &&
+             method.Parameters.Count == 1 &&
+             method.Parameters[0].Type == TypeSymbol.Integer &&
+             method.ReturnType == TypeSymbol.Integer &&
+             method.HostImportKind == HostImportKind.DelegateInvoke) ||
+         !intProjectorType.Methods.Any(method =>
+             method.Name == ".ctor" &&
+             method.IsConstructor &&
+             method.Parameters.Count == 2 &&
+             method.Parameters[0].Type == TypeSymbol.Object &&
+             method.Parameters[1].Type == TypeSymbol.Integer &&
+             method.HostImportKind == HostImportKind.DelegateBind) ||
+         !intProjectorType.Fields.Any(field => field.Name == "TargetObjectValue" && field.Type == TypeSymbol.Object) ||
+         !intProjectorType.Fields.Any(field => field.Name == "TargetFunctionIdValue" && field.Type == TypeSymbol.Integer))
+{
+    failures.Add("Binder should synthesize the expected delegate storage and Invoke/constructor surface for delegate declarations.");
 }
 
 var mathType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Math");
@@ -385,6 +413,24 @@ else if (!httpClientType.Methods.Any(method => method.Name == "GetString" && !me
          !httpClientType.Methods.Any(method => method.Name == "GetStringCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.HttpGetString))
 {
     failures.Add("Binder should expose the expected System.Net.HttpClient surface.");
+}
+
+var websocketClientType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "WebSocketClient");
+if (websocketClientType is null || !websocketClientType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Net.WebSocketClient as a reference type.");
+}
+else if (!websocketClientType.Properties.Any(property => property.Name == "IsConnected" && property.Type == TypeSymbol.Boolean) ||
+         !websocketClientType.Methods.Any(method => method.Name == "Connect" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Boolean) ||
+         !websocketClientType.Methods.Any(method => method.Name == "ReceiveText" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.String) ||
+         !websocketClientType.Methods.Any(method => method.Name == "SendText" && !method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.String && method.ReturnType == TypeSymbol.Void) ||
+         !websocketClientType.Methods.Any(method => method.Name == "Close" && !method.IsStatic && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) ||
+         !websocketClientType.Methods.Any(method => method.Name == "ConnectCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.WebSocketConnect) ||
+         !websocketClientType.Methods.Any(method => method.Name == "ReceiveTextCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.WebSocketReceiveText) ||
+         !websocketClientType.Methods.Any(method => method.Name == "SendTextCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.WebSocketSendText) ||
+         !websocketClientType.Methods.Any(method => method.Name == "CloseCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.WebSocketClose))
+{
+    failures.Add("Binder should expose the expected System.Net.WebSocketClient surface.");
 }
 
 var threadType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Thread");
@@ -756,9 +802,11 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 13)
+else if (programType.Methods.Count != 14)
 {
-    failures.Add("Binder should surface declared methods and synthesized property accessors for classes.");
+    failures.Add(
+        "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +
+        string.Join(", ", programType.Methods.Select(method => method.Name)));
 }
 else
 {
@@ -3130,6 +3178,132 @@ var invalidExternHostBinding = new Binder().Bind(invalidExternHostTree);
 if (!invalidExternHostBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2183"))
 {
     failures.Add("Binder should reject unsupported extern host imports.");
+}
+
+var delegateMethodGroupTree = SyntaxTree.Parse("""
+public delegate function IntProjector(value: Integer): Integer;
+
+public class DelegateHost
+begin
+  public static function DoubleValue(value: Integer): Integer;
+  begin
+    return value * 2;
+  end;
+
+  public static function Apply(projector: IntProjector; value: Integer): Integer;
+  begin
+    return value;
+  end;
+
+  public static function Test(): Integer;
+  begin
+    var projector: IntProjector := DoubleValue;
+    projector := DoubleValue;
+    var projected := projector(5);
+    return Apply(DoubleValue, projected);
+  end;
+end;
+""");
+
+if (delegateMethodGroupTree.Root.Members[0] is not DelegateDeclarationSyntax parsedDelegate ||
+    parsedDelegate.Identifier.Text != "IntProjector" ||
+    parsedDelegate.SignatureKeyword.Kind != SyntaxKind.FunctionKeyword ||
+    parsedDelegate.Parameters.Count != 1 ||
+    parsedDelegate.ReturnType?.ToDisplayString() != "Integer")
+{
+    failures.Add("Parser should capture nominal delegate declarations.");
+}
+
+var delegateMethodGroupBinding = new Binder().Bind(delegateMethodGroupTree);
+if (delegateMethodGroupBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept method-group conversion and direct delegate invocation for delegate-typed locals, assignments, and arguments. Diagnostics: " +
+        string.Join(
+            " | ",
+            delegateMethodGroupBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+
+var lambdaTree = SyntaxTree.Parse("""
+public delegate function IntProjector(value: Integer): Integer;
+
+public class LambdaHost
+begin
+  public static function Apply(projector: IntProjector; value: Integer): Integer;
+  begin
+    return projector(value);
+  end;
+
+  public static function Test(): Integer;
+  begin
+    var projector: IntProjector := function(value: Integer): Integer => value * 2;
+    return Apply(function(value: Integer): Integer => value + 1, projector(5));
+  end;
+end;
+""");
+
+if (lambdaTree.Root.Members[1] is not ClassDeclarationSyntax lambdaClass ||
+    lambdaClass.Members.OfType<MethodDeclarationSyntax>()
+        .FirstOrDefault(method => method.Identifier.Text == "Test")?
+        .Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>()
+        .FirstOrDefault()?
+        .Declarators[0].Initializer is not LambdaExpressionSyntax parsedLambda ||
+    parsedLambda.SignatureKeyword.Kind != SyntaxKind.FunctionKeyword ||
+    parsedLambda.Parameters.Count != 1 ||
+    parsedLambda.ReturnType?.ToDisplayString() != "Integer")
+{
+    failures.Add("Parser should capture expression-bodied lambda expressions.");
+}
+
+var lambdaBinding = new Binder().Bind(lambdaTree);
+if (lambdaBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept target-typed non-capturing lambda expressions for delegate locals and arguments. Diagnostics: " +
+        string.Join(
+            " | ",
+            lambdaBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (!lambdaBinding.Compilation.Methods.Any(method =>
+             method.LambdaSource is not null &&
+             method.IsStatic &&
+             method.DeclaringTypeName == "LambdaHost" &&
+             method.ReturnType == TypeSymbol.Integer &&
+             method.Parameters.Count == 1 &&
+             method.Parameters[0].Type == TypeSymbol.Integer))
+{
+    failures.Add("Binder should synthesize static helper methods for non-capturing lambda expressions.");
+}
+
+var capturingLambdaTree = SyntaxTree.Parse("""
+public delegate function IntProjector(value: Integer): Integer;
+
+public class LambdaCaptureHost
+begin
+  public static function Test(): Integer;
+  begin
+    var factor := 3;
+    var projector: IntProjector := function(value: Integer): Integer => value * factor;
+    return projector(5);
+  end;
+end;
+""");
+
+var capturingLambdaBinding = new Binder().Bind(capturingLambdaTree);
+if (capturingLambdaBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept capturing lambda expressions over outer locals. Diagnostics: " +
+        string.Join(
+            " | ",
+            capturingLambdaBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (!capturingLambdaBinding.Compilation.Types.OfType<NamedTypeSymbol>().Any(type =>
+             type.Name.StartsWith("__LambdaClosure_", StringComparison.Ordinal) &&
+             type.Fields.Any(field => field.Name == "factor" && field.Type == TypeSymbol.Integer) &&
+             type.Methods.Any(method => method.LambdaSource is not null && !method.IsStatic)))
+{
+    failures.Add("Binder should synthesize closure types with capture fields for capturing lambdas.");
 }
 
 var dllImportTree = SyntaxTree.Parse("""

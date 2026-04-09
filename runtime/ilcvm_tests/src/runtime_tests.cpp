@@ -28,6 +28,11 @@ public:
     mutable std::int32_t tcp_last_connection_id = 0;
     mutable std::string http_last_url;
     mutable std::string http_response_text = "hello:ilc";
+    mutable std::string websocket_last_url;
+    mutable std::string websocket_last_written_text;
+    mutable std::string websocket_receive_text_value = "echo:ping";
+    mutable bool websocket_closed = false;
+    mutable std::int32_t websocket_last_connection_id = 0;
     mutable std::int32_t current_thread_id = 17;
     mutable std::int32_t sleep_last_milliseconds = 0;
     mutable std::int32_t mutex_last_id = 0;
@@ -201,6 +206,35 @@ public:
     {
         http_last_url.assign(url);
         return http_response_text;
+    }
+
+    [[nodiscard]] std::int32_t websocket_connect(std::string_view url) const override
+    {
+        websocket_last_url.assign(url);
+        websocket_closed = false;
+        websocket_last_connection_id = 52;
+        return websocket_last_connection_id;
+    }
+
+    [[nodiscard]] std::string websocket_receive_text(std::int32_t connection_id) const override
+    {
+        return connection_id == websocket_last_connection_id ? websocket_receive_text_value : std::string();
+    }
+
+    void websocket_send_text(std::int32_t connection_id, std::string_view text) const override
+    {
+        if (connection_id == websocket_last_connection_id)
+        {
+            websocket_last_written_text.assign(text);
+        }
+    }
+
+    void websocket_close(std::int32_t connection_id) const override
+    {
+        if (connection_id == websocket_last_connection_id)
+        {
+            websocket_closed = true;
+        }
     }
 
     void thread_sleep(std::int32_t milliseconds) const override
@@ -2241,6 +2275,90 @@ int main()
     if (host_services.http_last_url != "http://127.0.0.1:8080/demo?name=ilc")
     {
         std::cerr << "FAIL: host http get url mismatch: '" << host_services.http_last_url << "'\n";
+        return EXIT_FAILURE;
+    }
+
+    host_services.websocket_last_url.clear();
+    host_services.websocket_last_written_text.clear();
+    host_services.websocket_closed = false;
+    ilcvm::Module host_websocket_module {
+        .strings = { "ws://127.0.0.1:9090/echo", "ping" },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "main",
+                .register_count = 6,
+                .argument_count = 0,
+                .returns_value = true,
+                .instructions = {
+                    { ilcvm::OpCode::ld_str, 1, 0, 0, 0 },
+                    { ilcvm::OpCode::call, 2, 1, 1, 2 },
+                    { ilcvm::OpCode::ld_str, 3, 0, 0, 1 },
+                    { ilcvm::OpCode::call, 0, 2, 2, 3 },
+                    { ilcvm::OpCode::call, 4, 2, 1, 4 },
+                    { ilcvm::OpCode::call, 0, 2, 1, 5 },
+                    { ilcvm::OpCode::ld_len, 0, 4, 0, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .name = "Connect",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::websocket_connect
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .name = "SendText",
+                .register_count = 3,
+                .argument_count = 2,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::websocket_send_text
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .name = "ReceiveText",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .host_import_kind = ilcvm::HostImportKind::websocket_receive_text
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .name = "Close",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = false,
+                .host_import_kind = ilcvm::HostImportKind::websocket_close
+            }
+        },
+        .entry_function_id = 1
+    };
+
+    const auto host_websocket_result = vm.execute(host_websocket_module);
+    if (host_websocket_result != static_cast<std::int32_t>(host_services.websocket_receive_text_value.size()))
+    {
+        std::cerr << "FAIL: vm returned " << host_websocket_result << " for host websocket module\n";
+        return EXIT_FAILURE;
+    }
+
+    if (host_services.websocket_last_url != "ws://127.0.0.1:9090/echo")
+    {
+        std::cerr << "FAIL: host websocket connect url mismatch: '" << host_services.websocket_last_url << "'\n";
+        return EXIT_FAILURE;
+    }
+
+    if (host_services.websocket_last_written_text != "ping")
+    {
+        std::cerr << "FAIL: host websocket send text mismatch: '" << host_services.websocket_last_written_text << "'\n";
+        return EXIT_FAILURE;
+    }
+
+    if (!host_services.websocket_closed)
+    {
+        std::cerr << "FAIL: host websocket close should be called\n";
         return EXIT_FAILURE;
     }
 

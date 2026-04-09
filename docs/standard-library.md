@@ -71,6 +71,7 @@ Current shipped types:
 - `System.Net.Uri`
 - `System.Net.TcpClient`
 - `System.Net.HttpClient`
+- `System.Net.WebSocketClient`
 - `System.Threading.Thread`
 - `System.Threading.Task`
 - `System.Threading.Mutex`
@@ -345,18 +346,29 @@ Current shipped networking surface:
   - `Close(): void`
 - `HttpClient`
   - `GetString(url: String): String`
+- `WebSocketClient`
+  - `IsConnected: Boolean`
+  - `Connect(url: String): Boolean`
+  - `ReceiveText(): String`
+  - `SendText(text: String): void`
+  - `Close(): void`
 
 The current `System.Net` slice now combines:
 
 - URI parsing and normalization
 - a minimal line-oriented TCP client backed by host imports
 - a minimal synchronous HTTP text client for deterministic GET showcases
+- a minimal synchronous `ws://` WebSocket client for local echo demos
 
 `TcpClient` is intentionally small and synchronous. It exists as a pragmatic
 transport showcase and bootstrap building block for later socket and HTTP work.
 
 `HttpClient` is intentionally narrow in v1. It currently focuses on
 `GetString(...)` for local demos and bootstrap scenarios.
+
+`WebSocketClient` is intentionally synchronous and text-only in v1. It exists
+as a pragmatic showcase step between plain transport primitives and later
+higher-level streaming/async APIs.
 
 ### 6.2 `System.Threading`
 

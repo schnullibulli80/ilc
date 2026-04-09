@@ -227,6 +227,9 @@ public static class ReachableCompilationBuilder
 
                         break;
                     }
+                    case IrOpCode.LoadConstant when instruction.Operand is MethodSymbol methodOperand:
+                        AddMethod(methodOperand);
+                        break;
                     case IrOpCode.LoadField:
                     case IrOpCode.LoadStaticField:
                     case IrOpCode.StoreField:
@@ -1687,6 +1690,16 @@ public sealed class BytecodeEmitter
                                 0,
                                 stringId,
                                 InstructionImmediateKind.StringTableIndex));
+                        }
+                        else if (instruction.Operand is MethodSymbol methodOperand)
+                        {
+                            instructions.Add(new Instruction(
+                                OpCode.LdI32,
+                                instruction.Destination?.Index ?? 0,
+                                0,
+                                0,
+                                unchecked((int)ResolveFunctionId(methodOperand)),
+                                InstructionImmediateKind.InlineInt32));
                         }
                         else
                         {

@@ -1965,6 +1965,16 @@ public sealed class Lowerer
             return;
         }
 
+        if (TryLowerDelegateMethodGroupInto(expression, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+        {
+            return;
+        }
+
+        if (TryLowerDelegateLambdaInto(expression, destination, registerByName, registers, instructions, currentMethod))
+        {
+            return;
+        }
+
         switch (expression)
         {
             case LiteralExpressionSyntax literal:
@@ -2250,6 +2260,183 @@ public sealed class Lowerer
                 throw new InvalidOperationException(
                     $"Cannot lower expression kind '{expression.Kind}' display='{GetExpressionDisplayName(expression)}' currentMethod='{(currentMethod?.DeclaringTypeName is null ? currentMethod?.Name : $"{currentMethod.DeclaringTypeName}.{currentMethod.Name}")}'.");
         }
+    }
+
+    private bool TryLowerDelegateMethodGroupInto(
+        ExpressionSyntax expression,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (_knownTypes.FirstOrDefault(type => type.Name == destination.Type.Name) is not NamedTypeSymbol { IsDelegate: true } delegateType)
+        {
+            return false;
+        }
+
+        MethodSymbol? targetMethod = null;
+        IrValue? targetObject = null;
+
+        switch (expression)
+        {
+            case NameExpressionSyntax name:
+            {
+                var resolution = SemanticFacts.ResolveName(
+                    name.Name,
+                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                    _knownTypes,
+                    _knownMethods,
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod);
+                if (resolution.Kind != NameResolutionKind.MethodGroup || resolution.Method is null)
+                {
+                    return false;
+                }
+
+                targetMethod = resolution.Method;
+                break;
+            }
+            case MemberAccessExpressionSyntax memberAccess:
+            {
+                var memberResolution = SemanticFacts.ResolveMemberAccess(
+                    memberAccess,
+                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                    _knownMethods,
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod,
+                    _knownTypes);
+                if (memberResolution.Method is null)
+                {
+                    return false;
+                }
+
+                targetMethod = memberResolution.Method;
+                if (!targetMethod.IsStatic)
+                {
+                    targetObject = AllocateTemp(memberAccess.Receiver is NameExpressionSyntax receiverName && registerByName.TryGetValue(receiverName.Name.ToDisplayString(), out var knownReceiver)
+                        ? knownReceiver.Type
+                        : SemanticFacts.InferExpressionType(
+                            memberAccess.Receiver,
+                            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                            _knownMethods,
+                            _knownFields,
+                            _knownConstants,
+                            _knownProperties,
+                            currentMethod,
+                            _knownTypes),
+                        registers);
+                    LowerExpressionInto(memberAccess.Receiver, targetObject, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                }
+                break;
+            }
+            default:
+                return false;
+        }
+
+        var constructor = delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2);
+        if (targetMethod is null || constructor is null)
+        {
+            return false;
+        }
+
+        instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, delegateType.Name));
+
+        var boundTargetObject = targetObject ?? AllocateTemp(TypeSymbol.Object, registers);
+        if (targetObject is null)
+        {
+            instructions.Add(new IrInstruction(IrOpCode.LoadConstant, boundTargetObject, 0));
+        }
+
+        var methodIdRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, methodIdRegister, targetMethod));
+
+        instructions.Add(new IrInstruction(
+            IrOpCode.CallVirtual,
+            destination,
+            new IrCallTarget(
+                constructor,
+                $"{delegateType.Name}.{constructor.Name}",
+                [boundTargetObject, methodIdRegister],
+                destination,
+                true)));
+
+        return true;
+    }
+
+    private bool TryLowerDelegateLambdaInto(
+        ExpressionSyntax expression,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (expression is not LambdaExpressionSyntax lambda)
+        {
+            return false;
+        }
+
+        if (_knownTypes.FirstOrDefault(type => type.Name == destination.Type.Name) is not NamedTypeSymbol { IsDelegate: true } delegateType)
+        {
+            return false;
+        }
+
+        var targetMethod = _knownMethods.FirstOrDefault(method => ReferenceEquals(method.LambdaSource, lambda));
+        var constructor = delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2);
+        if (targetMethod is null || constructor is null)
+        {
+            return false;
+        }
+
+        instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, delegateType.Name));
+
+        IrValue targetObjectRegister;
+        if (!targetMethod.IsStatic &&
+            _knownTypes.FirstOrDefault(type => type.Name == targetMethod.DeclaringTypeName) is NamedTypeSymbol closureType &&
+            closureType.Fields.Count > 0)
+        {
+            targetObjectRegister = AllocateTemp(closureType, registers);
+            instructions.Add(new IrInstruction(IrOpCode.NewObject, targetObjectRegister, closureType.Name));
+            foreach (var captureField in closureType.Fields.Where(field => !field.IsStatic))
+            {
+                if (!registerByName.TryGetValue(captureField.Name, out var capturedRegister))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot lower captured lambda field '{captureField.Name}' for lambda in '{currentMethod?.DeclaringTypeName}.{currentMethod?.Name}'.");
+                }
+
+                instructions.Add(new IrInstruction(
+                    IrOpCode.StoreField,
+                    capturedRegister,
+                    new IrFieldTarget(captureField, $"{closureType.Name}.{captureField.Name}", targetObjectRegister)));
+            }
+        }
+        else
+        {
+            targetObjectRegister = AllocateTemp(TypeSymbol.Object, registers);
+            instructions.Add(new IrInstruction(IrOpCode.LoadConstant, targetObjectRegister, 0));
+        }
+
+        var methodIdRegister = AllocateTemp(TypeSymbol.Integer, registers);
+        instructions.Add(new IrInstruction(IrOpCode.LoadConstant, methodIdRegister, targetMethod));
+
+        instructions.Add(new IrInstruction(
+            IrOpCode.CallVirtual,
+            destination,
+            new IrCallTarget(
+                constructor,
+                $"{delegateType.Name}.{constructor.Name}",
+                [targetObjectRegister, methodIdRegister],
+                destination,
+                true)));
+
+        return true;
     }
 
     private PreparedCallFrame PrepareCallFrame(

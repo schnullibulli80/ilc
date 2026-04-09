@@ -11,6 +11,8 @@ tcp_port_file="$tmp_dir/runtime-tcp-port.txt"
 tcp_server_log="$tmp_dir/runtime-tcp-server.log"
 http_port_file="$tmp_dir/runtime-http-port.txt"
 http_server_log="$tmp_dir/runtime-http-server.log"
+ws_port_file="$tmp_dir/runtime-ws-port.txt"
+ws_server_log="$tmp_dir/runtime-ws-server.log"
 system_fixture="$repo_root/libs/shipped/system.ilc"
 diagnostics_fixture="$repo_root/libs/shipped/diagnostics.ilc"
 text_fixture="$repo_root/libs/shipped/text.ilc"
@@ -29,6 +31,7 @@ cp "$bootstrap_fixture" "$bootstrap_runtime_source"
 rm -f "$bootstrap_runtime_ilb"
 rm -f "$tcp_port_file"
 rm -f "$http_port_file"
+rm -f "$ws_port_file"
 
 logs=(
     "$tmp_dir/solution-build-local.log"
@@ -39,6 +42,7 @@ logs=(
     "$tmp_dir/runtime-run-local.log"
     "$tcp_server_log"
     "$http_server_log"
+    "$ws_server_log"
     "$tmp_dir/local-verification-status.log"
 )
 
@@ -75,6 +79,7 @@ trap on_error ERR
 
 tcp_server_pid=""
 http_server_pid=""
+ws_server_pid=""
 
 cleanup_background_services() {
     if [[ -n "$tcp_server_pid" ]] && kill -0 "$tcp_server_pid" 2>/dev/null; then
@@ -85,6 +90,11 @@ cleanup_background_services() {
     if [[ -n "$http_server_pid" ]] && kill -0 "$http_server_pid" 2>/dev/null; then
         kill "$http_server_pid" 2>/dev/null || true
         wait "$http_server_pid" 2>/dev/null || true
+    fi
+
+    if [[ -n "$ws_server_pid" ]] && kill -0 "$ws_server_pid" 2>/dev/null; then
+        kill "$ws_server_pid" 2>/dev/null || true
+        wait "$ws_server_pid" 2>/dev/null || true
     fi
 }
 
@@ -211,6 +221,31 @@ export ILC_HTTP_SMOKE_PORT
 ILC_HTTP_SMOKE_PORT="$(cat "$http_port_file")"
 log_status "==> OK:    $current_step"
 log_status "    log: $http_server_log"
+current_step=""
+
+current_step="Start WebSocket smoke server"
+log_status "==> START: $current_step"
+python3 "$repo_root/scripts/ws_echo_server.py" "$ws_port_file" >"$ws_server_log" 2>&1 &
+ws_server_pid=$!
+
+for _ in $(seq 1 50); do
+    if [[ -s "$ws_port_file" ]]; then
+        break
+    fi
+
+    sleep 0.1
+done
+
+if [[ ! -s "$ws_port_file" ]]; then
+    log_status "==> FAIL:  $current_step (server did not publish a port)"
+    log_status "    log: $ws_server_log"
+    exit 1
+fi
+
+export ILC_WS_SMOKE_PORT
+ILC_WS_SMOKE_PORT="$(cat "$ws_port_file")"
+log_status "==> OK:    $current_step"
+log_status "    log: $ws_server_log"
 current_step=""
 
 run_runtime_smoke_step \

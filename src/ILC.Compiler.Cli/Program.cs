@@ -488,6 +488,8 @@ static string BuildSymbolDump(
     {
         var kind = type.IsInterface
             ? "interface"
+            : type.IsDelegate
+                ? "delegate"
             : SemanticFacts.IsEnumType(type)
                 ? "enum"
                 : type.IsRecord
@@ -775,6 +777,7 @@ static string DescribeTopLevelMember(MemberSyntax member) =>
         ClassDeclarationSyntax classDeclaration => $"{(classDeclaration.ClassKeyword.Kind == SyntaxKind.RecordKeyword ? "record" : "class")} {classDeclaration.Identifier.Text}",
         InterfaceDeclarationSyntax interfaceDeclaration => $"interface {interfaceDeclaration.Identifier.Text}",
         EnumDeclarationSyntax enumDeclaration => $"enum {enumDeclaration.Identifier.Text}",
+        DelegateDeclarationSyntax delegateDeclaration => $"{(delegateDeclaration.SignatureKeyword.Kind == SyntaxKind.ProcedureKeyword ? "delegate procedure" : "delegate function")} {delegateDeclaration.Identifier.Text}",
         TopLevelVariableDeclarationSyntax variableDeclaration => $"global {string.Join(", ", variableDeclaration.Declarators.Select(declarator => declarator.Identifier.Text))}",
         TopLevelConstantDeclarationSyntax constantDeclaration => $"top-const {string.Join(", ", constantDeclaration.Declarators.Select(declarator => declarator.Identifier.Text))}",
         TopLevelExpressionStatementSyntax expressionStatement => $"expr {expressionStatement.Expression.Kind}",

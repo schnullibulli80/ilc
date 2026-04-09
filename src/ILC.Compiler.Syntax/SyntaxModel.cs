@@ -17,6 +17,7 @@ public enum SyntaxKind
     VarKeyword,
     ConstKeyword,
     EnumKeyword,
+    DelegateKeyword,
     ClassKeyword,
     RecordKeyword,
     InterfaceKeyword,
@@ -135,6 +136,7 @@ public enum SyntaxKind
     TopLevelVariableDeclaration,
     TopLevelConstantDeclaration,
     EnumDeclaration,
+    DelegateDeclaration,
     VariableDeclarator,
     ConstantDeclarator,
     EnumMember,
@@ -190,6 +192,7 @@ public enum SyntaxKind
     AsExpression,
     TypeTestExpression,
     CallExpression,
+    LambdaExpression,
     Argument,
     UnaryExpression,
     MatchExpression,
@@ -300,6 +303,19 @@ public sealed record EnumDeclarationSyntax(
     IReadOnlyList<EnumMemberSyntax> Members,
     SyntaxToken EndKeyword,
     SyntaxToken SemicolonToken) : MemberSyntax(SyntaxKind.EnumDeclaration);
+
+public sealed record DelegateDeclarationSyntax(
+    IReadOnlyList<SyntaxToken> Modifiers,
+    SyntaxToken DelegateKeyword,
+    SyntaxToken SignatureKeyword,
+    SyntaxToken Identifier,
+    TypeParameterListSyntax? TypeParameters,
+    SyntaxToken? OpenParenToken,
+    IReadOnlyList<ParameterSyntax> Parameters,
+    SyntaxToken? CloseParenToken,
+    SyntaxToken? ColonToken,
+    QualifiedNameSyntax? ReturnType,
+    SyntaxToken SemicolonToken) : MemberSyntax(SyntaxKind.DelegateDeclaration);
 
 public sealed record TopLevelExpressionStatementSyntax(
     ExpressionSyntax Expression,
@@ -678,6 +694,16 @@ public sealed record CallExpressionSyntax(
     IReadOnlyList<ArgumentSyntax> Arguments,
     SyntaxToken CloseParenToken) : ExpressionSyntax(SyntaxKind.CallExpression);
 
+public sealed record LambdaExpressionSyntax(
+    SyntaxToken SignatureKeyword,
+    SyntaxToken? OpenParenToken,
+    IReadOnlyList<ParameterSyntax> Parameters,
+    SyntaxToken? CloseParenToken,
+    SyntaxToken? ColonToken,
+    QualifiedNameSyntax? ReturnType,
+    SyntaxToken ArrowToken,
+    ExpressionSyntax Body) : ExpressionSyntax(SyntaxKind.LambdaExpression);
+
 public sealed record MatchExpressionSyntax(
     SyntaxToken MatchKeyword,
     ExpressionSyntax Expression,
@@ -978,6 +1004,7 @@ internal sealed class Lexer
             "var" => SyntaxKind.VarKeyword,
             "const" => SyntaxKind.ConstKeyword,
             "enum" => SyntaxKind.EnumKeyword,
+            "delegate" => SyntaxKind.DelegateKeyword,
             "class" => SyntaxKind.ClassKeyword,
             "record" => SyntaxKind.RecordKeyword,
             "interface" => SyntaxKind.InterfaceKeyword,
@@ -1141,6 +1168,7 @@ internal sealed class Parser
             SyntaxKind.VarKeyword => ParseTopLevelVariableDeclaration(modifiers),
             SyntaxKind.ConstKeyword => ParseTopLevelConstantDeclaration(modifiers),
             SyntaxKind.EnumKeyword => ParseEnumDeclaration(modifiers),
+            SyntaxKind.DelegateKeyword => ParseDelegateDeclaration(modifiers),
             SyntaxKind.ClassKeyword or SyntaxKind.RecordKeyword => ParseClassDeclaration(modifiers),
             SyntaxKind.InterfaceKeyword => ParseInterfaceDeclaration(modifiers),
             _ => ParseTopLevelExpressionStatement()
@@ -1327,6 +1355,60 @@ internal sealed class Parser
         var endKeyword = Match(SyntaxKind.EndKeyword);
         var semicolon = Match(SyntaxKind.SemicolonToken);
         return new EnumDeclarationSyntax(modifiers, enumKeyword, identifier, beginKeyword, members, endKeyword, semicolon);
+    }
+
+    private DelegateDeclarationSyntax ParseDelegateDeclaration(IReadOnlyList<SyntaxToken> modifiers)
+    {
+        var delegateKeyword = Match(SyntaxKind.DelegateKeyword);
+        var signatureKeyword = Current.Kind switch
+        {
+            SyntaxKind.FunctionKeyword => Match(SyntaxKind.FunctionKeyword),
+            SyntaxKind.ProcedureKeyword => Match(SyntaxKind.ProcedureKeyword),
+            _ => Match(SyntaxKind.FunctionKeyword)
+        };
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var typeParameters = ParseOptionalTypeParameterList();
+
+        SyntaxToken? openParen = null;
+        var parameters = new List<ParameterSyntax>();
+        SyntaxToken? closeParen = null;
+        if (Current.Kind == SyntaxKind.OpenParenToken)
+        {
+            openParen = NextToken();
+            if (Current.Kind != SyntaxKind.CloseParenToken)
+            {
+                parameters.Add(ParseParameter());
+                while (Current.Kind is SyntaxKind.CommaToken or SyntaxKind.SemicolonToken)
+                {
+                    NextToken();
+                    parameters.Add(ParseParameter());
+                }
+            }
+
+            closeParen = Match(SyntaxKind.CloseParenToken);
+        }
+
+        SyntaxToken? colonToken = null;
+        QualifiedNameSyntax? returnType = null;
+        if (signatureKeyword.Kind == SyntaxKind.FunctionKeyword && Current.Kind == SyntaxKind.ColonToken)
+        {
+            colonToken = NextToken();
+            returnType = ParseTypeName();
+        }
+
+        var semicolon = Match(SyntaxKind.SemicolonToken);
+        return new DelegateDeclarationSyntax(
+            modifiers,
+            delegateKeyword,
+            signatureKeyword,
+            identifier,
+            typeParameters,
+            openParen,
+            parameters,
+            closeParen,
+            colonToken,
+            returnType,
+            semicolon);
     }
 
     private TypeMemberSyntax ParseTypeMember()
@@ -2470,6 +2552,11 @@ internal sealed class Parser
             return ParseMatchExpression();
         }
 
+        if (Current.Kind is SyntaxKind.FunctionKeyword or SyntaxKind.ProcedureKeyword)
+        {
+            return ParseLambdaExpression();
+        }
+
         if (Current.Kind == SyntaxKind.OpenParenToken)
         {
             var openParen = NextToken();
@@ -2566,6 +2653,47 @@ internal sealed class Parser
 
         expression = new NameExpressionSyntax(name);
         return ParsePostfixExpression(expression);
+    }
+
+    private LambdaExpressionSyntax ParseLambdaExpression()
+    {
+        var signatureKeyword = Current.Kind switch
+        {
+            SyntaxKind.FunctionKeyword => Match(SyntaxKind.FunctionKeyword),
+            SyntaxKind.ProcedureKeyword => Match(SyntaxKind.ProcedureKeyword),
+            _ => Match(SyntaxKind.FunctionKeyword)
+        };
+
+        SyntaxToken? openParen = null;
+        var parameters = new List<ParameterSyntax>();
+        SyntaxToken? closeParen = null;
+        if (Current.Kind == SyntaxKind.OpenParenToken)
+        {
+            openParen = NextToken();
+            if (Current.Kind != SyntaxKind.CloseParenToken)
+            {
+                parameters.Add(ParseParameter());
+                while (Current.Kind is SyntaxKind.CommaToken or SyntaxKind.SemicolonToken)
+                {
+                    NextToken();
+                    parameters.Add(ParseParameter());
+                }
+            }
+
+            closeParen = Match(SyntaxKind.CloseParenToken);
+        }
+
+        SyntaxToken? colonToken = null;
+        QualifiedNameSyntax? returnType = null;
+        if (signatureKeyword.Kind == SyntaxKind.FunctionKeyword && Current.Kind == SyntaxKind.ColonToken)
+        {
+            colonToken = NextToken();
+            returnType = ParseTypeName();
+        }
+
+        var arrowToken = Match(SyntaxKind.ArrowToken);
+        var body = ParseExpression();
+        return new LambdaExpressionSyntax(signatureKeyword, openParen, parameters, closeParen, colonToken, returnType, arrowToken, body);
     }
 
     private MatchExpressionSyntax ParseMatchExpression()
@@ -3040,6 +3168,7 @@ public sealed class SyntaxTree
                         ClassDeclarationSyntax classDeclaration => classDeclaration.Identifier.Text,
                         InterfaceDeclarationSyntax interfaceDeclaration => interfaceDeclaration.Identifier.Text,
                         EnumDeclarationSyntax enumDeclaration => enumDeclaration.Identifier.Text,
+                        DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration.Identifier.Text,
                         _ => null
                     })
                     .Where(typeName => typeName is not null)
@@ -3110,6 +3239,14 @@ public sealed class SyntaxTree
                 Expression = NormalizeExpression(expressionStatement.Expression, aliases)!
             },
             EnumDeclarationSyntax enumDeclaration => enumDeclaration,
+            DelegateDeclarationSyntax delegateDeclaration => delegateDeclaration with
+            {
+                ReturnType = NormalizeQualifiedName(delegateDeclaration.ReturnType, aliases),
+                Parameters = delegateDeclaration.Parameters.Select(parameter => parameter with
+                {
+                    TypeName = NormalizeQualifiedName(parameter.TypeName, aliases)!
+                }).ToArray()
+            },
             ClassDeclarationSyntax classDeclaration => classDeclaration with
             {
                 BaseType = NormalizeQualifiedName(classDeclaration.BaseType, aliases),
@@ -3385,6 +3522,15 @@ public sealed class SyntaxTree
             {
                 Target = NormalizeExpression(call.Target, aliases)!,
                 Arguments = call.Arguments.Select(argument => NormalizeArgument(argument, aliases)).ToArray()
+            },
+            LambdaExpressionSyntax lambda => lambda with
+            {
+                Parameters = lambda.Parameters.Select(parameter => parameter with
+                {
+                    TypeName = NormalizeQualifiedName(parameter.TypeName, aliases)!
+                }).ToArray(),
+                ReturnType = NormalizeQualifiedName(lambda.ReturnType, aliases),
+                Body = NormalizeExpression(lambda.Body, aliases)!
             },
             UnaryExpressionSyntax unary => unary with
             {

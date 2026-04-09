@@ -2139,6 +2139,38 @@ std::int32_t VirtualMachine::execute(
                             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
                     }
                     return encode_string_handle(strings.size() - 1);
+                case HostImportKind::websocket_connect:
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return host_services_.websocket_connect(require_string(arguments[0]));
+                case HostImportKind::websocket_receive_text:
+                    strings.push_back(host_services_.websocket_receive_text(arguments[0]));
+                    if (profile != nullptr)
+                    {
+                        ++profile->strings_created;
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return encode_string_handle(strings.size() - 1);
+                case HostImportKind::websocket_send_text:
+                    host_services_.websocket_send_text(arguments[0], require_string(arguments[1]));
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                case HostImportKind::websocket_close:
+                    host_services_.websocket_close(arguments[0]);
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
                 case HostImportKind::thread_sleep:
                     host_services_.thread_sleep(arguments[0]);
                     if (profile != nullptr)
@@ -2295,6 +2327,86 @@ std::int32_t VirtualMachine::execute(
                             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
                     }
                     return is_alive ? 1 : 0;
+                }
+                case HostImportKind::delegate_bind:
+                {
+                    if (arguments[0] == 0)
+                    {
+                        throw std::runtime_error("delegate receiver must not be null");
+                    }
+                    if (!is_object_handle(arguments[0]))
+                    {
+                        throw std::runtime_error("delegate receiver must be an object");
+                    }
+
+                    auto& delegate_object = require_object(arguments[0]);
+                    if (delegate_object.fields.size() < 2)
+                    {
+                        throw std::runtime_error("delegate object layout is invalid");
+                    }
+
+                    delegate_object.fields[0] = arguments[1];
+                    delegate_object.fields[1] = arguments[2];
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return 0;
+                }
+                case HostImportKind::delegate_invoke:
+                {
+                    if (arguments[0] == 0)
+                    {
+                        throw std::runtime_error("delegate receiver must not be null");
+                    }
+                    if (!is_object_handle(arguments[0]))
+                    {
+                        throw std::runtime_error("delegate receiver must be an object");
+                    }
+
+                    const auto& delegate_object = require_object(arguments[0]);
+                    if (delegate_object.fields.size() < 2)
+                    {
+                        throw std::runtime_error("delegate object layout is invalid");
+                    }
+
+                    const auto target_handle = delegate_object.fields[0];
+                    const auto target_function_id = static_cast<std::uint32_t>(delegate_object.fields[1]);
+                    if (target_function_id >= function_lookup.size() || function_lookup[target_function_id] == nullptr)
+                    {
+                        throw std::runtime_error("delegate target does not reference a known function");
+                    }
+
+                    const auto& target_function = *function_lookup[target_function_id];
+                    std::vector<std::int32_t> invoke_arguments;
+                    invoke_arguments.reserve(argument_count + (target_function.is_static ? 0u : 1u));
+                    if (!target_function.is_static)
+                    {
+                        if (target_handle == 0)
+                        {
+                            throw std::runtime_error("instance delegate target must not be null");
+                        }
+
+                        invoke_arguments.push_back(target_handle);
+                    }
+
+                    for (std::size_t argument_index = 1; argument_index < argument_count; ++argument_index)
+                    {
+                        invoke_arguments.push_back(arguments[argument_index]);
+                    }
+
+                    const auto result = execute_function(
+                        target_function,
+                        invoke_arguments.data(),
+                        invoke_arguments.size(),
+                        call_depth + 1);
+                    if (profile != nullptr)
+                    {
+                        profile->host_import_execution_ns += static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - host_start).count());
+                    }
+                    return result;
                 }
                 case HostImportKind::mutex_create:
                     if (profile != nullptr)

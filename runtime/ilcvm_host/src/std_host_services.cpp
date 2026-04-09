@@ -1,6 +1,8 @@
 #include "ilcvm/std_host_services.h"
 
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
@@ -13,10 +15,205 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 
 namespace ilcvm
 {
+namespace
+{
+constexpr std::string_view websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+constexpr char base64_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64_encode(std::string_view input)
+{
+    std::string encoded;
+    encoded.reserve(((input.size() + 2) / 3) * 4);
+    std::size_t index = 0;
+    while (index + 3 <= input.size())
+    {
+        const auto chunk =
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(input[index])) << 16) |
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(input[index + 1])) << 8) |
+            static_cast<std::uint32_t>(static_cast<unsigned char>(input[index + 2]));
+        encoded.push_back(base64_alphabet[(chunk >> 18) & 0x3F]);
+        encoded.push_back(base64_alphabet[(chunk >> 12) & 0x3F]);
+        encoded.push_back(base64_alphabet[(chunk >> 6) & 0x3F]);
+        encoded.push_back(base64_alphabet[chunk & 0x3F]);
+        index += 3;
+    }
+
+    const auto remaining = input.size() - index;
+    if (remaining == 1)
+    {
+        const auto chunk = static_cast<std::uint32_t>(static_cast<unsigned char>(input[index])) << 16;
+        encoded.push_back(base64_alphabet[(chunk >> 18) & 0x3F]);
+        encoded.push_back(base64_alphabet[(chunk >> 12) & 0x3F]);
+        encoded.push_back('=');
+        encoded.push_back('=');
+    }
+    else if (remaining == 2)
+    {
+        const auto chunk =
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(input[index])) << 16) |
+            (static_cast<std::uint32_t>(static_cast<unsigned char>(input[index + 1])) << 8);
+        encoded.push_back(base64_alphabet[(chunk >> 18) & 0x3F]);
+        encoded.push_back(base64_alphabet[(chunk >> 12) & 0x3F]);
+        encoded.push_back(base64_alphabet[(chunk >> 6) & 0x3F]);
+        encoded.push_back('=');
+    }
+
+    return encoded;
+}
+
+std::array<std::uint8_t, 20> sha1_digest(std::string_view input)
+{
+    std::vector<std::uint8_t> bytes(input.begin(), input.end());
+    const auto bit_length = static_cast<std::uint64_t>(bytes.size()) * 8u;
+    bytes.push_back(0x80);
+    while ((bytes.size() % 64) != 56)
+    {
+        bytes.push_back(0);
+    }
+
+    for (int shift = 56; shift >= 0; shift -= 8)
+    {
+        bytes.push_back(static_cast<std::uint8_t>((bit_length >> shift) & 0xFF));
+    }
+
+    auto rotl = [](std::uint32_t value, int shift)
+    {
+        return static_cast<std::uint32_t>((value << shift) | (value >> (32 - shift)));
+    };
+
+    std::uint32_t h0 = 0x67452301;
+    std::uint32_t h1 = 0xEFCDAB89;
+    std::uint32_t h2 = 0x98BADCFE;
+    std::uint32_t h3 = 0x10325476;
+    std::uint32_t h4 = 0xC3D2E1F0;
+
+    for (std::size_t chunk_start = 0; chunk_start < bytes.size(); chunk_start += 64)
+    {
+        std::uint32_t words[80] {};
+        for (std::size_t index = 0; index < 16; ++index)
+        {
+            const auto offset = chunk_start + (index * 4);
+            words[index] =
+                (static_cast<std::uint32_t>(bytes[offset]) << 24) |
+                (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
+                (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
+                static_cast<std::uint32_t>(bytes[offset + 3]);
+        }
+
+        for (std::size_t index = 16; index < 80; ++index)
+        {
+            words[index] = rotl(words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16], 1);
+        }
+
+        auto a = h0;
+        auto b = h1;
+        auto c = h2;
+        auto d = h3;
+        auto e = h4;
+
+        for (std::size_t index = 0; index < 80; ++index)
+        {
+            std::uint32_t f = 0;
+            std::uint32_t k = 0;
+            if (index < 20)
+            {
+                f = (b & c) | ((~b) & d);
+                k = 0x5A827999;
+            }
+            else if (index < 40)
+            {
+                f = b ^ c ^ d;
+                k = 0x6ED9EBA1;
+            }
+            else if (index < 60)
+            {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8F1BBCDC;
+            }
+            else
+            {
+                f = b ^ c ^ d;
+                k = 0xCA62C1D6;
+            }
+
+            const auto temp = rotl(a, 5) + f + e + k + words[index];
+            e = d;
+            d = c;
+            c = rotl(b, 30);
+            b = a;
+            a = temp;
+        }
+
+        h0 += a;
+        h1 += b;
+        h2 += c;
+        h3 += d;
+        h4 += e;
+    }
+
+    std::array<std::uint8_t, 20> digest {};
+    const std::uint32_t values[5] { h0, h1, h2, h3, h4 };
+    for (std::size_t index = 0; index < 5; ++index)
+    {
+        digest[index * 4] = static_cast<std::uint8_t>((values[index] >> 24) & 0xFF);
+        digest[(index * 4) + 1] = static_cast<std::uint8_t>((values[index] >> 16) & 0xFF);
+        digest[(index * 4) + 2] = static_cast<std::uint8_t>((values[index] >> 8) & 0xFF);
+        digest[(index * 4) + 3] = static_cast<std::uint8_t>(values[index] & 0xFF);
+    }
+
+    return digest;
+}
+
+bool send_all(int socket_fd, const std::vector<std::uint8_t>& bytes)
+{
+    const auto* cursor = reinterpret_cast<const char*>(bytes.data());
+    std::size_t remaining = bytes.size();
+    while (remaining > 0)
+    {
+        const auto written = send(socket_fd, cursor, remaining, 0);
+        if (written <= 0)
+        {
+            return false;
+        }
+
+        cursor += written;
+        remaining -= static_cast<std::size_t>(written);
+    }
+
+    return true;
+}
+
+bool recv_all(int socket_fd, void* buffer, std::size_t size)
+{
+    auto* cursor = static_cast<char*>(buffer);
+    std::size_t remaining = size;
+    while (remaining > 0)
+    {
+        const auto read_count = recv(socket_fd, cursor, remaining, 0);
+        if (read_count <= 0)
+        {
+            return false;
+        }
+
+        cursor += read_count;
+        remaining -= static_cast<std::size_t>(read_count);
+    }
+
+    return true;
+}
+
+std::string make_websocket_accept_key(std::string_view key)
+{
+    const auto digest = sha1_digest(std::string(key) + std::string(websocket_guid));
+    return base64_encode(std::string_view(reinterpret_cast<const char*>(digest.data()), digest.size()));
+}
+} // namespace
+
 StandardHostServices::StandardHostServices(std::vector<std::string> command_line_args)
     : command_line_args_(std::move(command_line_args))
 {
@@ -25,6 +222,12 @@ StandardHostServices::StandardHostServices(std::vector<std::string> command_line
 StandardHostServices::~StandardHostServices()
 {
     for (const auto& [connection_id, socket_fd] : tcp_connections_)
+    {
+        (void)connection_id;
+        close(socket_fd);
+    }
+
+    for (const auto& [connection_id, socket_fd] : websocket_connections_)
     {
         (void)connection_id;
         close(socket_fd);
@@ -443,6 +646,251 @@ std::string StandardHostServices::http_get_string(std::string_view url) const
     }
 
     return response.substr(header_separator + 4);
+}
+
+std::int32_t StandardHostServices::websocket_connect(std::string_view url) const
+{
+    constexpr std::string_view websocket_prefix = "ws://";
+    if (!url.starts_with(websocket_prefix))
+    {
+        return 0;
+    }
+
+    auto remaining = std::string(url.substr(websocket_prefix.size()));
+    std::string host;
+    std::int32_t port = 80;
+    std::string path = "/";
+
+    const auto path_separator = remaining.find('/');
+    auto authority = path_separator == std::string::npos ? remaining : remaining.substr(0, path_separator);
+    if (path_separator != std::string::npos)
+    {
+        path = remaining.substr(path_separator);
+    }
+
+    const auto port_separator = authority.find(':');
+    if (port_separator == std::string::npos)
+    {
+        host = authority;
+    }
+    else
+    {
+        host = authority.substr(0, port_separator);
+        const auto port_text = authority.substr(port_separator + 1);
+        if (port_text.empty())
+        {
+            return 0;
+        }
+
+        port = std::atoi(port_text.c_str());
+        if (port <= 0)
+        {
+            return 0;
+        }
+    }
+
+    if (host.empty())
+    {
+        return 0;
+    }
+
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo* results = nullptr;
+    const auto port_text = std::to_string(port);
+    if (getaddrinfo(host.c_str(), port_text.c_str(), &hints, &results) != 0)
+    {
+        return 0;
+    }
+
+    int socket_fd = -1;
+    for (auto* current = results; current != nullptr; current = current->ai_next)
+    {
+        const auto candidate = socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+        if (candidate < 0)
+        {
+            continue;
+        }
+
+        if (connect(candidate, current->ai_addr, current->ai_addrlen) == 0)
+        {
+            socket_fd = candidate;
+            break;
+        }
+
+        close(candidate);
+    }
+
+    freeaddrinfo(results);
+
+    if (socket_fd < 0)
+    {
+        return 0;
+    }
+
+    const std::string key = "aWxjLXdpcmUtZGVidWc=";
+    auto request = std::string("GET ") + path + " HTTP/1.1\r\n"
+        + "Host: " + host + ":" + std::to_string(port) + "\r\n"
+        + "Upgrade: websocket\r\n"
+        + "Connection: Upgrade\r\n"
+        + "Sec-WebSocket-Version: 13\r\n"
+        + "Sec-WebSocket-Key: " + key + "\r\n\r\n";
+
+    if (!send_all(socket_fd, std::vector<std::uint8_t>(request.begin(), request.end())))
+    {
+        close(socket_fd);
+        return 0;
+    }
+
+    std::string response;
+    char buffer[256] {};
+    while (response.find("\r\n\r\n") == std::string::npos)
+    {
+        const auto read_count = recv(socket_fd, buffer, sizeof(buffer), 0);
+        if (read_count <= 0)
+        {
+            close(socket_fd);
+            return 0;
+        }
+
+        response.append(buffer, static_cast<std::size_t>(read_count));
+        if (response.size() > 8192)
+        {
+            close(socket_fd);
+            return 0;
+        }
+    }
+
+    if (response.find(" 101 ") == std::string::npos &&
+        response.find(" 101\r") == std::string::npos)
+    {
+        close(socket_fd);
+        return 0;
+    }
+
+    const auto expected_accept = make_websocket_accept_key(key);
+    if (response.find(std::string("Sec-WebSocket-Accept: ") + expected_accept) == std::string::npos)
+    {
+        close(socket_fd);
+        return 0;
+    }
+
+    const auto connection_id = next_websocket_connection_id_++;
+    websocket_connections_[connection_id] = socket_fd;
+    return connection_id;
+}
+
+std::string StandardHostServices::websocket_receive_text(std::int32_t connection_id) const
+{
+    const auto connection_it = websocket_connections_.find(connection_id);
+    if (connection_it == websocket_connections_.end())
+    {
+        return std::string();
+    }
+
+    std::uint8_t header[2] {};
+    if (!recv_all(connection_it->second, header, sizeof(header)))
+    {
+        return std::string();
+    }
+
+    const auto opcode = static_cast<std::uint8_t>(header[0] & 0x0F);
+    if (opcode == 0x8)
+    {
+        return std::string();
+    }
+
+    if (opcode != 0x1)
+    {
+        return std::string();
+    }
+
+    auto payload_length = static_cast<std::uint64_t>(header[1] & 0x7F);
+    const auto masked = (header[1] & 0x80) != 0;
+    if (payload_length == 126)
+    {
+        std::uint8_t extended[2] {};
+        if (!recv_all(connection_it->second, extended, sizeof(extended)))
+        {
+            return std::string();
+        }
+
+        payload_length = (static_cast<std::uint64_t>(extended[0]) << 8) |
+            static_cast<std::uint64_t>(extended[1]);
+    }
+    else if (payload_length == 127)
+    {
+        return std::string();
+    }
+
+    std::uint8_t mask[4] {};
+    if (masked && !recv_all(connection_it->second, mask, sizeof(mask)))
+    {
+        return std::string();
+    }
+
+    std::string payload(payload_length, '\0');
+    if (payload_length > 0 && !recv_all(connection_it->second, payload.data(), static_cast<std::size_t>(payload_length)))
+    {
+        return std::string();
+    }
+
+    if (masked)
+    {
+        for (std::size_t index = 0; index < payload.size(); ++index)
+        {
+            payload[index] = static_cast<char>(static_cast<std::uint8_t>(payload[index]) ^ mask[index % 4]);
+        }
+    }
+
+    return payload;
+}
+
+void StandardHostServices::websocket_send_text(std::int32_t connection_id, std::string_view text) const
+{
+    const auto connection_it = websocket_connections_.find(connection_id);
+    if (connection_it == websocket_connections_.end())
+    {
+        return;
+    }
+
+    std::vector<std::uint8_t> frame;
+    frame.push_back(0x81);
+    if (text.size() < 126)
+    {
+        frame.push_back(static_cast<std::uint8_t>(0x80 | text.size()));
+    }
+    else
+    {
+        frame.push_back(0x80 | 126);
+        frame.push_back(static_cast<std::uint8_t>((text.size() >> 8) & 0xFF));
+        frame.push_back(static_cast<std::uint8_t>(text.size() & 0xFF));
+    }
+
+    constexpr std::uint8_t mask[4] { 0x49, 0x4C, 0x43, 0x21 };
+    frame.insert(frame.end(), std::begin(mask), std::end(mask));
+    for (std::size_t index = 0; index < text.size(); ++index)
+    {
+        frame.push_back(static_cast<std::uint8_t>(static_cast<unsigned char>(text[index])) ^ mask[index % 4]);
+    }
+
+    (void)send_all(connection_it->second, frame);
+}
+
+void StandardHostServices::websocket_close(std::int32_t connection_id) const
+{
+    const auto connection_it = websocket_connections_.find(connection_id);
+    if (connection_it == websocket_connections_.end())
+    {
+        return;
+    }
+
+    const std::vector<std::uint8_t> close_frame { 0x88, 0x80, 0x49, 0x4C, 0x43, 0x21 };
+    (void)send_all(connection_it->second, close_frame);
+    close(connection_it->second);
+    websocket_connections_.erase(connection_it);
 }
 
 void StandardHostServices::thread_sleep(std::int32_t milliseconds) const
