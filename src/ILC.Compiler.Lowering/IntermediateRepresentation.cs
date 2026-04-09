@@ -154,6 +154,7 @@ public sealed class Lowerer
 
     public IrFunction Lower(MethodSymbol method)
     {
+        method = NormalizeMethodForLowering(method);
         var registers = new List<IrValue>();
         var registerByName = new Dictionary<string, IrValue>(StringComparer.Ordinal);
         var localTypes = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
@@ -232,6 +233,37 @@ public sealed class Lowerer
             exceptionHandlers,
             debugVariables.Select(variable => variable.ToSymbol(lastVmIp)).ToArray(),
             debugSourceMaps.ToArray());
+    }
+
+    private MethodSymbol NormalizeMethodForLowering(MethodSymbol method)
+    {
+        if (string.IsNullOrWhiteSpace(method.DeclaringTypeName))
+        {
+            return method;
+        }
+
+        if (SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, _knownTypes) is not NamedTypeSymbol declaringType)
+        {
+            return method;
+        }
+
+        static int CountOpenGenericMarkers(TypeSymbol type) =>
+            type.Name.Contains("<T", StringComparison.Ordinal) ||
+            type.Name.Contains(", T", StringComparison.Ordinal) ||
+            type.Name.EndsWith("<T>", StringComparison.Ordinal)
+                ? 1
+                : 0;
+
+        var normalized = declaringType.Methods
+            .Where(candidate =>
+                candidate.Name == method.Name &&
+                candidate.IsStatic == method.IsStatic &&
+                candidate.IsConstructor == method.IsConstructor &&
+                candidate.Parameters.Count == method.Parameters.Count)
+            .OrderBy(candidate => candidate.Parameters.Sum(parameter => CountOpenGenericMarkers(parameter.Type)) + CountOpenGenericMarkers(candidate.ReturnType))
+            .FirstOrDefault();
+
+        return normalized ?? method;
     }
 
     private void LowerMethodBody(
@@ -1768,17 +1800,95 @@ public sealed class Lowerer
         return arguments;
     }
 
-    private static TypeSymbol? TryCloseTypeReferenceForCurrentMethod(TypeSymbol type, MethodSymbol? currentMethod, IReadOnlyList<TypeSymbol> knownTypes)
+    private TypeSymbol? TryCloseTypeReferenceForCurrentMethod(TypeSymbol type, MethodSymbol? currentMethod, IReadOnlyList<TypeSymbol> knownTypes)
     {
         if (currentMethod?.DeclaringTypeName is null)
         {
             return null;
         }
 
-        if (SemanticFacts.ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is not NamedTypeSymbol currentDeclaringType ||
-            currentDeclaringType.GenericDefinition?.GenericParameters is not { Count: > 0 } genericParameters ||
-            currentDeclaringType.TypeArguments is not { Count: > 0 } typeArguments)
+        IReadOnlyList<TypeParameterSymbol>? genericParameters = null;
+        IReadOnlyList<TypeSymbol>? typeArguments = null;
+
+        if (SemanticFacts.ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is NamedTypeSymbol currentDeclaringType &&
+            currentDeclaringType.GenericDefinition?.GenericParameters is { Count: > 0 } resolvedGenericParameters &&
+            currentDeclaringType.TypeArguments is { Count: > 0 } resolvedTypeArguments)
         {
+            genericParameters = resolvedGenericParameters;
+            typeArguments = resolvedTypeArguments;
+        }
+        else if (TryParseConstructedTypeReference(currentMethod.DeclaringTypeName, out var currentGenericTypeName, out var currentGenericArgumentNames))
+        {
+            var simpleTypeName = currentGenericTypeName.Contains('.')
+                ? currentGenericTypeName[(currentGenericTypeName.LastIndexOf('.') + 1)..]
+                : currentGenericTypeName;
+            var currentGenericDefinition = knownTypes
+                .OfType<NamedTypeSymbol>()
+                .Where(candidate =>
+                    candidate.Name == simpleTypeName &&
+                    candidate.GenericArity == currentGenericArgumentNames.Count &&
+                    candidate.GenericDefinition is null)
+                .OrderByDescending(GetGenericDefinitionRichnessLocal)
+                .FirstOrDefault();
+            var parsedTypeArguments = currentGenericArgumentNames
+                .Select(argumentName => SemanticFacts.ResolveTypeReference(argumentName, knownTypes))
+                .ToArray();
+
+            if (currentGenericDefinition?.GenericParameters is { Count: > 0 } parsedGenericParameters &&
+                parsedTypeArguments.All(argument => argument is not null))
+            {
+                genericParameters = parsedGenericParameters;
+                typeArguments = parsedTypeArguments!.Cast<TypeSymbol>().ToArray();
+            }
+        }
+
+        if ((genericParameters is not { Count: > 0 } || typeArguments is not { Count: > 0 }) &&
+            currentMethod.Declaration is not null)
+        {
+            var openTemplateCandidates = _knownMethods.Where(candidate =>
+                !string.IsNullOrWhiteSpace(candidate.DeclaringTypeName) &&
+                candidate.Name == currentMethod.Name &&
+                candidate.Parameters.Count == currentMethod.Parameters.Count &&
+                candidate.DeclaringTypeName != currentMethod.DeclaringTypeName &&
+                TryParseConstructedTypeReference(candidate.DeclaringTypeName!, out _, out _))
+                .ToArray();
+            var openTemplateMethod = openTemplateCandidates.FirstOrDefault(candidate =>
+                candidate.Declaration == currentMethod.Declaration);
+            if (openTemplateMethod?.DeclaringTypeName is not null &&
+                TryParseConstructedTypeReference(openTemplateMethod.DeclaringTypeName, out _, out var openMethodArgumentNames) &&
+                TryParseConstructedTypeReference(currentMethod.DeclaringTypeName, out _, out var closedMethodArgumentNames) &&
+                openMethodArgumentNames.Count == closedMethodArgumentNames.Count)
+            {
+                genericParameters = openMethodArgumentNames
+                    .Select(name => new TypeParameterSymbol(name))
+                    .ToArray();
+                typeArguments = closedMethodArgumentNames
+                    .Select(argumentName => SemanticFacts.ResolveTypeReference(argumentName, knownTypes) ?? new TypeSymbol(argumentName, true))
+                    .ToArray();
+            }
+        }
+
+        if (genericParameters is not { Count: > 0 } || typeArguments is not { Count: > 0 })
+        {
+            if (currentMethod.DeclaringTypeName.StartsWith("Enumerable<", StringComparison.Ordinal) &&
+                (type.Name.StartsWith("WhereEnumerable<", StringComparison.Ordinal) || type.Name.StartsWith("SelectEnumerable<", StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    "TryCloseTypeReferenceForCurrentMethod could not build substitution for enumerable pipeline type: " +
+                    $"currentMethod='{currentMethod.DeclaringTypeName}.{currentMethod.Name}', " +
+                    $"targetType='{type.Name}', " +
+                    $"resolvedCurrent='{SemanticFacts.ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes)?.Name ?? "<null>"}', " +
+                    $"parsedCurrent='{currentMethod.DeclaringTypeName}', " +
+                    $"genericParameterCount={(genericParameters?.Count ?? 0)}, " +
+                    $"typeArgumentCount={(typeArguments?.Count ?? 0)}, " +
+                    $"templateMatches=[{string.Join(" | ", _knownMethods.Where(candidate =>
+                        !string.IsNullOrWhiteSpace(candidate.DeclaringTypeName) &&
+                        candidate.Name == currentMethod.Name &&
+                        candidate.Parameters.Count == currentMethod.Parameters.Count &&
+                        candidate.DeclaringTypeName != currentMethod.DeclaringTypeName &&
+                        TryParseConstructedTypeReference(candidate.DeclaringTypeName!, out _, out _))
+                        .Select(candidate => $"{candidate.DeclaringTypeName}.{candidate.Name} declMatch={ReferenceEquals(candidate.Declaration, currentMethod.Declaration)} params=[{string.Join(", ", candidate.Parameters.Select(parameter => parameter.Type.Name))}] return={candidate.ReturnType.Name}"))}]");
+            }
             return null;
         }
 
@@ -1811,10 +1921,12 @@ public sealed class Lowerer
                 : genericTypeName;
             var definition = knownTypes
                 .OfType<NamedTypeSymbol>()
-                .FirstOrDefault(candidate =>
+                .Where(candidate =>
                     candidate.Name == simpleTypeName &&
                     candidate.GenericArity == resolvedArguments.Length &&
-                    candidate.GenericDefinition is null);
+                    candidate.GenericDefinition is null)
+                .OrderByDescending(GetGenericDefinitionRichnessLocal)
+                .FirstOrDefault();
             if (definition is null)
             {
                 return SemanticFacts.ResolveTypeReference(displayName, knownTypes);
@@ -1823,7 +1935,21 @@ public sealed class Lowerer
             return ConstructClosedGenericTypeLocal(definition, resolvedArguments!.Cast<TypeSymbol>().ToArray(), knownTypes);
         }
 
-        return ResolveWithSubstitution(type.Name);
+        var resolved = ResolveWithSubstitution(type.Name);
+        if (currentMethod.DeclaringTypeName.StartsWith("Enumerable<", StringComparison.Ordinal) &&
+            (type.Name.StartsWith("WhereEnumerable<", StringComparison.Ordinal) || type.Name.StartsWith("SelectEnumerable<", StringComparison.Ordinal)) &&
+            ContainsOpenGenericPlaceholder(type) &&
+            (resolved is null || resolved.Name == type.Name))
+        {
+            throw new InvalidOperationException(
+                "TryCloseTypeReferenceForCurrentMethod did not specialize enumerable pipeline helper type: " +
+                $"currentMethod='{currentMethod.DeclaringTypeName}.{currentMethod.Name}', " +
+                $"targetType='{type.Name}', " +
+                $"substitution=[{string.Join(", ", substitution.Select(entry => $"{entry.Key}->{entry.Value.Name}"))}], " +
+                $"result='{resolved?.Name ?? "<null>"}'");
+        }
+
+        return resolved;
     }
 
     private static NamedTypeSymbol ConstructClosedGenericTypeLocal(
@@ -1874,10 +2000,12 @@ public sealed class Lowerer
                     : genericTypeName;
                 var genericDefinition = knownTypes
                     .OfType<NamedTypeSymbol>()
-                    .FirstOrDefault(candidate =>
+                    .Where(candidate =>
                         candidate.Name == simpleTypeName &&
                         candidate.GenericArity == substitutedArguments.Length &&
-                        candidate.GenericDefinition is null);
+                        candidate.GenericDefinition is null)
+                    .OrderByDescending(GetGenericDefinitionRichnessLocal)
+                    .FirstOrDefault();
                 if (genericDefinition is not null)
                 {
                     return ConstructClosedGenericTypeLocal(genericDefinition, substitutedArguments, knownTypes);
@@ -1948,8 +2076,181 @@ public sealed class Lowerer
             definition.GenericArity,
             null,
             definition,
-            typeArguments);
+            typeArguments,
+            definition.IsDelegate);
     }
+
+    private MethodSymbol? TryCloseMethodForCurrentMethod(
+        MethodSymbol? method,
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (method is null)
+        {
+            return null;
+        }
+
+        var closedDeclaringType = string.IsNullOrWhiteSpace(method.DeclaringTypeName)
+            ? null
+            : TryCloseTypeReferenceForCurrentMethod(new TypeSymbol(method.DeclaringTypeName, true), currentMethod, knownTypes);
+        var closedReturnType = TryCloseTypeReferenceForCurrentMethod(method.ReturnType, currentMethod, knownTypes) ?? method.ReturnType;
+        var closedParameters = method.Parameters
+            .Select(parameter => parameter with
+            {
+                Type = TryCloseTypeReferenceForCurrentMethod(parameter.Type, currentMethod, knownTypes) ?? parameter.Type
+            })
+            .ToArray();
+
+        var declaringTypeName = closedDeclaringType?.Name ?? method.DeclaringTypeName;
+        var changed =
+            declaringTypeName != method.DeclaringTypeName ||
+            closedReturnType.Name != method.ReturnType.Name ||
+            closedParameters.Where((parameter, index) => parameter.Type.Name != method.Parameters[index].Type.Name).Any();
+
+        return changed
+            ? method with
+            {
+                DeclaringTypeName = declaringTypeName,
+                ReturnType = closedReturnType,
+                Parameters = closedParameters
+            }
+            : method;
+    }
+
+    private static (TypeSymbol ConstructedType, MethodSymbol Constructor)? TryResolveConstructedTypeByArgumentTypes(
+        string typeDisplayName,
+        IReadOnlyList<TypeSymbol> argumentTypes,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var simpleTypeName = typeDisplayName;
+        if (TryParseConstructedTypeReference(typeDisplayName, out var genericTypeName, out _))
+        {
+            simpleTypeName = genericTypeName;
+        }
+
+        if (simpleTypeName.Contains('.'))
+        {
+            simpleTypeName = simpleTypeName[(simpleTypeName.LastIndexOf('.') + 1)..];
+        }
+
+        foreach (var candidateType in knownTypes.OfType<NamedTypeSymbol>())
+        {
+            var candidateSimpleName = candidateType.Name;
+            if (TryParseConstructedTypeReference(candidateSimpleName, out var candidateGenericTypeName, out _))
+            {
+                candidateSimpleName = candidateGenericTypeName;
+            }
+
+            if (candidateSimpleName.Contains('.'))
+            {
+                candidateSimpleName = candidateSimpleName[(candidateSimpleName.LastIndexOf('.') + 1)..];
+            }
+
+            if (!string.Equals(candidateSimpleName, simpleTypeName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var candidateConstructor = candidateType.Methods.FirstOrDefault(method =>
+                method.IsConstructor &&
+                method.DeclaringTypeName == candidateType.Name &&
+                method.Parameters.Count == argumentTypes.Count &&
+                method.Parameters.Select(parameter => parameter.Type.Name).SequenceEqual(argumentTypes.Select(type => type.Name), StringComparer.Ordinal));
+            if (candidateConstructor is not null)
+            {
+                return (candidateType, candidateConstructor);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsEnumerablePipelineConstruction(MethodSymbol? currentMethod, NewExpressionSyntax newExpression)
+    {
+        if (currentMethod?.DeclaringTypeName is null)
+        {
+            return false;
+        }
+
+        if (!currentMethod.DeclaringTypeName.StartsWith("Enumerable", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return newExpression.TypeName.ToDisplayString().StartsWith("WhereEnumerable", StringComparison.Ordinal) ||
+               newExpression.TypeName.ToDisplayString().StartsWith("SelectEnumerable", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsOpenGenericPlaceholder(TypeSymbol type) =>
+        type.Name.Contains("<T", StringComparison.Ordinal) ||
+        type.Name.EndsWith("<T>", StringComparison.Ordinal) ||
+        type.Name.Contains(", T", StringComparison.Ordinal) ||
+        type.Name.Contains("<TSource", StringComparison.Ordinal) ||
+        type.Name.Contains("<TResult", StringComparison.Ordinal);
+
+    private static TypeSymbol? TryCloseTypeReferenceByDisplayNameForCurrentMethod(
+        string typeDisplayName,
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (string.IsNullOrWhiteSpace(typeDisplayName) ||
+            currentMethod?.DeclaringTypeName is null ||
+            !TryParseConstructedTypeReference(currentMethod.DeclaringTypeName, out _, out var currentGenericArgumentNames))
+        {
+            return null;
+        }
+
+        NamedTypeSymbol? currentGenericDefinition = null;
+        if (SemanticFacts.ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is NamedTypeSymbol resolvedCurrentType)
+        {
+            currentGenericDefinition = resolvedCurrentType.GenericDefinition;
+        }
+
+        if (currentGenericDefinition?.GenericParameters is not { Count: > 0 } genericParameters ||
+            genericParameters.Count != currentGenericArgumentNames.Count)
+        {
+            return null;
+        }
+
+        var substitution = genericParameters
+            .Zip(currentGenericArgumentNames, (parameter, argumentName) => (parameter.Name, argumentName))
+            .ToDictionary(entry => entry.Name, entry => entry.argumentName, StringComparer.Ordinal);
+
+        string? Substitute(string displayName)
+        {
+            if (substitution.TryGetValue(displayName, out var replacement))
+            {
+                return replacement;
+            }
+
+            if (!TryParseConstructedTypeReference(displayName, out var genericTypeName, out var genericArgumentNames))
+            {
+                return displayName;
+            }
+
+                var substitutedArguments = genericArgumentNames
+                    .Select(Substitute)
+                    .ToArray();
+            if (substitutedArguments.Any(argument => argument is null))
+            {
+                return null;
+            }
+
+            return $"{genericTypeName}<{string.Join(", ", substitutedArguments!)}>";
+        }
+
+        var substitutedDisplayName = Substitute(typeDisplayName);
+        return substitutedDisplayName is null || substitutedDisplayName == typeDisplayName
+            ? null
+            : new TypeSymbol(substitutedDisplayName, true);
+    }
+
+    private static int GetGenericDefinitionRichnessLocal(NamedTypeSymbol type) =>
+        (type.GenericParameters?.Count ?? 0) * 100 +
+        (type.Methods?.Count ?? 0) * 10 +
+        (type.Properties?.Count ?? 0) * 10 +
+        (type.InterfaceTypes?.Count ?? 0) +
+        (type.BaseType is null ? 0 : 1);
 
     private void LowerExpressionInto(
         ExpressionSyntax expression,
@@ -1997,6 +2298,11 @@ public sealed class Lowerer
                         new IrArrayShape(GetShapeRegisters(newArrayExpression.LengthExpressions, arrayShapesByName, registerByName, registers, instructions, currentMethod)))));
                 return;
             case NewExpressionSyntax newExpression:
+                var syntaxConstructedObjectType = TryCloseTypeReferenceForCurrentMethod(
+                    new TypeSymbol(newExpression.TypeName.ToDisplayString(), true),
+                    currentMethod,
+                    _knownTypes)
+                    ?? TryCloseTypeReferenceByDisplayNameForCurrentMethod(newExpression.TypeName.ToDisplayString(), currentMethod, _knownTypes);
                 var inferredConstructedObjectType = SemanticFacts.InferExpressionType(
                     newExpression,
                     registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
@@ -2006,13 +2312,28 @@ public sealed class Lowerer
                     _knownProperties,
                     currentMethod,
                     _knownTypes);
-                var constructedObjectType = TryCloseTypeReferenceForCurrentMethod(inferredConstructedObjectType, currentMethod, _knownTypes)
+                var constructedObjectType = syntaxConstructedObjectType
+                    ?? TryCloseTypeReferenceForCurrentMethod(inferredConstructedObjectType, currentMethod, _knownTypes)
                     ?? inferredConstructedObjectType;
-                ValidateConstructedObjectType(newExpression, constructedObjectType, currentMethod);
-                instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, constructedObjectType.Name));
+                var resolvedConstructedObjectType = SemanticFacts.ResolveTypeReference(constructedObjectType.Name, _knownTypes) ?? constructedObjectType;
+                var constructor = resolvedConstructedObjectType is NamedTypeSymbol namedConstructedType
+                    ? namedConstructedType.Methods.FirstOrDefault(method =>
+                        method.IsConstructor &&
+                        method.DeclaringTypeName == resolvedConstructedObjectType.Name &&
+                        method.Parameters.Count == newExpression.Arguments.Count)
+                    : SemanticFacts.ResolveConstructor(newExpression.TypeName, newExpression.Arguments.Count, _knownTypes, _knownMethods);
+                constructor = TryCloseMethodForCurrentMethod(constructor, currentMethod, _knownTypes);
+                var effectiveConstructedObjectType = !string.IsNullOrWhiteSpace(constructor?.DeclaringTypeName)
+                    ? SemanticFacts.ResolveTypeReference(constructor.DeclaringTypeName!, _knownTypes) ?? new TypeSymbol(constructor.DeclaringTypeName!, true)
+                    : constructedObjectType;
+                var constructorArgumentTypes = new List<TypeSymbol>();
                 var constructorArgs = new List<IrValue>();
-                foreach (var argument in newExpression.Arguments)
+                for (var argumentIndex = 0; argumentIndex < newExpression.Arguments.Count; argumentIndex++)
                 {
+                    var argument = newExpression.Arguments[argumentIndex];
+                    var expectedArgumentType = constructor is not null && argumentIndex < constructor.Parameters.Count
+                        ? constructor.Parameters[argumentIndex].Type
+                        : null;
                     var argumentType = SemanticFacts.InferExpressionType(
                         argument.Expression,
                         registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
@@ -2022,17 +2343,37 @@ public sealed class Lowerer
                         _knownProperties,
                         currentMethod,
                         _knownTypes);
-                    var temp = AllocateTemp(argumentType, registers);
+                    constructorArgumentTypes.Add(expectedArgumentType ?? argumentType);
+                    var temp = AllocateTemp(expectedArgumentType ?? argumentType, registers);
                     constructorArgs.Add(temp);
                     LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 }
 
-                var constructor = constructedObjectType is NamedTypeSymbol namedConstructedType
-                    ? namedConstructedType.Methods.FirstOrDefault(method =>
-                        method.IsConstructor &&
-                        method.DeclaringTypeName == constructedObjectType.Name &&
-                        method.Parameters.Count == constructorArgs.Count)
-                    : SemanticFacts.ResolveConstructor(newExpression.TypeName, constructorArgs.Count, _knownTypes, _knownMethods);
+                if ((constructor is null || constructor.DeclaringTypeName != effectiveConstructedObjectType.Name) &&
+                    TryResolveConstructedTypeByArgumentTypes(newExpression.TypeName.ToDisplayString(), constructorArgumentTypes, _knownTypes) is { } resolvedConstruction)
+                {
+                    effectiveConstructedObjectType = resolvedConstruction.ConstructedType;
+                    constructor = resolvedConstruction.Constructor;
+                }
+
+                if (IsEnumerablePipelineConstruction(currentMethod, newExpression) &&
+                    ContainsOpenGenericPlaceholder(effectiveConstructedObjectType))
+                {
+                    throw new InvalidOperationException(
+                        "Enumerable pipeline construction remained open after specialization: " +
+                        $"method='{currentMethod?.DeclaringTypeName}.{currentMethod?.Name}', " +
+                        $"syntax='{newExpression.TypeName.ToDisplayString()}', " +
+                        $"syntaxClosed='{syntaxConstructedObjectType?.Name ?? "<null>"}', " +
+                        $"inferred='{inferredConstructedObjectType.Name}', " +
+                        $"constructed='{constructedObjectType.Name}', " +
+                        $"resolved='{resolvedConstructedObjectType.Name}', " +
+                        $"effective='{effectiveConstructedObjectType.Name}', " +
+                        $"constructor='{constructor?.DeclaringTypeName ?? "<null>"}.{constructor?.Name ?? "<null>"}', " +
+                        $"ctorArgs=[{string.Join(", ", constructorArgumentTypes.Select(type => type.Name))}]");
+                }
+
+                ValidateConstructedObjectType(newExpression, effectiveConstructedObjectType, currentMethod);
+                instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, effectiveConstructedObjectType.Name));
                 if (constructor is not null)
                 {
                     instructions.Add(new IrInstruction(
@@ -2271,7 +2612,8 @@ public sealed class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        if (_knownTypes.FirstOrDefault(type => type.Name == destination.Type.Name) is not NamedTypeSymbol { IsDelegate: true } delegateType)
+        var delegateType = SemanticFacts.ResolveTypeReference(destination.Type.Name, _knownTypes) as NamedTypeSymbol;
+        if (delegateType is not { IsDelegate: true })
         {
             return false;
         }
@@ -2382,7 +2724,8 @@ public sealed class Lowerer
             return false;
         }
 
-        if (_knownTypes.FirstOrDefault(type => type.Name == destination.Type.Name) is not NamedTypeSymbol { IsDelegate: true } delegateType)
+        var delegateType = SemanticFacts.ResolveTypeReference(destination.Type.Name, _knownTypes) as NamedTypeSymbol;
+        if (delegateType is not { IsDelegate: true })
         {
             return false;
         }
@@ -2561,7 +2904,8 @@ public sealed class Lowerer
                     $"Cannot lower by-reference call '{SemanticFacts.GetExpressionDisplayName(call.Target)}' without a dedicated intrinsic or runtime byref support.");
             }
 
-            var argumentType = SemanticFacts.InferExpressionType(argument.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            var argumentType = parameter?.Type ??
+                SemanticFacts.InferExpressionType(argument.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
             var temp = AllocateTemp(argumentType, registers);
             argumentTemps.Add(temp);
             LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
@@ -2661,11 +3005,13 @@ public sealed class Lowerer
     {
         if (declarator.TypeName is null)
         {
-            return SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+            var inferredType = SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+            return TryCloseTypeReferenceForCurrentMethod(inferredType, currentMethod, _knownTypes) ?? inferredType;
         }
 
-        return SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
+        var resolvedType = SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
             ?? new TypeSymbol(declarator.TypeName.ToDisplayString(), true);
+        return TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType;
     }
 
     private TypeSymbol BindSyntheticTopLevelType(
@@ -2675,11 +3021,13 @@ public sealed class Lowerer
     {
         if (declarator.TypeName is null)
         {
-            return SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+            var inferredType = SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+            return TryCloseTypeReferenceForCurrentMethod(inferredType, currentMethod, _knownTypes) ?? inferredType;
         }
 
-        return SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
+        var resolvedType = SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
             ?? new TypeSymbol(declarator.TypeName.ToDisplayString(), true);
+        return TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType;
     }
 
     private IrValue AllocateTemp(TypeSymbol type, List<IrValue> registers)

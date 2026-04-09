@@ -80,6 +80,10 @@ Current shipped types:
 - `System.Collections.IReadOnlyList<T>`
 - `System.Collections.ICollection<T>`
 - `System.Collections.IList<T>`
+- `System.Collections.Predicate<T>`
+- `System.Collections.Selector<TSource, TResult>`
+- `System.Collections.Enumerable<T>`
+- `System.Collections.Enumerable<TSource, TResult>`
 - `System.Collections.ListEnumerator<T>`
 - `System.Collections.List<T>`
 - `System.Collections.StringList`
@@ -523,6 +527,56 @@ The current implementation is intentionally simple and bootstrap-oriented:
 - keys and values are stored in parallel arrays
 - lookup is linear
 - the API surface is ahead of any hash-based optimization work
+
+### 6.10 `System.Collections.Predicate<T>` and `Selector<TSource, TResult>`
+
+Current shipped enumerable pipeline delegate surface:
+
+- `Predicate<T>(value: T): Boolean`
+- `Selector<TSource, TResult>(value: TSource): TResult`
+
+These delegates are intended as the first reusable callback substrate for
+query-style enumerable helpers.
+
+### 6.11 `System.Collections.Enumerable<T>` and `Enumerable<TSource, TResult>`
+
+Current shipped enumerable pipeline helper surface:
+
+- `Enumerable<T>.Where(source: IEnumerable<T>; predicate: Predicate<T>): IEnumerable<T>`
+- `Enumerable<T>.Take(source: IEnumerable<T>; count: Integer): IEnumerable<T>`
+- `Enumerable<T>.Skip(source: IEnumerable<T>; count: Integer): IEnumerable<T>`
+- `Enumerable<T>.Concat(first: IEnumerable<T>; second: IEnumerable<T>): IEnumerable<T>`
+- `Enumerable<T>.Distinct(source: IEnumerable<T>): IEnumerable<T>`
+- `Enumerable<T>.Append(source: IEnumerable<T>; value: T): IEnumerable<T>`
+- `Enumerable<T>.Prepend(source: IEnumerable<T>; value: T): IEnumerable<T>`
+- `Enumerable<T>.Reverse(source: IEnumerable<T>): IEnumerable<T>`
+- `Enumerable<T>.Contains(source: IEnumerable<T>; value: T): Boolean`
+- `Enumerable<T>.Any(source: IEnumerable<T>): Boolean`
+- `Enumerable<T>.Any(source: IEnumerable<T>; predicate: Predicate<T>): Boolean`
+- `Enumerable<T>.Count(source: IEnumerable<T>): Integer`
+- `Enumerable<T>.Count(source: IEnumerable<T>; predicate: Predicate<T>): Integer`
+- `Enumerable<T>.First(source: IEnumerable<T>): T`
+- `Enumerable<T>.First(source: IEnumerable<T>; predicate: Predicate<T>): T`
+- `Enumerable<T>.FirstOrDefault(source: IEnumerable<T>): T`
+- `Enumerable<T>.FirstOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T`
+- `Enumerable<T>.Single(source: IEnumerable<T>): T`
+- `Enumerable<T>.Single(source: IEnumerable<T>; predicate: Predicate<T>): T`
+- `Enumerable<T>.SingleOrDefault(source: IEnumerable<T>): T`
+- `Enumerable<T>.SingleOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T`
+- `Enumerable<T>.Last(source: IEnumerable<T>): T`
+- `Enumerable<T>.Last(source: IEnumerable<T>; predicate: Predicate<T>): T`
+- `Enumerable<T>.LastOrDefault(source: IEnumerable<T>): T`
+- `Enumerable<T>.LastOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T`
+- `Enumerable<T>.ToList(source: IEnumerable<T>): List<T>`
+- `Enumerable<T>.ToArray(source: IEnumerable<T>): array of T`
+- `Enumerable<TSource, TResult>.Select(source: IEnumerable<TSource>; selector: Selector<TSource, TResult>): IEnumerable<TResult>`
+
+The current implementation is intentionally wrapper-based:
+
+- `Where`, `Take`, `Skip`, `Concat`, `Distinct`, `Append`, `Prepend`, `Reverse`, and `Select` return lazy enumerable wrappers
+- wrappers allocate enumerators on demand
+- filtering and projection are applied during enumeration, not eagerly
+- `Any`, `Count`, `First`, `FirstOrDefault`, `Single`, `SingleOrDefault`, `Last`, `LastOrDefault`, `ToList`, and `ToArray` enumerate eagerly over the current source
 
 ## 7) Binding and Host Mapping
 

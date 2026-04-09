@@ -2420,12 +2420,8 @@ public sealed class Binder
                 }
                 break;
             case NewExpressionSyntax newExpression:
-                foreach (var argument in newExpression.Arguments)
-                {
-                    ValidateExpression(argument.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                }
-
-                if (SemanticFacts.ResolveTypeReference(newExpression.TypeName.ToDisplayString(), knownTypes) is null)
+                var resolvedConstructedType = SemanticFacts.ResolveTypeReference(newExpression.TypeName.ToDisplayString(), knownTypes);
+                if (resolvedConstructedType is null)
                 {
                     diagnostics.Report(
                         "ILC2115",
@@ -2435,7 +2431,8 @@ public sealed class Binder
                     break;
                 }
 
-                if (SemanticFacts.ResolveConstructor(newExpression.TypeName, newExpression.Arguments.Count, knownTypes, knownMethods) is null &&
+                var constructor = SemanticFacts.ResolveConstructor(newExpression.TypeName, newExpression.Arguments.Count, knownTypes, knownMethods);
+                if (constructor is null &&
                     HasDeclaredConstructors(newExpression.TypeName, knownTypes, knownMethods))
                 {
                     diagnostics.Report(
@@ -2443,6 +2440,31 @@ public sealed class Binder
                         $"No constructor for '{newExpression.TypeName.ToDisplayString()}' matches arity {newExpression.Arguments.Count}.",
                         DiagnosticSeverity.Error,
                         GetReferenceDiagnosticSpan(newExpression.TypeName, knownTypes));
+                }
+
+                if (constructor is not null)
+                {
+                    for (var argumentIndex = 0; argumentIndex < newExpression.Arguments.Count && argumentIndex < constructor.Parameters.Count; argumentIndex++)
+                    {
+                        ValidateExpressionForExpectedType(
+                            newExpression.Arguments[argumentIndex].Expression,
+                            constructor.Parameters[argumentIndex].Type,
+                            locals,
+                            knownTypes,
+                            knownMethods,
+                            knownFields,
+                            knownConstants,
+                            knownProperties,
+                            currentMethod,
+                            diagnostics);
+                    }
+                }
+                else
+                {
+                    foreach (var argument in newExpression.Arguments)
+                    {
+                        ValidateExpression(argument.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
                 }
 
                 break;
@@ -6032,11 +6054,17 @@ public static class SemanticFacts
                 return new InvocationResolution(typeIntrinsic);
             }
 
-            var staticMethod = knownMethods.FirstOrDefault(candidate =>
-                candidate.DeclaringTypeName == targetType.Name &&
-                candidate.Name == memberAccess.MemberName.Text &&
-                SupportsArgumentCount(candidate, argumentCount) &&
-                candidate.IsStatic);
+            var staticMethod =
+                (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(candidate =>
+                    candidate.DeclaringTypeName == targetType.Name &&
+                    candidate.Name == memberAccess.MemberName.Text &&
+                    SupportsArgumentCount(candidate, argumentCount) &&
+                    candidate.IsStatic)
+                ?? knownMethods.FirstOrDefault(candidate =>
+                    candidate.DeclaringTypeName == targetType.Name &&
+                    candidate.Name == memberAccess.MemberName.Text &&
+                    SupportsArgumentCount(candidate, argumentCount) &&
+                    candidate.IsStatic);
             if (staticMethod is not null)
             {
                 return new InvocationResolution(staticMethod);
@@ -7496,6 +7524,9 @@ public static class SemanticFacts
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod)
     {
+        var normalizedMethod = NormalizeBoundInvocationMethod(invocation.Method, knownTypes);
+        invocation = invocation with { Method = normalizedMethod };
+
         var isExplicitInvokeMemberAccess =
             call.Target is MemberAccessExpressionSyntax { MemberName.Text: "Invoke" };
         var isDirectDelegateInvoke =
@@ -7544,6 +7575,37 @@ public static class SemanticFacts
             receiver,
             argumentTypes,
             call);
+    }
+
+    private static MethodSymbol NormalizeBoundInvocationMethod(MethodSymbol method, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (string.IsNullOrWhiteSpace(method.DeclaringTypeName))
+        {
+            return method;
+        }
+
+        if (ResolveTypeReference(method.DeclaringTypeName, knownTypes) is not NamedTypeSymbol declaringType)
+        {
+            return method;
+        }
+
+        static int CountOpenGenericMarkers(TypeSymbol type) =>
+            type.Name.Contains("<T", StringComparison.Ordinal) ||
+            type.Name.Contains(", T", StringComparison.Ordinal) ||
+            type.Name.EndsWith("<T>", StringComparison.Ordinal)
+                ? 1
+                : 0;
+
+        var normalized = declaringType.Methods
+            .Where(candidate =>
+                candidate.Name == method.Name &&
+                candidate.IsStatic == method.IsStatic &&
+                candidate.IsConstructor == method.IsConstructor &&
+                candidate.Parameters.Count == method.Parameters.Count)
+            .OrderBy(candidate => candidate.Parameters.Sum(parameter => CountOpenGenericMarkers(parameter.Type)) + CountOpenGenericMarkers(candidate.ReturnType))
+            .FirstOrDefault();
+
+        return normalized ?? method;
     }
 
     private static BoundReceiver? BindReceiver(
@@ -8121,7 +8183,8 @@ public static class SemanticFacts
             definition.GenericArity,
             null,
             definition,
-            typeArguments);
+            typeArguments,
+            definition.IsDelegate);
     }
 
     private static TypeSymbol SubstituteGenericType(

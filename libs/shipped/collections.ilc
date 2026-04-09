@@ -155,6 +155,1219 @@ end;
 //══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • DELEGATE • Predicate<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a boolean test applied to a value in an enumerable pipeline.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public delegate function Predicate<T>(value: T): Boolean;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • DELEGATE • Selector<TSource, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a value projection applied to an enumerable pipeline.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public delegate function Selector<TSource, TResult>(value: TSource): TResult;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • WhereEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates a filtered view over another enumerable source.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class WhereEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceEnumerator: IEnumerator<T>;
+  private var PredicateValue: Predicate<T>;
+
+  public property Current: T
+  begin
+    get
+    begin
+      return SourceEnumerator.Current;
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<T>; predicate: Predicate<T>);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    PredicateValue := predicate;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    while SourceEnumerator.MoveNext() do
+    begin
+      if PredicateValue(SourceEnumerator.Current) then
+      begin
+        return true;
+      end;
+    end;
+
+    return false;
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • WhereEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps an enumerable source and exposes a filtered view over it.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class WhereEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+  private var PredicateValue: Predicate<T>;
+
+  public constructor(source: IEnumerable<T>; predicate: Predicate<T>);
+  begin
+    SourceValue := source;
+    PredicateValue := predicate;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new WhereEnumerator<T>(SourceValue.GetEnumerator(), PredicateValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • SelectEnumerator<TSource, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates a projected view over another enumerable source.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class SelectEnumerator<TSource, TResult>: IEnumerator<TResult>
+begin
+  private var SourceEnumerator: IEnumerator<TSource>;
+  private var SelectorValue: Selector<TSource, TResult>;
+
+  public property Current: TResult
+  begin
+    get
+    begin
+      return SelectorValue(SourceEnumerator.Current);
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<TSource>; selector: Selector<TSource, TResult>);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    SelectorValue := selector;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    return SourceEnumerator.MoveNext();
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • SelectEnumerable<TSource, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps an enumerable source and exposes a projected view over it.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class SelectEnumerable<TSource, TResult>: IEnumerable<TResult>
+begin
+  private var SourceValue: IEnumerable<TSource>;
+  private var SelectorValue: Selector<TSource, TResult>;
+
+  public constructor(source: IEnumerable<TSource>; selector: Selector<TSource, TResult>);
+  begin
+    SourceValue := source;
+    SelectorValue := selector;
+  end;
+
+  public function GetEnumerator(): IEnumerator<TResult>;
+  begin
+    return new SelectEnumerator<TSource, TResult>(SourceValue.GetEnumerator(), SelectorValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TakeEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates only the first requested number of elements from another source.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class TakeEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceEnumerator: IEnumerator<T>;
+  private var RemainingCount: Integer;
+
+  public property Current: T
+  begin
+    get
+    begin
+      return SourceEnumerator.Current;
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<T>; count: Integer);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    RemainingCount := count;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    if RemainingCount <= 0 then
+    begin
+      return false;
+    end;
+
+    if SourceEnumerator.MoveNext() then
+    begin
+      RemainingCount := RemainingCount - 1;
+      return true;
+    end;
+
+    return false;
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TakeEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps an enumerable source and exposes only the first requested number of items.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class TakeEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+  private var CountValue: Integer;
+
+  public constructor(source: IEnumerable<T>; count: Integer);
+  begin
+    SourceValue := source;
+    CountValue := count;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new TakeEnumerator<T>(SourceValue.GetEnumerator(), CountValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • SkipEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates a source after skipping the requested number of elements.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class SkipEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceEnumerator: IEnumerator<T>;
+  private var RemainingSkipCount: Integer;
+
+  public property Current: T
+  begin
+    get
+    begin
+      return SourceEnumerator.Current;
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<T>; count: Integer);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    RemainingSkipCount := count;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    while RemainingSkipCount > 0 do
+    begin
+      if not SourceEnumerator.MoveNext() then
+      begin
+        RemainingSkipCount := 0;
+        return false;
+      end;
+
+      RemainingSkipCount := RemainingSkipCount - 1;
+    end;
+
+    return SourceEnumerator.MoveNext();
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • SkipEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps an enumerable source and skips the first requested number of items.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class SkipEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+  private var CountValue: Integer;
+
+  public constructor(source: IEnumerable<T>; count: Integer);
+  begin
+    SourceValue := source;
+    CountValue := count;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new SkipEnumerator<T>(SourceValue.GetEnumerator(), CountValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ConcatEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates two sources one after the other.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class ConcatEnumerator<T>: IEnumerator<T>
+begin
+  private var FirstEnumerator: IEnumerator<T>;
+  private var SecondEnumerator: IEnumerator<T>;
+  private var UsingFirst: Boolean;
+
+  public property Current: T
+  begin
+    get
+    begin
+      if UsingFirst then
+      begin
+        return FirstEnumerator.Current;
+      end;
+
+      return SecondEnumerator.Current;
+    end;
+  end;
+
+  public constructor(firstEnumerator: IEnumerator<T>; secondEnumerator: IEnumerator<T>);
+  begin
+    FirstEnumerator := firstEnumerator;
+    SecondEnumerator := secondEnumerator;
+    UsingFirst := true;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    if UsingFirst then
+    begin
+      if FirstEnumerator.MoveNext() then
+      begin
+        return true;
+      end;
+
+      UsingFirst := false;
+    end;
+
+    return SecondEnumerator.MoveNext();
+  end;
+
+  public method Reset;
+  begin
+    FirstEnumerator.Reset();
+    SecondEnumerator.Reset();
+    UsingFirst := true;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ConcatEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps two enumerable sources and exposes their concatenated sequence.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class ConcatEnumerable<T>: IEnumerable<T>
+begin
+  private var FirstSourceValue: IEnumerable<T>;
+  private var SecondSourceValue: IEnumerable<T>;
+
+  public constructor(first: IEnumerable<T>; second: IEnumerable<T>);
+  begin
+    FirstSourceValue := first;
+    SecondSourceValue := second;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new ConcatEnumerator<T>(FirstSourceValue.GetEnumerator(), SecondSourceValue.GetEnumerator());
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • DistinctEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates only the first occurrence of each value in a source.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class DistinctEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceEnumerator: IEnumerator<T>;
+  private var SeenValues: List<T>;
+
+  public property Current: T
+  begin
+    get
+    begin
+      return SourceEnumerator.Current;
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<T>);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    SeenValues := new List<T>();
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    while SourceEnumerator.MoveNext() do
+    begin
+      if not SeenValues.Contains(SourceEnumerator.Current) then
+      begin
+        SeenValues.Add(SourceEnumerator.Current);
+        return true;
+      end;
+    end;
+
+    return false;
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+    SeenValues.Clear();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • DistinctEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps an enumerable source and exposes only distinct values.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class DistinctEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+
+  public constructor(source: IEnumerable<T>);
+  begin
+    SourceValue := source;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new DistinctEnumerator<T>(SourceValue.GetEnumerator());
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • AppendEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates a source and yields one additional value at the end.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class AppendEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceEnumerator: IEnumerator<T>;
+  private var TailValue: T;
+  private var TailAvailable: Boolean;
+  private var EmittingTail: Boolean;
+
+  public property Current: T
+  begin
+    get
+    begin
+      if EmittingTail then
+      begin
+        return TailValue;
+      end;
+
+      return SourceEnumerator.Current;
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<T>; value: T);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    TailValue := value;
+    TailAvailable := true;
+    EmittingTail := false;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    EmittingTail := false;
+    if SourceEnumerator.MoveNext() then
+    begin
+      return true;
+    end;
+
+    if TailAvailable then
+    begin
+      TailAvailable := false;
+      EmittingTail := true;
+      return true;
+    end;
+
+    return false;
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+    TailAvailable := true;
+    EmittingTail := false;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • AppendEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps a source and appends one value at the end.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class AppendEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+  private var TailValue: T;
+
+  public constructor(source: IEnumerable<T>; value: T);
+  begin
+    SourceValue := source;
+    TailValue := value;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new AppendEnumerator<T>(SourceValue.GetEnumerator(), TailValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • PrependEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates one leading value before a source.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class PrependEnumerator<T>: IEnumerator<T>
+begin
+  private var SourceEnumerator: IEnumerator<T>;
+  private var HeadValue: T;
+  private var HeadAvailable: Boolean;
+  private var EmittingHead: Boolean;
+
+  public property Current: T
+  begin
+    get
+    begin
+      if EmittingHead then
+      begin
+        return HeadValue;
+      end;
+
+      return SourceEnumerator.Current;
+    end;
+  end;
+
+  public constructor(sourceEnumerator: IEnumerator<T>; value: T);
+  begin
+    SourceEnumerator := sourceEnumerator;
+    HeadValue := value;
+    HeadAvailable := true;
+    EmittingHead := false;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    if HeadAvailable then
+    begin
+      HeadAvailable := false;
+      EmittingHead := true;
+      return true;
+    end;
+
+    EmittingHead := false;
+    return SourceEnumerator.MoveNext();
+  end;
+
+  public method Reset;
+  begin
+    SourceEnumerator.Reset();
+    HeadAvailable := true;
+    EmittingHead := false;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • PrependEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps a source and prepends one value at the beginning.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class PrependEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+  private var HeadValue: T;
+
+  public constructor(source: IEnumerable<T>; value: T);
+  begin
+    SourceValue := source;
+    HeadValue := value;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new PrependEnumerator<T>(SourceValue.GetEnumerator(), HeadValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ReverseEnumerator<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Enumerates a buffered source in reverse order.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class ReverseEnumerator<T>: IEnumerator<T>
+begin
+  private var Buffer: List<T>;
+  private var Index: Integer;
+  private var CurrentValue: T;
+
+  public property Current: T
+  begin
+    get
+    begin
+      return CurrentValue;
+    end;
+  end;
+
+  public constructor(source: IEnumerable<T>);
+  begin
+    Buffer := new List<T>();
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      Buffer.Add(enumerator.Current);
+    end;
+    Index := Buffer.Count;
+  end;
+
+  public function MoveNext(): Boolean;
+  begin
+    if Index <= 0 then
+    begin
+      return false;
+    end;
+
+    Index := Index - 1;
+    CurrentValue := Buffer[Index];
+    return true;
+  end;
+
+  public method Reset;
+  begin
+    Index := Buffer.Count;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ReverseEnumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Wraps a source and exposes its values in reverse order.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class ReverseEnumerable<T>: IEnumerable<T>
+begin
+  private var SourceValue: IEnumerable<T>;
+
+  public constructor(source: IEnumerable<T>);
+  begin
+    SourceValue := source;
+  end;
+
+  public function GetEnumerator(): IEnumerator<T>;
+  begin
+    return new ReverseEnumerator<T>(SourceValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Enumerable<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides the first shipped enumerable pipeline helpers for filtering.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Enumerable<T>
+begin
+  public static function Where(source: IEnumerable<T>; predicate: Predicate<T>): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    return new WhereEnumerable<T>(source, predicate);
+  end;
+
+  public static function Take(source: IEnumerable<T>; count: Integer): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if count <= 0 then
+    begin
+      count := 0;
+    end;
+
+    return new TakeEnumerable<T>(source, count);
+  end;
+
+  public static function Skip(source: IEnumerable<T>; count: Integer): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if count <= 0 then
+    begin
+      count := 0;
+    end;
+
+    return new SkipEnumerable<T>(source, count);
+  end;
+
+  public static function Concat(first: IEnumerable<T>; second: IEnumerable<T>): IEnumerable<T>;
+  begin
+    if first = nil then
+    begin
+      raise new Exception('Enumerable first source must not be nil.');
+    end;
+
+    if second = nil then
+    begin
+      raise new Exception('Enumerable second source must not be nil.');
+    end;
+
+    return new ConcatEnumerable<T>(first, second);
+  end;
+
+  public static function Distinct(source: IEnumerable<T>): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    return new DistinctEnumerable<T>(source);
+  end;
+
+  public static function Append(source: IEnumerable<T>; value: T): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    return new AppendEnumerable<T>(source, value);
+  end;
+
+  public static function Prepend(source: IEnumerable<T>; value: T): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    return new PrependEnumerable<T>(source, value);
+  end;
+
+  public static function Reverse(source: IEnumerable<T>): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    return new ReverseEnumerable<T>(source);
+  end;
+
+  public static function Contains(source: IEnumerable<T>; value: T): Boolean;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if enumerator.Current = value then
+      begin
+        return true;
+      end;
+    end;
+
+    return false;
+  end;
+
+  public static function Any(source: IEnumerable<T>): Boolean;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    return enumerator.MoveNext();
+  end;
+
+  public static function Any(source: IEnumerable<T>; predicate: Predicate<T>): Boolean;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        return true;
+      end;
+    end;
+
+    return false;
+  end;
+
+  public static function Count(source: IEnumerable<T>): Integer;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    var count := 0;
+    while enumerator.MoveNext() do
+    begin
+      count := count + 1;
+    end;
+
+    return count;
+  end;
+
+  public static function Count(source: IEnumerable<T>; predicate: Predicate<T>): Integer;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    var count := 0;
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        count := count + 1;
+      end;
+    end;
+
+    return count;
+  end;
+
+  public static function FirstOrDefault(source: IEnumerable<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var fallback: T;
+    var enumerator := source.GetEnumerator();
+    if enumerator.MoveNext() then
+    begin
+      return enumerator.Current;
+    end;
+
+    return fallback;
+  end;
+
+  public static function First(source: IEnumerable<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    if enumerator.MoveNext() then
+    begin
+      return enumerator.Current;
+    end;
+
+    raise new Exception('Enumerable sequence contains no elements.');
+  end;
+
+  public static function FirstOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var fallback: T;
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        return enumerator.Current;
+      end;
+    end;
+
+    return fallback;
+  end;
+
+  public static function First(source: IEnumerable<T>; predicate: Predicate<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        return enumerator.Current;
+      end;
+    end;
+
+    raise new Exception('Enumerable sequence contains no matching element.');
+  end;
+
+  public static function SingleOrDefault(source: IEnumerable<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var fallback: T;
+    var enumerator := source.GetEnumerator();
+    if not enumerator.MoveNext() then
+    begin
+      return fallback;
+    end;
+
+    var result := enumerator.Current;
+    if enumerator.MoveNext() then
+    begin
+      raise new Exception('Enumerable sequence contains more than one element.');
+    end;
+
+    return result;
+  end;
+
+  public static function Single(source: IEnumerable<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    if not enumerator.MoveNext() then
+    begin
+      raise new Exception('Enumerable sequence contains no elements.');
+    end;
+
+    var result := enumerator.Current;
+    if enumerator.MoveNext() then
+    begin
+      raise new Exception('Enumerable sequence contains more than one element.');
+    end;
+
+    return result;
+  end;
+
+  public static function SingleOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var fallback: T;
+    var hasResult := false;
+    var result := fallback;
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        if hasResult then
+        begin
+          raise new Exception('Enumerable sequence contains more than one matching element.');
+        end;
+
+        hasResult := true;
+        result := enumerator.Current;
+      end;
+    end;
+
+    return result;
+  end;
+
+  public static function Single(source: IEnumerable<T>; predicate: Predicate<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var fallback: T;
+    var hasResult := false;
+    var result := fallback;
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        if hasResult then
+        begin
+          raise new Exception('Enumerable sequence contains more than one matching element.');
+        end;
+
+        hasResult := true;
+        result := enumerator.Current;
+      end;
+    end;
+
+    if hasResult then
+    begin
+      return result;
+    end;
+
+    raise new Exception('Enumerable sequence contains no matching element.');
+  end;
+
+  public static function LastOrDefault(source: IEnumerable<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var fallback: T;
+    var result := fallback;
+    var hasResult := false;
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      hasResult := true;
+      result := enumerator.Current;
+    end;
+
+    return result;
+  end;
+
+  public static function Last(source: IEnumerable<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var enumerator := source.GetEnumerator();
+    if not enumerator.MoveNext() then
+    begin
+      raise new Exception('Enumerable sequence contains no elements.');
+    end;
+
+    var result := enumerator.Current;
+    while enumerator.MoveNext() do
+    begin
+      result := enumerator.Current;
+    end;
+
+    return result;
+  end;
+
+  public static function LastOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var fallback: T;
+    var result := fallback;
+    var hasResult := false;
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        hasResult := true;
+        result := enumerator.Current;
+      end;
+    end;
+
+    return result;
+  end;
+
+  public static function Last(source: IEnumerable<T>; predicate: Predicate<T>): T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if predicate = nil then
+    begin
+      raise new Exception('Enumerable predicate must not be nil.');
+    end;
+
+    var fallback: T;
+    var result := fallback;
+    var hasResult := false;
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      if predicate(enumerator.Current) then
+      begin
+        hasResult := true;
+        result := enumerator.Current;
+      end;
+    end;
+
+    if hasResult then
+    begin
+      return result;
+    end;
+
+    raise new Exception('Enumerable sequence contains no matching element.');
+  end;
+
+  public static function ToList(source: IEnumerable<T>): List<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    var result := new List<T>();
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      result.Add(enumerator.Current);
+    end;
+
+    return result;
+  end;
+
+  public static function ToArray(source: IEnumerable<T>): array of T;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    return ToList(source).ToArray();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Enumerable<TSource, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides the first shipped enumerable pipeline helpers for projections.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Enumerable<TSource, TResult>
+begin
+  public static function Select(source: IEnumerable<TSource>; selector: Selector<TSource, TResult>): IEnumerable<TResult>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if selector = nil then
+    begin
+      raise new Exception('Enumerable selector must not be nil.');
+    end;
+
+    return new SelectEnumerable<TSource, TResult>(source, selector);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • CLASS • StringList
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 /// <summary>Provides a convenience compatibility alias for List&lt;String&gt;.</summary>

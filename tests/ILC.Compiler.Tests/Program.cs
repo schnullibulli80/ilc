@@ -672,6 +672,80 @@ else if (!dictionaryType.Methods.Any(method => method.IsConstructor && method.Pa
     failures.Add("Binder should expose the expected System.Collections.Dictionary<TKey, TValue> generic surface.");
 }
 
+var predicateType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Predicate" && type.GenericArity == 1);
+if (predicateType is null || !predicateType.IsDelegate || predicateType.GenericParameters?.Count != 1 || predicateType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.Predicate<T> as a generic delegate definition.");
+}
+else if (!predicateType.Methods.Any(method => method.Name == "Invoke" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "T" && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should expose the expected System.Collections.Predicate<T> delegate surface.");
+}
+
+var selectorType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Selector" && type.GenericArity == 2);
+if (selectorType is null || !selectorType.IsDelegate || selectorType.GenericParameters?.Count != 2 ||
+    selectorType.GenericParameters[0].Name != "TSource" || selectorType.GenericParameters[1].Name != "TResult")
+{
+    failures.Add("Binder should surface System.Collections.Selector<TSource, TResult> as a generic delegate definition.");
+}
+else if (!selectorType.Methods.Any(method => method.Name == "Invoke" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TSource" && method.ReturnType.Name == "TResult"))
+{
+    failures.Add("Binder should expose the expected System.Collections.Selector<TSource, TResult> delegate surface.");
+}
+
+var enumerableFilterType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Enumerable" && type.GenericArity == 1);
+if (enumerableFilterType is null || !enumerableFilterType.IsReferenceType || enumerableFilterType.GenericParameters?.Count != 1 || enumerableFilterType.GenericParameters[0].Name != "T")
+{
+    failures.Add("Binder should surface System.Collections.Enumerable<T> as the filtering helper type.");
+}
+else if (!enumerableFilterType.Methods.Any(method => method.Name == "Where" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "IEnumerable<T>"))
+{
+    failures.Add("Binder should expose Enumerable<T>.Where(source, predicate).");
+}
+else if (!enumerableFilterType.Methods.Any(method => method.Name == "Take" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Skip" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Concat" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Distinct" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Append" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "T" && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Prepend" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "T" && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Reverse" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "IEnumerable<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Contains" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "T" && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should expose Enumerable<T>.Take(source, count), Skip(source, count), Concat(first, second), Distinct(source), Append(source, value), Prepend(source, value), Reverse(source), and Contains(source, value).");
+}
+else if (!enumerableFilterType.Methods.Any(method => method.Name == "Any" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType == TypeSymbol.Boolean) ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Any" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType == TypeSymbol.Boolean) ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Count" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType == TypeSymbol.Integer) ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Count" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType == TypeSymbol.Integer) ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "First" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "First" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "FirstOrDefault" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "FirstOrDefault" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Single" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Single" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "SingleOrDefault" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "SingleOrDefault" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Last" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "Last" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "LastOrDefault" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "LastOrDefault" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.Parameters[1].Type.Name == "Predicate<T>" && method.ReturnType.Name == "T") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "ToList" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "List<T>") ||
+         !enumerableFilterType.Methods.Any(method => method.Name == "ToArray" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "IEnumerable<T>" && method.ReturnType.Name == "T[]"))
+{
+    failures.Add("Binder should expose Enumerable<T>.Any/Count/First/FirstOrDefault/Single/SingleOrDefault/Last/LastOrDefault/ToList/ToArray overloads.");
+}
+
+var enumerableProjectionType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Enumerable" && type.GenericArity == 2);
+if (enumerableProjectionType is null || !enumerableProjectionType.IsReferenceType || enumerableProjectionType.GenericParameters?.Count != 2 ||
+    enumerableProjectionType.GenericParameters[0].Name != "TSource" || enumerableProjectionType.GenericParameters[1].Name != "TResult")
+{
+    failures.Add("Binder should surface System.Collections.Enumerable<TSource, TResult> as the projection helper type.");
+}
+else if (!enumerableProjectionType.Methods.Any(method => method.Name == "Select" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "IEnumerable<TSource>" && method.Parameters[1].Type.Name == "Selector<TSource, TResult>" && method.ReturnType.Name == "IEnumerable<TResult>"))
+{
+    failures.Add("Binder should expose Enumerable<TSource, TResult>.Select(source, selector).");
+}
+
 var exceptionInterfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IException");
 if (exceptionInterfaceType is null || !exceptionInterfaceType.IsInterface)
 {
@@ -1846,7 +1920,8 @@ else
                 []))
             .ToArray(),
         [],
-        []);
+        [],
+        interfaceCompatibilityBinding.Compilation.Types);
     var interfaceIlbImage = new IlbSerializer().Serialize(
         interfaceBytecodeModule,
         interfaceMethods,
@@ -3304,6 +3379,196 @@ else if (!capturingLambdaBinding.Compilation.Types.OfType<NamedTypeSymbol>().Any
              type.Methods.Any(method => method.LambdaSource is not null && !method.IsStatic)))
 {
     failures.Add("Binder should synthesize closure types with capture fields for capturing lambdas.");
+}
+
+var enumerablePipelineTree = SyntaxTree.Parse("""
+uses System.Collections;
+
+public class EnumerableHost
+begin
+  public static function Test(): Integer;
+  begin
+    var words := new List<String>();
+    words.Add('one');
+    words.Add('two');
+    words.Add('three');
+
+    var filtered := Enumerable<String>.Where(words, function(value: String): Boolean => value.Contains('w'));
+    var projected := Enumerable<String, Integer>.Select(filtered, function(value: String): Integer => value.Length);
+    var enumerator := projected.GetEnumerator();
+    var sum := 0;
+    while enumerator.MoveNext() do
+    begin
+      sum := sum + enumerator.Current;
+    end;
+
+    return sum;
+  end;
+end;
+""");
+
+var enumerablePipelineMergedTree = SyntaxTree.Merge(enumerablePipelineTree, [systemTree, collectionsTree]);
+var enumerablePipelineBinding = new Binder().Bind(enumerablePipelineMergedTree);
+if (enumerablePipelineBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept Enumerable<T>.Where and Enumerable<TSource, TResult>.Select with lambda arguments. Diagnostics: " +
+        string.Join(
+            " | ",
+            enumerablePipelineBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (enumerablePipelineBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "EnumerableHost") is not NamedTypeSymbol enumerableHostType ||
+         enumerableHostType.Methods.FirstOrDefault(method => method.Name == "Test") is not MethodSymbol enumerableHostTestMethod)
+{
+    failures.Add("Binder should surface EnumerableHost.Test for the Enumerable pipeline scenario.");
+}
+else
+{
+    var enumerablePipelineMethods = enumerablePipelineBinding.Compilation.GetAllMethods().ToArray();
+    var enumerablePipelineFields = enumerablePipelineBinding.Compilation.GetAllFields();
+    var enumerablePipelineProperties = enumerablePipelineBinding.Compilation.GetAllProperties();
+    var enumerablePipelineConstants = enumerablePipelineBinding.Compilation.GetAllConstants();
+    static string FormatMethodDiagnostic(MethodSymbol method) =>
+        $"{method.DeclaringTypeName}.{method.Name}({string.Join(", ", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}";
+
+    BoundCall? BindEnumerableInitializerCall(string localName, out string diagnostic)
+    {
+        diagnostic = string.Empty;
+        if (enumerableHostTestMethod.Declaration?.Body is null)
+        {
+            diagnostic = "method body is missing";
+            return null;
+        }
+
+        var locals = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
+        foreach (var parameter in enumerableHostTestMethod.Parameters)
+        {
+            locals[parameter.Name] = parameter.Type;
+        }
+
+        foreach (var statement in enumerableHostTestMethod.Declaration.Body.Statements)
+        {
+            if (statement is not LocalVariableDeclarationStatementSyntax localVariableDeclaration)
+            {
+                continue;
+            }
+
+            foreach (var declarator in localVariableDeclaration.Declarators)
+            {
+                if (declarator.Initializer is CallExpressionSyntax callExpression &&
+                    declarator.Identifier.Text == localName)
+                {
+                    var boundCall = SemanticFacts.BindCall(
+                        callExpression,
+                        locals,
+                        enumerablePipelineBinding.Compilation.Types,
+                        enumerablePipelineMethods,
+                        enumerablePipelineFields,
+                        enumerablePipelineConstants,
+                        enumerablePipelineProperties,
+                        enumerableHostTestMethod);
+                    if (boundCall is null)
+                    {
+                        var flattenedTarget = callExpression.Target switch
+                        {
+                            NameExpressionSyntax nameExpression => nameExpression.Name.ToDisplayString(),
+                            MemberAccessExpressionSyntax memberAccess => SemanticFacts.GetExpressionDisplayName(memberAccess),
+                            _ => callExpression.Target.Kind.ToString()
+                        };
+                        var targetCandidates = enumerablePipelineMethods
+                            .Where(method => method.Name == (callExpression.Target switch
+                            {
+                                NameExpressionSyntax nameExpression => nameExpression.Name.Parts[^1].Text,
+                                MemberAccessExpressionSyntax memberAccess => memberAccess.MemberName.Text,
+                                _ => string.Empty
+                            }))
+                            .Select(FormatMethodDiagnostic)
+                            .ToArray();
+                        diagnostic =
+                            $"BindCall returned null for local '{localName}' target='{flattenedTarget}' locals=[{string.Join(", ", locals.Select(entry => $"{entry.Key}:{entry.Value.Name}"))}] candidates=[{string.Join(" | ", targetCandidates)}]";
+                    }
+
+                    return boundCall;
+                }
+
+                if (declarator.Initializer is not null)
+                {
+                    locals[declarator.Identifier.Text] = SemanticFacts.InferExpressionType(
+                        declarator.Initializer,
+                        locals,
+                        enumerablePipelineMethods,
+                        enumerablePipelineFields,
+                        enumerablePipelineConstants,
+                        enumerablePipelineProperties,
+                        enumerableHostTestMethod,
+                        enumerablePipelineBinding.Compilation.Types);
+                }
+            }
+        }
+
+        diagnostic = $"local '{localName}' was not found in EnumerableHost.Test";
+        return null;
+    }
+
+    var boundWhereCall = BindEnumerableInitializerCall("filtered", out var whereDiagnostic);
+    if (boundWhereCall is null)
+    {
+        failures.Add($"Binder should bind Enumerable<String>.Where(...) to a concrete static generic method. {whereDiagnostic}");
+    }
+    else if (boundWhereCall.Method.DeclaringTypeName != "Enumerable<String>" ||
+             boundWhereCall.Method.Parameters.Select(parameter => parameter.Type.Name).SequenceEqual(["IEnumerable<String>", "Predicate<String>"]) is false ||
+             boundWhereCall.Method.ReturnType.Name != "IEnumerable<String>")
+    {
+        failures.Add(
+            "Binder should fully close Enumerable<String>.Where(...). Actual: " +
+            FormatMethodDiagnostic(boundWhereCall.Method));
+    }
+
+    var boundSelectCall = BindEnumerableInitializerCall("projected", out var selectDiagnostic);
+    if (boundSelectCall is null)
+    {
+        failures.Add($"Binder should bind Enumerable<String, Integer>.Select(...) to a concrete static generic method. {selectDiagnostic}");
+    }
+    else if (boundSelectCall.Method.DeclaringTypeName != "Enumerable<String, Integer>" ||
+             boundSelectCall.Method.Parameters.Select(parameter => parameter.Type.Name).SequenceEqual(["IEnumerable<String>", "Selector<String, Integer>"]) is false ||
+             boundSelectCall.Method.ReturnType.Name != "IEnumerable<Integer>")
+    {
+        failures.Add(
+            "Binder should fully close Enumerable<String, Integer>.Select(...). Actual: " +
+            FormatMethodDiagnostic(boundSelectCall.Method));
+    }
+
+    try
+    {
+        var enumerablePipelineLowerer = new Lowerer(
+            enumerablePipelineMethods,
+            enumerablePipelineFields,
+            enumerablePipelineBinding.Compilation.Types,
+            enumerablePipelineProperties,
+            enumerablePipelineConstants);
+        var enumerablePipelineIr = enumerablePipelineLowerer.Lower(enumerableHostTestMethod);
+        var enumerablePipelineCalls = enumerablePipelineIr.Blocks
+            .SelectMany(block => block.Instructions)
+            .Where(instruction =>
+                instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                instruction.Operand is IrCallTarget { Method: not null })
+            .Select(instruction => ((IrCallTarget)instruction.Operand!).Method!)
+            .ToArray();
+
+        if (!enumerablePipelineCalls.Any(method => method.Name == "Where" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String>"))
+        {
+            failures.Add("Lowerer should resolve Enumerable<String>.Where(...) on a static generic receiver.");
+        }
+
+        if (!enumerablePipelineCalls.Any(method => method.Name == "Select" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String, Integer>"))
+        {
+            failures.Add("Lowerer should resolve Enumerable<String, Integer>.Select(...) on a static generic receiver.");
+        }
+    }
+    catch (Exception ex)
+    {
+        failures.Add($"Lowerer should accept static generic Enumerable pipeline calls without throwing. Actual: {ex.Message}");
+    }
 }
 
 var dllImportTree = SyntaxTree.Parse("""

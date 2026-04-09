@@ -781,6 +781,25 @@ std::int32_t VirtualMachine::execute(
 
         return *field_lookup[field_id];
     };
+    const auto describe_type = [&require_type](std::uint32_t type_id) -> std::string
+    {
+        if (type_id == 0)
+        {
+            return "<none>";
+        }
+
+        return require_type(type_id).name;
+    };
+    const auto describe_field = [&require_field, &describe_type](std::uint32_t field_id) -> std::string
+    {
+        if (field_id == 0)
+        {
+            return "<none>";
+        }
+
+        const auto& field = require_field(field_id);
+        return describe_type(field.owner_type_id) + "." + field.name;
+    };
     const auto is_instance_of_type = [&require_type](std::uint32_t actual_type_id, std::uint32_t expected_type_id) -> bool
     {
         auto current_type_id = actual_type_id;
@@ -1688,12 +1707,18 @@ std::int32_t VirtualMachine::execute(
                             std::to_string(ip) +
                             " field=" +
                             std::to_string(instruction.immediate) +
+                            " field-name=" +
+                            describe_field(static_cast<std::uint32_t>(instruction.immediate)) +
                             " receiver=" +
                             std::to_string(registers[instruction.left]) +
                             " actual_type=" +
                             std::to_string(object.type_id) +
+                            " actual_type_name=" +
+                            describe_type(object.type_id) +
                             " expected_type=" +
                             std::to_string(field.owner_type_id) +
+                            " expected_type_name=" +
+                            describe_type(field.owner_type_id) +
                             " field_slot=" +
                             std::to_string(field.instance_slot) +
                             " field_count=" +
@@ -1743,12 +1768,18 @@ std::int32_t VirtualMachine::execute(
                             std::to_string(ip) +
                             " field=" +
                             std::to_string(instruction.immediate) +
+                            " field-name=" +
+                            describe_field(static_cast<std::uint32_t>(instruction.immediate)) +
                             " receiver=" +
                             std::to_string(registers[instruction.destination]) +
                             " actual_type=" +
                             std::to_string(object.type_id) +
+                            " actual_type_name=" +
+                            describe_type(object.type_id) +
                             " expected_type=" +
                             std::to_string(field.owner_type_id) +
+                            " expected_type_name=" +
+                            describe_type(field.owner_type_id) +
                             " field_slot=" +
                             std::to_string(field.instance_slot) +
                             " field_count=" +
@@ -3308,14 +3339,24 @@ std::int32_t VirtualMachine::execute(
                             throw std::runtime_error(
                                 "field load targets the wrong receiver type at ip=" +
                                 std::to_string(ip) +
+                                " function=" +
+                                std::to_string(function.function_id) +
+                                " function_name=" +
+                                function.name +
                                 " field=" +
                                 std::to_string(instruction.immediate) +
+                                " field-name=" +
+                                describe_field(static_cast<std::uint32_t>(instruction.immediate)) +
                                 " receiver=" +
                                 std::to_string(register_values[instruction.left]) +
                                 " actual_type=" +
                                 std::to_string(object.type_id) +
+                                " actual_type_name=" +
+                                describe_type(object.type_id) +
                                 " expected_type=" +
-                                std::to_string(field.owner_type_id));
+                                std::to_string(field.owner_type_id) +
+                                " expected_type_name=" +
+                                describe_type(field.owner_type_id));
                         }
 
                         if (field.instance_slot >= object.fields.size())
@@ -3360,14 +3401,24 @@ std::int32_t VirtualMachine::execute(
                             throw std::runtime_error(
                                 "field store targets the wrong receiver type at ip=" +
                                 std::to_string(ip) +
+                                " function=" +
+                                std::to_string(function.function_id) +
+                                " function_name=" +
+                                function.name +
                                 " field=" +
                                 std::to_string(instruction.immediate) +
+                                " field-name=" +
+                                describe_field(static_cast<std::uint32_t>(instruction.immediate)) +
                                 " receiver=" +
                                 std::to_string(register_values[instruction.destination]) +
                                 " actual_type=" +
                                 std::to_string(object.type_id) +
+                                " actual_type_name=" +
+                                describe_type(object.type_id) +
                                 " expected_type=" +
-                                std::to_string(field.owner_type_id));
+                                std::to_string(field.owner_type_id) +
+                                " expected_type_name=" +
+                                describe_type(field.owner_type_id));
                         }
 
                         if (field.instance_slot >= object.fields.size())

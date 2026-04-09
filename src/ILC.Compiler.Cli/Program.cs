@@ -131,7 +131,39 @@ if (moduleMethods.Length > 0)
         declaredProperties,
         bindingResult.Compilation.GetAllConstants());
     var closure = reachableClosure!;
-    var lowerer = new Lowerer(closure.Methods, closure.Fields, closure.Types, closure.Properties, bindingResult.Compilation.GetAllConstants());
+    var knownFields = declaredFields
+        .Concat(closure.Fields)
+        .GroupBy(field => $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}", StringComparer.Ordinal)
+        .Select(group => group.First())
+        .ToArray();
+    var knownTypes = bindingResult.Compilation.Types
+        .Concat(closure.Types)
+        .GroupBy(
+            type => type is NamedTypeSymbol namedType
+                ? $"{namedType.Name}`{namedType.GenericArity}:{type.Name}"
+                : type.Name,
+            StringComparer.Ordinal)
+        .Select(group => group
+            .OrderByDescending(type => type is NamedTypeSymbol namedType
+                ? (namedType.Methods?.Count ?? 0) +
+                  (namedType.Fields?.Count ?? 0) +
+                  (namedType.Properties?.Count ?? 0) +
+                  (namedType.InterfaceTypes?.Count ?? 0) +
+                  (namedType.TypeArguments?.Count ?? 0)
+                : 0)
+            .First())
+        .ToArray();
+    var knownProperties = declaredProperties
+        .Concat(closure.Properties)
+        .GroupBy(property => $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}", StringComparer.Ordinal)
+        .Select(group => group.First())
+        .ToArray();
+    var lowerer = new Lowerer(
+        moduleMethods,
+        knownFields,
+        knownTypes,
+        knownProperties,
+        bindingResult.Compilation.GetAllConstants());
     if (debugEnabled)
     {
         await File.WriteAllTextAsync(
@@ -158,8 +190,8 @@ if (moduleMethods.Length > 0)
                 sourcePath,
                 mergedSyntaxTree,
                 bindingResult,
-                declaredMethods,
-                declaredFields,
+                closure.Methods,
+                closure.Fields,
                 module,
                 functionCodeOffsets,
                 ilbImage,
@@ -245,8 +277,8 @@ static string BuildListing(
     string sourcePath,
     SyntaxTree mergedSyntaxTree,
     BindingResult bindingResult,
-    IReadOnlyList<MethodSymbol> declaredMethods,
-    IReadOnlyList<FieldSymbol> declaredFields,
+    IReadOnlyList<MethodSymbol> moduleMethods,
+    IReadOnlyList<FieldSymbol> moduleFields,
     BytecodeModule module,
     IReadOnlyDictionary<uint, (uint CodeOffset, uint CodeSize)> functionCodeOffsets,
     IlbImage ilbImage,
@@ -258,8 +290,8 @@ static string BuildListing(
     builder.AppendLine($"members: {mergedSyntaxTree.Root.Members.Count}");
     builder.AppendLine($"globals: {bindingResult.Compilation.Globals.Count}");
     builder.AppendLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
-    builder.AppendLine($"declared methods: {declaredMethods.Count}");
-    builder.AppendLine($"declared fields: {declaredFields.Count}");
+    builder.AppendLine($"declared methods: {moduleMethods.Count}");
+    builder.AppendLine($"declared fields: {moduleFields.Count}");
     builder.AppendLine($"module functions: {module.Functions.Count}");
     builder.AppendLine($"module array-shapes: {module.ArrayShapes.Count}");
     builder.AppendLine($"ilb bytes: {ilbImage.Bytes.Length}");
@@ -267,12 +299,45 @@ static string BuildListing(
     builder.AppendLine($"entry point: {FormatMethod(entryPoint)}");
     builder.AppendLine();
 
-    var moduleTypes = CollectListingTypes(declaredMethods, declaredFields, bindingResult.Compilation.Types);
+    var moduleTypes = module.Types.Count > 0
+        ? module.Types
+        : CollectListingTypes(moduleMethods, moduleFields, bindingResult.Compilation.Types);
+    var typeIds = moduleTypes
+        .Select((type, index) => (type, id: index + 1))
+        .ToDictionary(pair => pair.type.Name, pair => pair.id, StringComparer.Ordinal);
     builder.AppendLine("[module types]");
     for (var typeIndex = 0; typeIndex < moduleTypes.Count; typeIndex++)
     {
         var type = moduleTypes[typeIndex];
         builder.AppendLine($"type {typeIndex + 1}: {type.Name}");
+    }
+
+    builder.AppendLine();
+    builder.AppendLine("[module fields]");
+    for (var fieldIndex = 0; fieldIndex < moduleFields.Count; fieldIndex++)
+    {
+        var field = moduleFields[fieldIndex];
+        var ownerTypeId = !string.IsNullOrWhiteSpace(field.DeclaringTypeName) && typeIds.TryGetValue(field.DeclaringTypeName, out var resolvedOwnerTypeId)
+            ? resolvedOwnerTypeId
+            : 0;
+        var fieldTypeId = typeIds.TryGetValue(field.Type.Name, out var resolvedFieldTypeId)
+            ? resolvedFieldTypeId
+            : 0;
+        builder.AppendLine($"field {fieldIndex + 1}: owner-type={ownerTypeId} owner-name={field.DeclaringTypeName ?? "<global>"} name={field.Name} type-id={fieldTypeId} type-name={field.Type.Name} static={field.IsStatic}");
+    }
+
+    builder.AppendLine();
+    builder.AppendLine("[module methods]");
+    for (var methodIndex = 0; methodIndex < moduleMethods.Count; methodIndex++)
+    {
+        var method = moduleMethods[methodIndex];
+        var ownerTypeId = !string.IsNullOrWhiteSpace(method.DeclaringTypeName) && typeIds.TryGetValue(method.DeclaringTypeName, out var resolvedOwnerTypeId)
+            ? resolvedOwnerTypeId
+            : 0;
+        var returnTypeId = method.ReturnType != TypeSymbol.Void && typeIds.TryGetValue(method.ReturnType.Name, out var resolvedReturnTypeId)
+            ? resolvedReturnTypeId
+            : 0;
+        builder.AppendLine($"method {methodIndex + 1}: owner-type={ownerTypeId} owner-name={method.DeclaringTypeName ?? "<global>"} name={method.Name} argc={method.Parameters.Count} return-type={returnTypeId} return-name={method.ReturnType.Name} static={method.IsStatic} ctor={method.IsConstructor}");
     }
 
     builder.AppendLine();
@@ -537,6 +602,7 @@ static string BuildIrDump(
     foreach (var method in methods.OrderBy(method => $"{method.DeclaringTypeName ?? "<global>"}.{method.Name}", StringComparer.Ordinal))
     {
         builder.AppendLine($"method {FormatMethod(method)}({string.Join(", ", method.Parameters.Select(FormatParameter))}): {method.ReturnType.Name}");
+        AppendMethodLoweringContext(builder, method);
         try
         {
             var ir = lowerer.Lower(method);
@@ -584,6 +650,57 @@ static string BuildIrDump(
     }
 
     return builder.ToString();
+}
+
+static void AppendMethodLoweringContext(StringBuilder builder, MethodSymbol method)
+{
+    builder.AppendLine($"  debug-context: declaring={method.DeclaringTypeName ?? "<global>"} static={method.IsStatic} ctor={method.IsConstructor} synthetic={method.IsSynthetic}");
+    builder.AppendLine($"  debug-context: return={method.ReturnType.Name}");
+    if (method.Parameters.Count > 0)
+    {
+        builder.AppendLine($"  debug-context: params=[{string.Join(", ", method.Parameters.Select(parameter => $"{parameter.Name}:{parameter.Type.Name}"))}]");
+    }
+
+    if (!IsEnumerablePipelineMethod(method))
+    {
+        return;
+    }
+
+    builder.AppendLine("  debug-context: enumerable-pipeline-method=true");
+    builder.AppendLine($"  debug-context: declaring-open-generic={!string.IsNullOrWhiteSpace(method.DeclaringTypeName) && !method.DeclaringTypeName!.Contains('<', StringComparison.Ordinal)}");
+    if (method.Declaration?.Body is null)
+    {
+        return;
+    }
+
+    foreach (var statement in method.Declaration.Body.Statements)
+    {
+        AppendEnumerableNewExpressionDiagnostics(builder, statement);
+    }
+}
+
+static bool IsEnumerablePipelineMethod(MethodSymbol method) =>
+    method.DeclaringTypeName is not null &&
+    (method.Name == "Where" || method.Name == "Select") &&
+    method.DeclaringTypeName.StartsWith("Enumerable", StringComparison.Ordinal);
+
+static void AppendEnumerableNewExpressionDiagnostics(StringBuilder builder, StatementSyntax statement)
+{
+    switch (statement)
+    {
+        case ReturnStatementSyntax { Expression: NewExpressionSyntax newExpression }:
+            builder.AppendLine($"  debug-new: type={newExpression.TypeName.ToDisplayString()} args={newExpression.Arguments.Count}");
+            break;
+        case LocalVariableDeclarationStatementSyntax localVariableDeclaration:
+            foreach (var declarator in localVariableDeclaration.Declarators)
+            {
+                if (declarator.Initializer is NewExpressionSyntax newExpression)
+                {
+                    builder.AppendLine($"  debug-new: local={declarator.Identifier.Text} type={newExpression.TypeName.ToDisplayString()} args={newExpression.Arguments.Count}");
+                }
+            }
+            break;
+    }
 }
 
 static string BuildDebugSymbols(

@@ -2622,7 +2622,7 @@ internal sealed class Parser
             return ParsePostfixExpression(new NewExpressionSyntax(newKeyword, typeName, openParen, arguments, closeParen));
         }
 
-        var name = ParseQualifiedName();
+        var name = ParseExpressionQualifiedName();
         ExpressionSyntax expression;
         if (Current.Kind == SyntaxKind.OpenBracketToken)
         {
@@ -2653,6 +2653,133 @@ internal sealed class Parser
 
         expression = new NameExpressionSyntax(name);
         return ParsePostfixExpression(expression);
+    }
+
+    private QualifiedNameSyntax ParseExpressionQualifiedName()
+    {
+        var sawGeneric = false;
+        if (TryScanExpressionQualifiedTypeName(_position, out var nextPosition, ref sawGeneric) &&
+            sawGeneric &&
+            PeekAbsolute(nextPosition).Kind == SyntaxKind.DotToken)
+        {
+            return ParseExpressionQualifiedTypeReceiver(nextPosition);
+        }
+
+        return ParseQualifiedName();
+    }
+
+    private bool LooksLikeQualifiedTypeNameExpression()
+    {
+        var sawGeneric = false;
+        return TryScanExpressionQualifiedTypeName(_position, out var nextPosition, ref sawGeneric) &&
+               sawGeneric &&
+               PeekAbsolute(nextPosition).Kind == SyntaxKind.DotToken;
+    }
+
+    private bool TryScanExpressionQualifiedTypeName(int position, out int nextPosition, ref bool sawGeneric)
+    {
+        if (!TryScanExpressionQualifiedTypeNamePart(position, out position, ref sawGeneric))
+        {
+            nextPosition = position;
+            return false;
+        }
+
+        while (PeekAbsolute(position).Kind == SyntaxKind.DotToken &&
+               PeekAbsolute(position + 1).Kind == SyntaxKind.IdentifierToken)
+        {
+            if (sawGeneric && PeekAbsolute(position + 2).Kind != SyntaxKind.LessToken)
+            {
+                break;
+            }
+
+            position++;
+            if (!TryScanExpressionQualifiedTypeNamePart(position, out position, ref sawGeneric))
+            {
+                nextPosition = position;
+                return false;
+            }
+        }
+
+        nextPosition = position;
+        return true;
+    }
+
+    private bool TryScanExpressionQualifiedTypeNamePart(int position, out int nextPosition, ref bool sawGeneric)
+    {
+        if (PeekAbsolute(position).Kind != SyntaxKind.IdentifierToken)
+        {
+            nextPosition = position;
+            return false;
+        }
+
+        position++;
+        if (PeekAbsolute(position).Kind == SyntaxKind.LessToken)
+        {
+            if (!TryScanExpressionTypeArgumentList(position, out position, ref sawGeneric))
+            {
+                nextPosition = position;
+                return false;
+            }
+        }
+
+        nextPosition = position;
+        return true;
+    }
+
+    private bool TryScanExpressionTypeArgumentList(int position, out int nextPosition, ref bool sawGeneric)
+    {
+        if (PeekAbsolute(position).Kind != SyntaxKind.LessToken)
+        {
+            nextPosition = position;
+            return false;
+        }
+
+        position++;
+        if (!TryScanExpressionQualifiedTypeName(position, out position, ref sawGeneric))
+        {
+            nextPosition = position;
+            return false;
+        }
+
+        while (PeekAbsolute(position).Kind == SyntaxKind.CommaToken)
+        {
+            position++;
+            if (!TryScanExpressionQualifiedTypeName(position, out position, ref sawGeneric))
+            {
+                nextPosition = position;
+                return false;
+            }
+        }
+
+        if (PeekAbsolute(position).Kind != SyntaxKind.GreaterToken)
+        {
+            nextPosition = position;
+            return false;
+        }
+
+        sawGeneric = true;
+        nextPosition = position + 1;
+        return true;
+    }
+
+    private QualifiedNameSyntax ParseExpressionQualifiedTypeReceiver(int stopPosition)
+    {
+        var parts = new List<SyntaxToken> { ParseQualifiedTypeNamePart() };
+        while (_position < stopPosition && Current.Kind == SyntaxKind.DotToken)
+        {
+            if (parts.Count > 0 &&
+                parts.Any(part => part.Text.Contains('<', StringComparison.Ordinal)) &&
+                Peek(1).Kind == SyntaxKind.IdentifierToken &&
+                Peek(2).Kind != SyntaxKind.LessToken)
+            {
+                break;
+            }
+
+            NextToken();
+            parts.Add(ParseQualifiedTypeNamePart());
+        }
+
+        return new QualifiedNameSyntax(parts);
     }
 
     private LambdaExpressionSyntax ParseLambdaExpression()
@@ -3095,6 +3222,9 @@ internal sealed class Parser
         var index = _position + offset;
         return index >= _tokens.Count ? _tokens[^1] : _tokens[index];
     }
+
+    private SyntaxToken PeekAbsolute(int index) =>
+        index < 0 || index >= _tokens.Count ? _tokens[^1] : _tokens[index];
 }
 
 public sealed class SyntaxTree

@@ -292,7 +292,7 @@ The shipped library lives under `libs/shipped` and currently includes:
   - `Task<T>`
   - `Mutex`
   - currently supports `IRunnable`, `ITaskRunnable<T>`, managed thread start/join, first `Task` / `Task<T>` abstractions, current thread id, sleeping, and host-backed mutex synchronization
-- `System.Collections.IEnumerator<T>`, `System.Collections.IEnumerable<T>`, `System.Collections.IReadOnlyList<T>`, `System.Collections.ICollection<T>`, `System.Collections.IList<T>`, `System.Collections.ListEnumerator<T>`, `System.Collections.List<T>`, `System.Collections.StringList`, `System.Collections.Dictionary<TKey, TValue>`
+- `System.Collections.IEnumerator<T>`, `System.Collections.IEnumerable<T>`, `System.Collections.IReadOnlyList<T>`, `System.Collections.ICollection<T>`, `System.Collections.IList<T>`, `System.Collections.Predicate<T>`, `System.Collections.Selector<TSource, TResult>`, `System.Collections.Enumerable<T>`, `System.Collections.Enumerable<TSource, TResult>`, `System.Collections.ListEnumerator<T>`, `System.Collections.List<T>`, `System.Collections.StringList`, `System.Collections.Dictionary<TKey, TValue>`
 - `System.File`
 - `System.Path`
 
@@ -306,8 +306,11 @@ Keep these in mind when evaluating language scope:
   accepted in the compiler front-end for the current bootstrap path.
 - A first generic runtime/library slice is available through
   `System.Collections.List<T>`, `ListEnumerator<T>`, `IEnumerable<T>`,
-  `IList<T>`, `ICollection<T>`, `IReadOnlyList<T>`, and `Dictionary<TKey, TValue>`.
+  `IList<T>`, `ICollection<T>`, `IReadOnlyList<T>`, `Predicate<T>`,
+  `Selector<TSource, TResult>`, `Enumerable<T>`,
+  `Enumerable<TSource, TResult>`, and `Dictionary<TKey, TValue>`.
 - Generic `foreach` lowering now also supports `IEnumerable<T>`.
+- `Enumerable<T>` now also ships lazy `Where`, `Take`, `Skip`, `Concat`, `Distinct`, `Append`, `Prepend`, and `Reverse`, plus eager helpers `Contains`, `Any`, `Count`, `First`, `FirstOrDefault`, `Single`, `SingleOrDefault`, `Last`, `LastOrDefault`, `ToList`, and `ToArray`.
 - Wider generic coverage beyond the current closed-specialization bootstrap
   slice is still future work.
 - Interface declarations and class interface lists are available.

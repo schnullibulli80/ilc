@@ -54,7 +54,18 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public interface ITaskResultSink<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Complete
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Completes the Task with the given result value.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Complete(value: T);
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Faults the Task with the given error message.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Fault(message: String);
 end;
 //══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -67,46 +78,57 @@ end;
 public class Thread
 begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • FIELDS •
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private var HandleValue: Integer;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • SleepCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to sleep the current thread for a given duration.</summary>
+  /// <param name="milliseconds">The duration to sleep in milliseconds.</param>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method SleepCore(milliseconds: Integer);
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • GetCurrentManagedIdCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to get the managed ID of the current thread.</summary>
+  /// <returns>The managed thread ID.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function GetCurrentManagedIdCore: Integer;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • StartCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to start a new thread with the given target.</summary>
+  /// <param name="target">The target runnable object.</param>
+  /// <returns>The handle for the started thread.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function StartCore(target: IRunnable): Integer;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • JoinCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to join the current thread with the specified thread.</summary>
+  /// <param name="handle">The handle for the thread to join.</param>
+  //———————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method JoinCore(handle: Integer);
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • IsAliveCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to check if the thread with the given handle is still alive.</summary>
+  /// <param name="handle">The handle for the thread to check.</param>
+  /// <returns>True if the thread is alive; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function IsAliveCore(handle: Integer): Boolean;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • CONSTRUCTOR •
+  // • FIELDS •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public constructor;
-  begin
-    HandleValue := 0;
-  end;
+  /// <summary>Opaque handle value for the underlying host thread.</summary>
+  private var HandleValue: Integer;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • PROPERTY • CurrentManagedId
+  // • PROPERTIES •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the managed ID of the current thread.</summary>
   public static property CurrentManagedId: Integer
   begin
     get
@@ -115,9 +137,7 @@ begin
     end;
   end;
 
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • PROPERTY • IsAlive
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the thread is still alive.</summary>
   public property IsAlive: Boolean
   begin
     get
@@ -132,7 +152,20 @@ begin
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Thread class with an invalid handle.</summary>
+  public constructor;
+  begin
+    HandleValue := 0;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Start
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Starts a new thread with the given target.</summary>
+  /// <param name="target">The target runnable object.</param>
+  /// <returns>The new thread instance.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Start(target: IRunnable): Thread;
   begin
@@ -149,6 +182,9 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Sleep
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Pauses the current thread for the specified amount of time.</summary>
+  /// <param name="milliseconds">The number of milliseconds to sleep.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static method Sleep(milliseconds: Integer);
   begin
     if milliseconds <= 0 then
@@ -161,6 +197,8 @@ begin
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Join
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Waits for the thread to complete.</summary>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Join;
   begin
@@ -182,41 +220,48 @@ end;
 public class Mutex
 begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • FIELDS •
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private var HandleValue: Integer;
-
-  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • CreateCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Creates a new instance of the underlying host mutex.</summary>
+  /// <returns>The handle for the created mutex.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function CreateCore: Integer;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • WaitOneCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to wait on the mutex with the given handle.</summary>
+  /// <param name="handle">The handle for the mutex to wait on.</param>
+  /// <returns>True if the wait succeeded and the mutex was acquired; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern function WaitOneCore(handle: Integer): Boolean;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • ReleaseCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to release the mutex with the given handle.</summary>
+  /// <param name="handle">The handle for the mutex to release.</param>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method ReleaseCore(handle: Integer);
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • EXTERNAL • CloseCore
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Host call to close the mutex with the given handle.</summary>
+  /// <param name="handle">The handle for the mutex to close.</param>
+  //———————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static extern method CloseCore(handle: Integer);
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • CONSTRUCTOR •
+  // • FIELDS •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public constructor;
-  begin
-    HandleValue := CreateCore();
-  end;
+  /// <summary>Opaque handle value for the underlying host mutex.</summary>
+  private var HandleValue: Integer;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • PROPERTY • IsValid
+  // • PROPERTIES •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the mutex was successfully created and is valid for use.</summary>
   public property IsValid: Boolean
   begin
     get
@@ -226,7 +271,20 @@ begin
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Mutex"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    HandleValue := CreateCore();
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • WaitOne
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Waits for the mutex to be available.</summary>
+  /// <returns>True if the wait succeeded and the mutex was acquired; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function WaitOne: Boolean;
   begin
@@ -241,6 +299,8 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Release
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Releases the mutex.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Release;
   begin
     if HandleValue <= 0 then
@@ -253,6 +313,8 @@ begin
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Close
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Closes the mutex.</summary>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Close;
   begin
@@ -274,15 +336,32 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TaskWorker: IRunnable
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The Task instance that owns this worker and will be signaled upon completion or fault.</summary>
   private var OwnerValue: Task;
+  /// <summary>The target IRunnable that will be executed by this worker.</summary>
   private var TargetValue: IRunnable;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the TaskWorker class with the given owner and target.</summary>
+  /// <param name="owner">The Task instance that owns this worker.</param>
+  /// <param name="target">The IRunnable to execute.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(owner: Task; target: IRunnable);
   begin
     OwnerValue := owner;
     TargetValue := target;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Executes the target IRunnable and signals the owner Task upon completion or fault.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Run;
   begin
     try
@@ -306,15 +385,32 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TaskResultWorker<T>: IRunnable
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The Task&lt;T&gt; instance that owns this worker and will be signaled upon completion or fault.</summary>
   private var OwnerValue: ITaskResultSink<T>;
+  /// <summary>The target ITaskRunnable&lt;T&gt; that will be executed by this worker.</summary>
   private var TargetValue: ITaskRunnable<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the TaskResultWorker class with the given owner and target.</summary>
+  /// <param name="owner">The Task&lt;T&gt; instance that owns this worker.</param>
+  /// <param name="target">The ITaskRunnable&lt;T&gt; to execute.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(owner: ITaskResultSink<T>; target: ITaskRunnable<T>);
   begin
     OwnerValue := owner;
     TargetValue := target;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Executes the target ITaskRunnable&lt;T&gt; and signals the owner Task&lt;T&gt; upon completion with the result or fault.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Run;
   begin
     try
@@ -337,19 +433,22 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Task
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Thread instance for the running task.</summary>
   private var ThreadValue: Thread;
+  /// <summary>Indicates whether the task has completed.</summary>
   private var CompletedValue: Boolean;
+  /// <summary>Indicates whether the task has faulted.</summary>
   private var FaultedValue: Boolean;
+  /// <summary>The error message for the faulted task.</summary>
   private var ErrorMessageValue: String;
 
-  public constructor;
-  begin
-    ThreadValue := nil;
-    CompletedValue := false;
-    FaultedValue := false;
-    ErrorMessageValue := nil;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the task has completed.</summary>
   public property IsCompleted: Boolean
   begin
     get
@@ -358,6 +457,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the task has faulted.</summary>
   public property IsFaulted: Boolean
   begin
     get
@@ -366,6 +466,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the error message for the faulted task.</summary>
   public property ErrorMessage: String
   begin
     get
@@ -373,7 +474,27 @@ begin
       return ErrorMessageValue;
     end;
   end;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Task class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    ThreadValue := nil;
+    CompletedValue := false;
+    FaultedValue := false;
+    ErrorMessageValue := nil;
+  end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Starts a new task with the given target.</summary>
+  /// <param name="target">The target IRunnable to execute in the task.</param>
+  /// <returns>The started Task instance.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Run(target: IRunnable): Task;
   begin
     if target = nil then
@@ -387,6 +508,11 @@ begin
     return task;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Wait
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Waits for the task to complete.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Wait;
   begin
     if ThreadValue = nil then
@@ -403,11 +529,22 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Complete
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Marks the task as completed successfully.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Complete;
   begin
     CompletedValue := true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Fault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Marks the task as faulted with the given error message.</summary>
+  /// <param name="message">The error message for the fault.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Fault(message: String);
   begin
     FaultedValue := true;
@@ -423,39 +560,26 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Task<T>: ITaskResultSink<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Thread instance for the running task.</summary>
   private var ThreadValue: Thread;
+  /// <summary>Indicates whether the task has completed.</summary>
   private var CompletedValue: Boolean;
+  /// <summary>Indicates whether the task has faulted.</summary>
   private var FaultedValue: Boolean;
+  /// <summary>The error message for the faulted task.</summary>
   private var ErrorMessageValue: String;
+  /// <summary>Indicates whether the task has a result value available.</summary>
   private var HasResultValue: Boolean;
+  /// <summary>The result value produced by the task.</summary>
   private var ResultValue: T;
 
-  public constructor;
-  begin
-    ThreadValue := nil;
-    CompletedValue := false;
-    FaultedValue := false;
-    ErrorMessageValue := nil;
-    HasResultValue := false;
-  end;
-
-  public constructor(target: ITaskRunnable<T>);
-  begin
-    ThreadValue := nil;
-    CompletedValue := false;
-    FaultedValue := false;
-    ErrorMessageValue := nil;
-    HasResultValue := false;
-
-    if target = nil then
-    begin
-      raise new Exception('Task target must not be nil.');
-    end;
-
-    var worker := new TaskResultWorker<T>(self, target);
-    ThreadValue := Thread.Start(worker);
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the task has completed.</summary>
   public property IsCompleted: Boolean
   begin
     get
@@ -464,6 +588,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the task has faulted.</summary>
   public property IsFaulted: Boolean
   begin
     get
@@ -472,6 +597,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the error message for the faulted task.</summary>
   public property ErrorMessage: String
   begin
     get
@@ -480,6 +606,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the result value produced by the task.</summary>
   public property Result: T
   begin
     get
@@ -503,6 +630,48 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Task<T> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor;
+  begin
+    ThreadValue := nil;
+    CompletedValue := false;
+    FaultedValue := false;
+    ErrorMessageValue := nil;
+    HasResultValue := false;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Task<T> class with the given target.</summary>
+  /// <param name="target">The target ITaskRunnable<T> to execute in the task.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public constructor(target: ITaskRunnable<T>);
+  begin
+    ThreadValue := nil;
+    CompletedValue := false;
+    FaultedValue := false;
+    ErrorMessageValue := nil;
+    HasResultValue := false;
+
+    if target = nil then
+    begin
+      raise new Exception('Task target must not be nil.');
+    end;
+
+    var worker := new TaskResultWorker<T>(self, target);
+    ThreadValue := Thread.Start(worker);
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Wait
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Waits for the task to complete.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Wait;
   begin
     if ThreadValue = nil then
@@ -519,6 +688,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Complete
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Marks the task as completed successfully with the given result value.</summary>
+  /// <param name="value">The result value produced by the task.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Complete(value: T);
   begin
     ResultValue := value;
@@ -526,6 +701,12 @@ begin
     CompletedValue := true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Fault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Marks the task as faulted with the given error message.</summary>
+  /// <param name="message">The error message for the fault.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Fault(message: String);
   begin
     FaultedValue := true;

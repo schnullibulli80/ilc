@@ -1156,6 +1156,152 @@ begin
       current := current + iteratedWord.Length;
     end;
 
+    var filteredWords := Enumerable<String>.Where(genericEnumerable, function(value: String): Boolean => value.Contains('w'));
+    var filteredEnumerator := filteredWords.GetEnumerator();
+    var filteredCount := 0;
+    while filteredEnumerator.MoveNext() do
+    begin
+      filteredCount := filteredCount + 1;
+      current := current + filteredEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-where=', filteredCount);
+    var takenWords := Enumerable<String>.Take(genericEnumerable, 1);
+    var takenEnumerator := takenWords.GetEnumerator();
+    var takenLengthSum := 0;
+    while takenEnumerator.MoveNext() do
+    begin
+      takenLengthSum := takenLengthSum + takenEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-take=', takenLengthSum);
+    var skippedWords := Enumerable<String>.Skip(genericEnumerable, 1);
+    var skippedEnumerator := skippedWords.GetEnumerator();
+    var skippedLengthSum := 0;
+    while skippedEnumerator.MoveNext() do
+    begin
+      skippedLengthSum := skippedLengthSum + skippedEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-skip=', skippedLengthSum);
+    var concatenatedWords := Enumerable<String>.Concat(takenWords, skippedWords);
+    var concatenatedEnumerator := concatenatedWords.GetEnumerator();
+    var concatenatedLengthSum := 0;
+    while concatenatedEnumerator.MoveNext() do
+    begin
+      concatenatedLengthSum := concatenatedLengthSum + concatenatedEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-concat=', concatenatedLengthSum);
+    var duplicateWords := new List<String>();
+    duplicateWords.Add('one');
+    duplicateWords.Add('two');
+    duplicateWords.Add('one');
+    var distinctWords := Enumerable<String>.Distinct(duplicateWords);
+    var distinctEnumerator := distinctWords.GetEnumerator();
+    var distinctLengthSum := 0;
+    while distinctEnumerator.MoveNext() do
+    begin
+      distinctLengthSum := distinctLengthSum + distinctEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-distinct=', distinctLengthSum);
+    var appendedWords := Enumerable<String>.Append(genericEnumerable, 'zero');
+    var appendedEnumerator := appendedWords.GetEnumerator();
+    var appendedLengthSum := 0;
+    while appendedEnumerator.MoveNext() do
+    begin
+      appendedLengthSum := appendedLengthSum + appendedEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-append=', appendedLengthSum);
+    var prependedWords := Enumerable<String>.Prepend(genericEnumerable, 'zero');
+    var prependedEnumerator := prependedWords.GetEnumerator();
+    var prependedLengthSum := 0;
+    while prependedEnumerator.MoveNext() do
+    begin
+      prependedLengthSum := prependedLengthSum + prependedEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-prepend=', prependedLengthSum);
+    var reversedWords := Enumerable<String>.Reverse(genericEnumerable);
+    var reversedEnumerator := reversedWords.GetEnumerator();
+    var reversedLengthSum := 0;
+    while reversedEnumerator.MoveNext() do
+    begin
+      reversedLengthSum := reversedLengthSum + reversedEnumerator.Current.Length;
+    end;
+    Program.Trace('CHECKPOINT enumerable-reverse=', reversedLengthSum);
+    var containsTwo := Enumerable<String>.Contains(genericEnumerable, 'two');
+    Program.Trace('CHECKPOINT enumerable-contains=', containsTwo);
+    current := current + takenLengthSum + skippedLengthSum + concatenatedLengthSum + distinctLengthSum + appendedLengthSum + prependedLengthSum + reversedLengthSum + containsTwo;
+
+    var projectedLengths := Enumerable<String, Integer>.Select(genericEnumerable, function(value: String): Integer => value.Length);
+    var projectedEnumerator := projectedLengths.GetEnumerator();
+    var projectedLengthSum := 0;
+    while projectedEnumerator.MoveNext() do
+    begin
+      projectedLengthSum := projectedLengthSum + projectedEnumerator.Current;
+    end;
+    Program.Trace('CHECKPOINT enumerable-select=', projectedLengthSum);
+    current := current + projectedLengthSum;
+
+    var hasWordWithW := Enumerable<String>.Any(genericEnumerable, function(value: String): Boolean => value.Contains('w'));
+    Program.Trace('CHECKPOINT enumerable-any=', hasWordWithW);
+    var wordsContainingO := Enumerable<String>.Count(genericEnumerable, function(value: String): Boolean => value.Contains('o'));
+    Program.Trace('CHECKPOINT enumerable-count=', wordsContainingO);
+    var firstWord := Enumerable<String>.FirstOrDefault(genericEnumerable);
+    Program.Trace('CHECKPOINT enumerable-first=', firstWord.Length);
+    var firstWordWithW := Enumerable<String>.FirstOrDefault(genericEnumerable, function(value: String): Boolean => value.Contains('w'));
+    Program.Trace('CHECKPOINT enumerable-first-match=', firstWordWithW.Length);
+    var missingWord := Enumerable<String>.FirstOrDefault(genericEnumerable, function(value: String): Boolean => value.Contains('z'));
+    Program.Trace('CHECKPOINT enumerable-first-miss=', missingWord = nil);
+    var firstExactWord := Enumerable<String>.First(genericEnumerable);
+    Program.Trace('CHECKPOINT enumerable-first-required=', firstExactWord.Length);
+    var firstRequiredWithW := Enumerable<String>.First(genericEnumerable, function(value: String): Boolean => value.Contains('w'));
+    Program.Trace('CHECKPOINT enumerable-first-required-match=', firstRequiredWithW.Length);
+    var missingFirstError := 0;
+    try
+      var shouldFail := Enumerable<String>.First(genericEnumerable, function(value: String): Boolean => value.Contains('z'));
+      Program.Trace('UNEXPECTED enumerable-first-failure=', shouldFail.Length);
+    except
+      on ex: Exception do
+      begin
+        missingFirstError := ex.Message = 'Enumerable sequence contains no matching element.';
+      end;
+    end;
+    Program.Trace('CHECKPOINT enumerable-first-required-miss=', missingFirstError);
+    var singleWord := Enumerable<String>.Single(genericEnumerable, function(value: String): Boolean => value.Contains('n'));
+    Program.Trace('CHECKPOINT enumerable-single=', singleWord.Length);
+    var singleOrDefaultWord := Enumerable<String>.SingleOrDefault(genericEnumerable, function(value: String): Boolean => value.Contains('x'));
+    Program.Trace('CHECKPOINT enumerable-single-default=', singleOrDefaultWord = nil);
+    var duplicateSingleError := 0;
+    try
+      var duplicateWord := Enumerable<String>.Single(genericEnumerable, function(value: String): Boolean => value.Contains('o'));
+      Program.Trace('UNEXPECTED enumerable-single-failure=', duplicateWord.Length);
+    except
+      on ex: Exception do
+      begin
+        duplicateSingleError := ex.Message = 'Enumerable sequence contains more than one matching element.';
+      end;
+    end;
+    Program.Trace('CHECKPOINT enumerable-single-duplicate=', duplicateSingleError);
+    var lastWord := Enumerable<String>.Last(genericEnumerable);
+    Program.Trace('CHECKPOINT enumerable-last=', lastWord.Length);
+    var lastWordWithO := Enumerable<String>.Last(genericEnumerable, function(value: String): Boolean => value.Contains('o'));
+    Program.Trace('CHECKPOINT enumerable-last-match=', lastWordWithO.Length);
+    var missingLast := Enumerable<String>.LastOrDefault(genericEnumerable, function(value: String): Boolean => value.Contains('z'));
+    Program.Trace('CHECKPOINT enumerable-last-miss=', missingLast = nil);
+    var missingLastError := 0;
+    try
+      var shouldFailLast := Enumerable<String>.Last(genericEnumerable, function(value: String): Boolean => value.Contains('z'));
+      Program.Trace('UNEXPECTED enumerable-last-failure=', shouldFailLast.Length);
+    except
+      on ex: Exception do
+      begin
+        missingLastError := ex.Message = 'Enumerable sequence contains no matching element.';
+      end;
+    end;
+    Program.Trace('CHECKPOINT enumerable-last-required-miss=', missingLastError);
+    var wordCopy := Enumerable<String>.ToList(genericEnumerable);
+    Program.Trace('CHECKPOINT enumerable-tolist=', wordCopy.Count);
+    var wordArray := Enumerable<String>.ToArray(genericEnumerable);
+    Program.Trace('CHECKPOINT enumerable-toarray=', wordArray.Length);
+    current := current + hasWordWithW + wordsContainingO + firstWord.Length + firstWordWithW.Length + (missingWord = nil) + firstExactWord.Length + firstRequiredWithW.Length + missingFirstError + singleWord.Length + (singleOrDefaultWord = nil) + duplicateSingleError + lastWord.Length + lastWordWithO.Length + (missingLast = nil) + missingLastError + wordCopy.Count + wordCopy[1].Length + wordArray.Length + wordArray[0].Length;
+
     var wordLengths: Dictionary<String, Integer> := new Dictionary<String, Integer>();
     wordLengths.Add('alpha', 5);
     wordLengths['beta'] := 4;

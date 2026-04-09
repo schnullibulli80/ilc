@@ -114,7 +114,8 @@ public sealed record BytecodeFunction(
 public sealed record BytecodeModule(
     IReadOnlyList<BytecodeFunction> Functions,
     IReadOnlyList<BytecodeModuleArrayShapeInfo> ArrayShapes,
-    IReadOnlyList<BytecodeModuleExceptionHandlerInfo> ExceptionHandlers);
+    IReadOnlyList<BytecodeModuleExceptionHandlerInfo> ExceptionHandlers,
+    IReadOnlyList<TypeSymbol> Types);
 
 public sealed record ReachableCompilationClosure(
     IReadOnlyList<MethodSymbol> Methods,
@@ -163,7 +164,7 @@ public static class ReachableCompilationBuilder
                 .ToArray();
             var knownTypes = declaredTypes
                 .Concat(typeMap.Values)
-                .GroupBy(type => type.Name, StringComparer.Ordinal)
+                .GroupBy(GetTypeIdentityKey, StringComparer.Ordinal)
                 .Select(group => group
                     .OrderByDescending(type => type is NamedTypeSymbol namedType
                         ? (namedType.Methods?.Count ?? 0) +
@@ -183,7 +184,23 @@ public static class ReachableCompilationBuilder
 
             foreach (var method in knownMethods)
             {
-                var ir = lowerer.Lower(method);
+                IrFunction ir;
+                try
+                {
+                    ir = lowerer.Lower(method);
+                }
+                catch (Exception ex) when (IsEnumerablePipelineMethod(method))
+                {
+                    var candidates = knownMethods
+                        .Where(candidate => candidate.Name == method.Name)
+                        .OrderBy(candidate => candidate.DeclaringTypeName, StringComparer.Ordinal)
+                        .ThenBy(candidate => candidate.Parameters.Count)
+                        .Select(FormatMethodDiagnostic)
+                        .ToArray();
+                    throw new InvalidOperationException(
+                        $"Reachability lowering failed for enumerable pipeline method. current={FormatMethodDiagnostic(method)} candidates=[{string.Join(" | ", candidates)}] inner={ex.Message}",
+                        ex);
+                }
                 foreach (var instruction in ir.Blocks.SelectMany(block => block.Instructions))
                 {
                     AddInstructionDependencies(instruction);
@@ -262,8 +279,15 @@ public static class ReachableCompilationBuilder
                     return;
                 }
 
+                method = NormalizeMethod(method);
+
                 var key = GetMethodKey(method);
-                if (!methodMap.ContainsKey(key))
+                if (!methodMap.TryGetValue(key, out var existingMethod))
+                {
+                    methodMap[key] = method;
+                    MarkChanged();
+                }
+                else if (IsRicherMethod(method, existingMethod))
                 {
                     methodMap[key] = method;
                     MarkChanged();
@@ -311,6 +335,26 @@ public static class ReachableCompilationBuilder
                         }
                     }
                 }
+            }
+
+            MethodSymbol NormalizeMethod(MethodSymbol method)
+            {
+                if (string.IsNullOrWhiteSpace(method.DeclaringTypeName))
+                {
+                    return method;
+                }
+
+                if (SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, [.. typeMap.Values, .. declaredTypes]) is not NamedTypeSymbol declaringType)
+                {
+                    return method;
+                }
+
+                var normalized = declaringType.Methods.FirstOrDefault(candidate =>
+                    candidate.Name == method.Name &&
+                    candidate.IsConstructor == method.IsConstructor &&
+                    candidate.IsStatic == method.IsStatic &&
+                    candidate.Parameters.Count == method.Parameters.Count);
+                return normalized ?? method;
             }
 
             void AddInterfaceDispatchMethods(NamedTypeSymbol concreteType)
@@ -502,6 +546,19 @@ public static class ReachableCompilationBuilder
     private static string GetMethodKey(MethodSymbol method) =>
         $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}/{method.Parameters.Count}";
 
+    private static string GetTypeIdentityKey(TypeSymbol type) =>
+        type is NamedTypeSymbol namedType
+            ? $"{namedType.Name}`{namedType.GenericArity}:{type.Name}"
+            : type.Name;
+
+    private static bool IsEnumerablePipelineMethod(MethodSymbol method) =>
+        method.DeclaringTypeName is not null &&
+        method.DeclaringTypeName.StartsWith("Enumerable", StringComparison.Ordinal) &&
+        (method.Name == "Where" || method.Name == "Select");
+
+    private static string FormatMethodDiagnostic(MethodSymbol method) =>
+        $"{method.DeclaringTypeName}.{method.Name}({string.Join(", ", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}";
+
     private static string GetFieldKey(FieldSymbol field) =>
         $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}";
 
@@ -517,6 +574,22 @@ public static class ReachableCompilationBuilder
         {
             types[candidate.Name] = candidate;
         }
+    }
+
+    private static bool IsRicherMethod(MethodSymbol candidate, MethodSymbol existing)
+    {
+        static int CountOpenGenericMarkers(TypeSymbol type) =>
+            type.Name.Contains("<T", StringComparison.Ordinal) ||
+            type.Name.Contains(", T", StringComparison.Ordinal) ||
+            type.Name.EndsWith("<T>", StringComparison.Ordinal)
+                ? 1
+                : 0;
+
+        static int Score(MethodSymbol method) =>
+            method.Parameters.Sum(parameter => CountOpenGenericMarkers(parameter.Type)) +
+            CountOpenGenericMarkers(method.ReturnType);
+
+        return Score(candidate) < Score(existing);
     }
 
     private static bool IsRicherType(TypeSymbol candidate, TypeSymbol existing)
@@ -744,7 +817,9 @@ public sealed class IlbSerializer
     {
         var methodList = methods.ToArray();
         var fieldList = fields.ToArray();
-        var typeList = CollectTypes(methodList, fieldList, types).ToArray();
+        var typeList = module.Types.Count > 0
+            ? module.Types.ToArray()
+            : CollectTypes(methodList, fieldList, types).ToArray();
         var stringTable = new IlbStringTableBuilder();
         var blobTable = new IlbBlobTableBuilder();
 
@@ -2221,9 +2296,14 @@ public sealed class BytecodeEmitter
     {
         var methodList = methods.ToArray();
         var fieldList = fields.ToArray();
-        var typeList = CollectReferencedTypes(methodList, fieldList, types).ToArray();
-        var functionIds = methodList
+        var loweredMethods = methodList
+            .Select(method => (Method: method, Ir: lowerer.Lower(method)))
+            .ToArray();
+        var typeList = CollectReferencedTypesFromIr(loweredMethods, fieldList, types).ToArray();
+        var functionEntries = methodList
             .Select((method, index) => (method, functionId: (uint)(index + 1)))
+            .ToArray();
+        var functionIds = functionEntries
             .ToDictionary(pair => GetMethodKey(pair.method), pair => pair.functionId, StringComparer.Ordinal);
         var fieldIds = fieldList
             .Select((field, index) => (field, fieldId: (uint)(index + 1)))
@@ -2235,10 +2315,9 @@ public sealed class BytecodeEmitter
         var functions = new List<BytecodeFunction>();
         uint nextFunctionId = 1;
 
-        foreach (var method in methodList)
+        foreach (var (method, ir) in loweredMethods)
         {
-            var ir = lowerer.Lower(method);
-            functions.Add(Emit(nextFunctionId++, ir, method, functionIds, fieldIds, typeIds));
+            functions.Add(Emit(nextFunctionId++, ir, method, functionEntries, functionIds, fieldIds, typeIds));
         }
 
         var moduleShapes = functions
@@ -2255,7 +2334,169 @@ public sealed class BytecodeEmitter
                 handler.CatchTypeId)))
             .ToArray();
 
-        return new BytecodeModule(functions, moduleShapes, moduleExceptionHandlers);
+        return new BytecodeModule(functions, moduleShapes, moduleExceptionHandlers, typeList);
+    }
+
+    private static TypeSymbol[] CollectReferencedTypesFromIr(
+        IEnumerable<(MethodSymbol Method, IrFunction Ir)> loweredMethods,
+        IEnumerable<FieldSymbol> fields,
+        IEnumerable<TypeSymbol> declaredTypes)
+    {
+        var typeList = CollectReferencedTypes(loweredMethods.Select(entry => entry.Method), fields, declaredTypes)
+            .ToDictionary(type => type.Name, type => type, StringComparer.Ordinal);
+        var declaredTypeList = declaredTypes.ToArray();
+
+        void AddOrPreferRicher(TypeSymbol? candidate)
+        {
+            if (candidate is null)
+            {
+                return;
+            }
+
+            if (!typeList.TryGetValue(candidate.Name, out var existing))
+            {
+                typeList[candidate.Name] = candidate;
+                return;
+            }
+
+            if (candidate is NamedTypeSymbol && existing is not NamedTypeSymbol)
+            {
+                typeList[candidate.Name] = candidate;
+                return;
+            }
+
+            if (candidate is not NamedTypeSymbol candidateNamed || existing is not NamedTypeSymbol existingNamed)
+            {
+                return;
+            }
+
+            var candidateScore =
+                candidateNamed.Methods.Count +
+                candidateNamed.Fields.Count +
+                candidateNamed.Properties.Count +
+                candidateNamed.InterfaceTypes.Count +
+                (candidateNamed.BaseType is null ? 0 : 1) +
+                (candidateNamed.GenericParameters?.Count ?? 0) +
+                (candidateNamed.TypeArguments?.Count ?? 0);
+            var existingScore =
+                existingNamed.Methods.Count +
+                existingNamed.Fields.Count +
+                existingNamed.Properties.Count +
+                existingNamed.InterfaceTypes.Count +
+                (existingNamed.BaseType is null ? 0 : 1) +
+                (existingNamed.GenericParameters?.Count ?? 0) +
+                (existingNamed.TypeArguments?.Count ?? 0);
+
+            if (candidateScore > existingScore)
+            {
+                typeList[candidate.Name] = candidate;
+            }
+        }
+
+        void AddByName(string? typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+            {
+                return;
+            }
+
+            if (typeList.TryGetValue(typeName, out var existing))
+            {
+                AddOrPreferRicher(existing);
+                return;
+            }
+
+            var resolvedType = ResolveTypeReferencePreservingClosedGenerics(typeName, [.. typeList.Values, .. declaredTypeList]);
+            if (resolvedType is not null)
+            {
+                AddOrPreferRicher(resolvedType);
+            }
+        }
+
+        void AddMethodSurface(MethodSymbol? method)
+        {
+            if (method is null)
+            {
+                return;
+            }
+
+            AddByName(method.DeclaringTypeName);
+            if (method.ReturnType != TypeSymbol.Void)
+            {
+                AddOrPreferRicher(method.ReturnType);
+            }
+
+            foreach (var parameter in method.Parameters)
+            {
+                AddOrPreferRicher(parameter.Type);
+            }
+        }
+
+        foreach (var (_, ir) in loweredMethods)
+        {
+            foreach (var instruction in ir.Blocks.SelectMany(block => block.Instructions))
+            {
+                switch (instruction.OpCode)
+                {
+                    case IrOpCode.NewObject:
+                        AddByName(instruction.Operand as string);
+                        break;
+                    case IrOpCode.NewArray:
+                        AddByName(((IrNewArrayTarget)instruction.Operand!).ElementTypeName);
+                        break;
+                    case IrOpCode.Call:
+                    case IrOpCode.CallVirtual:
+                    {
+                        var callTarget = (IrCallTarget)instruction.Operand!;
+                        AddMethodSurface(callTarget.Method);
+                        if (callTarget.Receiver is not null)
+                        {
+                            AddOrPreferRicher(callTarget.Receiver.Type);
+                        }
+
+                        foreach (var argument in callTarget.Arguments)
+                        {
+                            AddOrPreferRicher(argument.Type);
+                        }
+
+                        break;
+                    }
+                    case IrOpCode.LoadField:
+                    case IrOpCode.LoadStaticField:
+                    case IrOpCode.StoreField:
+                    case IrOpCode.StoreStaticField:
+                    {
+                        var fieldTarget = (IrFieldTarget)instruction.Operand!;
+                        AddByName(fieldTarget.Field.DeclaringTypeName);
+                        AddOrPreferRicher(fieldTarget.Field.Type);
+                        if (fieldTarget.Receiver is not null)
+                        {
+                            AddOrPreferRicher(fieldTarget.Receiver.Type);
+                        }
+
+                        break;
+                    }
+                    case IrOpCode.LoadConstant when instruction.Operand is MethodSymbol methodOperand:
+                        AddMethodSurface(methodOperand);
+                        break;
+                    case IrOpCode.TypeIsReference:
+                    case IrOpCode.AsReference:
+                    {
+                        var typeCheckTarget = (IrTypeCheckTarget)instruction.Operand!;
+                        AddByName(typeCheckTarget.TypeName);
+                        AddOrPreferRicher(typeCheckTarget.Value.Type);
+                        break;
+                    }
+                }
+            }
+
+            foreach (var handler in ir.ExceptionHandlers)
+            {
+                AddByName(handler.CatchTypeName);
+            }
+        }
+
+        return typeList.Values.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray();
     }
 
     private static TypeSymbol[] CollectReferencedTypes(IEnumerable<MethodSymbol> methods, IEnumerable<FieldSymbol> fields, IEnumerable<TypeSymbol> declaredTypes)
@@ -2320,7 +2561,7 @@ public sealed class BytecodeEmitter
         {
             AddOrPreferRicherType(field.Type);
             if (!string.IsNullOrEmpty(field.DeclaringTypeName) &&
-                SemanticFacts.ResolveTypeReference(field.DeclaringTypeName, declaredTypeList) is { } resolvedFieldDeclaringType)
+                ResolveTypeReferencePreservingClosedGenerics(field.DeclaringTypeName, declaredTypeList) is { } resolvedFieldDeclaringType)
             {
                 AddOrPreferRicherType(resolvedFieldDeclaringType);
             }
@@ -2329,7 +2570,7 @@ public sealed class BytecodeEmitter
         foreach (var method in methods)
         {
             if (!string.IsNullOrEmpty(method.DeclaringTypeName) &&
-                SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, declaredTypeList) is { } resolvedMethodDeclaringType)
+                ResolveTypeReferencePreservingClosedGenerics(method.DeclaringTypeName, declaredTypeList) is { } resolvedMethodDeclaringType)
             {
                 AddOrPreferRicherType(resolvedMethodDeclaringType);
             }
@@ -2348,26 +2589,304 @@ public sealed class BytecodeEmitter
         return types.Values.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray();
     }
 
-    private BytecodeFunction Emit(uint functionId, IrFunction function, MethodSymbol method, IReadOnlyDictionary<string, uint> functionIds, IReadOnlyDictionary<string, uint> fieldIds, IReadOnlyDictionary<string, uint> typeIds)
+    private static TypeSymbol? ResolveTypeReferencePreservingClosedGenerics(string typeName, IEnumerable<TypeSymbol> knownTypes)
     {
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            return null;
+        }
+
+        var knownTypeArray = knownTypes.ToArray();
+        if (!TryParseConstructedTypeReference(typeName, out var genericTypeName, out var genericArgumentNames))
+        {
+            return SemanticFacts.ResolveTypeReference(typeName, knownTypeArray);
+        }
+
+        var resolvedArguments = genericArgumentNames
+            .Select(argumentName => ResolveTypeReferencePreservingClosedGenerics(argumentName, knownTypeArray))
+            .ToArray();
+        if (resolvedArguments.Any(argument => argument is null))
+        {
+            return SemanticFacts.ResolveTypeReference(typeName, knownTypeArray);
+        }
+
+        var simpleTypeName = genericTypeName.Contains('.')
+            ? genericTypeName[(genericTypeName.LastIndexOf('.') + 1)..]
+            : genericTypeName;
+        var definition = knownTypeArray
+            .OfType<NamedTypeSymbol>()
+            .FirstOrDefault(candidate =>
+                candidate.Name == simpleTypeName &&
+                candidate.GenericArity == resolvedArguments.Length &&
+                candidate.GenericDefinition is null);
+        if (definition is null)
+        {
+            return SemanticFacts.ResolveTypeReference(typeName, knownTypeArray);
+        }
+
+        return ConstructClosedGenericTypeLocal(definition, resolvedArguments!.Cast<TypeSymbol>().ToArray(), knownTypeArray);
+    }
+
+    private static NamedTypeSymbol ConstructClosedGenericTypeLocal(
+        NamedTypeSymbol definition,
+        IReadOnlyList<TypeSymbol> typeArguments,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (definition.GenericParameters is null || definition.GenericParameters.Count != typeArguments.Count)
+        {
+            return definition;
+        }
+
+        var substitution = definition.GenericParameters
+            .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
+            .ToDictionary(entry => entry.Name, entry => entry.argument, StringComparer.Ordinal);
+
+        TypeSymbol Substitute(TypeSymbol type)
+        {
+            if (substitution.TryGetValue(type.Name, out var replacement))
+            {
+                return replacement;
+            }
+
+            if (type is NamedTypeSymbol namedType &&
+                namedType.GenericDefinition is not null &&
+                namedType.TypeArguments is { Count: > 0 })
+            {
+                var substitutedArguments = namedType.TypeArguments.Select(Substitute).ToArray();
+                return ConstructClosedGenericTypeLocal(namedType.GenericDefinition, substitutedArguments, knownTypes);
+            }
+
+            if (TryParseConstructedTypeReference(type.Name, out var nestedGenericTypeName, out var nestedGenericArgumentNames))
+            {
+                var substitutedArguments = nestedGenericArgumentNames
+                    .Select(argumentName =>
+                    {
+                        if (substitution.TryGetValue(argumentName, out var substitutedArgument))
+                        {
+                            return substitutedArgument;
+                        }
+
+                        return ResolveTypeReferencePreservingClosedGenerics(argumentName, knownTypes) ?? new TypeSymbol(argumentName, true);
+                    })
+                    .Select(Substitute)
+                    .ToArray();
+                var simpleNestedTypeName = nestedGenericTypeName.Contains('.')
+                    ? nestedGenericTypeName[(nestedGenericTypeName.LastIndexOf('.') + 1)..]
+                    : nestedGenericTypeName;
+                var genericDefinition = knownTypes
+                    .OfType<NamedTypeSymbol>()
+                    .FirstOrDefault(candidate =>
+                        candidate.Name == simpleNestedTypeName &&
+                        candidate.GenericArity == substitutedArguments.Length &&
+                        candidate.GenericDefinition is null);
+                if (genericDefinition is not null)
+                {
+                    return ConstructClosedGenericTypeLocal(genericDefinition, substitutedArguments, knownTypes);
+                }
+            }
+
+            return type;
+        }
+
+        var closedName = $"{definition.Name}<{string.Join(", ", typeArguments.Select(argument => argument.Name))}>";
+        var fields = definition.Fields
+            .Select(field => field with
+            {
+                Type = Substitute(field.Type),
+                DeclaringTypeName = closedName
+            })
+            .ToArray();
+        var methods = definition.Methods
+            .Select(method => method with
+            {
+                ReturnType = Substitute(method.ReturnType),
+                Parameters = method.Parameters
+                    .Select(parameter => parameter with
+                    {
+                        Type = Substitute(parameter.Type)
+                    })
+                    .ToArray(),
+                DeclaringTypeName = closedName
+            })
+            .ToArray();
+        var properties = definition.Properties
+            .Select(property => property with
+            {
+                Type = Substitute(property.Type),
+                IndexParameter = property.IndexParameter is null
+                    ? null
+                    : property.IndexParameter with
+                    {
+                        Type = Substitute(property.IndexParameter.Type)
+                    },
+                GetterMethod = property.GetterMethod is null
+                    ? null
+                    : methods.FirstOrDefault(method => method.Name == property.GetterMethod.Name && method.Parameters.Count == property.GetterMethod.Parameters.Count),
+                SetterMethod = property.SetterMethod is null
+                    ? null
+                    : methods.FirstOrDefault(method => method.Name == property.SetterMethod.Name && method.Parameters.Count == property.SetterMethod.Parameters.Count),
+                ReadField = property.ReadField is null
+                    ? null
+                    : fields.FirstOrDefault(field => field.Name == property.ReadField.Name),
+                WriteField = property.WriteField is null
+                    ? null
+                    : fields.FirstOrDefault(field => field.Name == property.WriteField.Name),
+                DeclaringTypeName = closedName
+            })
+            .ToArray();
+
+        return new NamedTypeSymbol(
+            closedName,
+            definition.IsReferenceType,
+            definition.IsRecord,
+            definition.IsInterface,
+            definition.BaseType is null ? null : Substitute(definition.BaseType),
+            definition.InterfaceTypes.Select(Substitute).ToArray(),
+            methods,
+            fields,
+            definition.Constants,
+            properties,
+            definition.GenericArity,
+            null,
+            definition,
+            typeArguments,
+            definition.IsDelegate);
+    }
+
+    private static bool TryParseConstructedTypeReference(string displayName, out string genericTypeName, out IReadOnlyList<string> genericArgumentNames)
+    {
+        genericTypeName = string.Empty;
+        genericArgumentNames = [];
+        var lessThanIndex = displayName.IndexOf('<');
+        if (lessThanIndex <= 0 || !displayName.EndsWith(">", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        genericTypeName = displayName[..lessThanIndex].Trim();
+        genericArgumentNames = SplitGenericArgumentNames(displayName[(lessThanIndex + 1)..^1]);
+        return genericArgumentNames.Count > 0;
+    }
+
+    private static IReadOnlyList<string> SplitGenericArgumentNames(string value)
+    {
+        var arguments = new List<string>();
+        var start = 0;
+        var depth = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            switch (value[index])
+            {
+                case '<':
+                    depth++;
+                    break;
+                case '>':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    arguments.Add(value[start..index].Trim());
+                    start = index + 1;
+                    break;
+            }
+        }
+
+        var finalArgument = value[start..].Trim();
+        if (!string.IsNullOrEmpty(finalArgument))
+        {
+            arguments.Add(finalArgument);
+        }
+
+        return arguments;
+    }
+
+    private BytecodeFunction Emit(uint functionId, IrFunction function, MethodSymbol method, IReadOnlyList<(MethodSymbol method, uint functionId)> functionEntries, IReadOnlyDictionary<string, uint> functionIds, IReadOnlyDictionary<string, uint> fieldIds, IReadOnlyDictionary<string, uint> typeIds)
+    {
+        _functionEntries = functionEntries;
         _functionIds = functionIds;
         _fieldIds = fieldIds;
         _typeIds = typeIds;
         return Emit(functionId, function, method);
     }
 
+    private IReadOnlyList<(MethodSymbol method, uint functionId)> _functionEntries = [];
     private IReadOnlyDictionary<string, uint> _functionIds = new Dictionary<string, uint>();
     private IReadOnlyDictionary<string, uint> _fieldIds = new Dictionary<string, uint>();
     private IReadOnlyDictionary<string, uint> _typeIds = new Dictionary<string, uint>();
 
     private int ResolveFunctionId(MethodSymbol? method)
     {
+        static bool IsRicherMethodLocal(MethodSymbol candidate, MethodSymbol existing)
+        {
+            static int CountOpenGenericMarkers(TypeSymbol type) =>
+                type.Name.Contains("<T", StringComparison.Ordinal) ||
+                type.Name.Contains(", T", StringComparison.Ordinal) ||
+                type.Name.EndsWith("<T>", StringComparison.Ordinal)
+                    ? 1
+                    : 0;
+
+            static int Score(MethodSymbol value) =>
+                value.Parameters.Sum(parameter => CountOpenGenericMarkers(parameter.Type)) +
+                CountOpenGenericMarkers(value.ReturnType);
+
+            return Score(candidate) < Score(existing);
+        }
+
         if (method is null)
         {
             return 0;
         }
 
-        return _functionIds.TryGetValue(GetMethodKey(method), out var functionId) ? (int)functionId : 0;
+        if (_functionIds.TryGetValue(GetMethodKey(method), out var functionId))
+        {
+            return (int)functionId;
+        }
+
+        var targetDeclaringType = GetSimpleDeclaringTypeName(method.DeclaringTypeName);
+        var candidates = _functionEntries
+            .Where(entry =>
+                entry.method.Name == method.Name &&
+                entry.method.Parameters.Count == method.Parameters.Count &&
+                GetSimpleDeclaringTypeName(entry.method.DeclaringTypeName) == targetDeclaringType)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            return 0;
+        }
+
+        var exactDeclaringTypeCandidates = candidates
+            .Where(entry => string.Equals(entry.method.DeclaringTypeName, method.DeclaringTypeName, StringComparison.Ordinal))
+            .ToArray();
+
+        if (exactDeclaringTypeCandidates.Length > 0)
+        {
+            var bestExactCandidate = exactDeclaringTypeCandidates[0];
+            for (var index = 1; index < exactDeclaringTypeCandidates.Length; index++)
+            {
+                if (IsRicherMethodLocal(exactDeclaringTypeCandidates[index].method, bestExactCandidate.method))
+                {
+                    bestExactCandidate = exactDeclaringTypeCandidates[index];
+                }
+            }
+
+            return (int)bestExactCandidate.functionId;
+        }
+
+        if (!string.IsNullOrEmpty(method.DeclaringTypeName) && method.DeclaringTypeName.Contains('<', StringComparison.Ordinal))
+        {
+            return 0;
+        }
+
+        var bestCandidate = candidates[0];
+        for (var index = 1; index < candidates.Length; index++)
+        {
+            if (IsRicherMethodLocal(candidates[index].method, bestCandidate.method))
+            {
+                bestCandidate = candidates[index];
+            }
+        }
+
+        return (int)bestCandidate.functionId;
     }
 
     private int ResolveFieldId(FieldSymbol? field)
@@ -2388,4 +2907,35 @@ public sealed class BytecodeEmitter
 
     private static string GetFieldKey(FieldSymbol field) =>
         $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}";
+
+    private static bool TryParseMethodKey(string key, out string declaringTypeName, out string methodName, out int parameterCount)
+    {
+        declaringTypeName = string.Empty;
+        methodName = string.Empty;
+        parameterCount = 0;
+
+        var separatorIndex = key.IndexOf("::", StringComparison.Ordinal);
+        var slashIndex = key.LastIndexOf('/');
+        if (separatorIndex < 0 || slashIndex <= separatorIndex + 2)
+        {
+            return false;
+        }
+
+        declaringTypeName = key[..separatorIndex];
+        methodName = key[(separatorIndex + 2)..slashIndex];
+        return int.TryParse(key[(slashIndex + 1)..], out parameterCount);
+    }
+
+    private static string GetSimpleDeclaringTypeName(string? displayName)
+    {
+        if (string.IsNullOrEmpty(displayName))
+        {
+            return "<global>";
+        }
+
+        var lessThanIndex = displayName.IndexOf('<');
+        return lessThanIndex >= 0
+            ? displayName[..lessThanIndex]
+            : displayName;
+    }
 }
