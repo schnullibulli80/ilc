@@ -544,7 +544,7 @@ public static class ReachableCompilationBuilder
     }
 
     private static string GetMethodKey(MethodSymbol method) =>
-        $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}/{method.Parameters.Count}";
+        $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}({string.Join(",", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}";
 
     private static string GetTypeIdentityKey(TypeSymbol type) =>
         type is NamedTypeSymbol namedType
@@ -1602,7 +1602,7 @@ public sealed class IlbSerializer
     }
 
     private static string GetMethodKey(MethodSymbol method) =>
-        $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}/{method.Parameters.Count}";
+        $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}({string.Join(",", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}";
 
     private static string GetFieldKey(FieldSymbol field) =>
         $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}";
@@ -2903,7 +2903,7 @@ public sealed class BytecodeEmitter
         => _typeIds.TryGetValue(typeName, out var typeId) ? (int)typeId : 0;
 
     private static string GetMethodKey(MethodSymbol method) =>
-        $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}/{method.Parameters.Count}";
+        $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}({string.Join(",", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}";
 
     private static string GetFieldKey(FieldSymbol field) =>
         $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}";

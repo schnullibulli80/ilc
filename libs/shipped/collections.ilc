@@ -169,6 +169,55 @@ public delegate function Predicate<T>(value: T): Boolean;
 public delegate function Selector<TSource, TResult>(value: TSource): TResult;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • DELEGATE • CollectionSelector<TSource, TCollection>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public delegate function CollectionSelector<TSource, TCollection>(value: TSource): IEnumerable<TCollection>;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • DELEGATE • ResultSelector<TSource, TCollection, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public delegate function ResultSelector<TSource, TCollection, TResult>(source: TSource; value: TCollection): TResult;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • DELEGATE • GroupResultSelector<TSource, TCollection, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public delegate function GroupResultSelector<TSource, TCollection, TResult>(source: TSource; group: IEnumerable<TCollection>): TResult;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Grouping<TKey, TElement>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Grouping<TKey, TElement>: IEnumerable<TElement>
+begin
+  private var KeyValue: TKey;
+  private var ElementsValue: List<TElement>;
+
+  public property Key: TKey
+  begin
+    get
+    begin
+      return KeyValue;
+    end;
+  end;
+
+  public constructor(key: TKey);
+  begin
+    KeyValue := key;
+    ElementsValue := new List<TElement>();
+  end;
+
+  public method Add(value: TElement);
+  begin
+    ElementsValue.Add(value);
+  end;
+
+  public function GetEnumerator(): IEnumerator<TElement>;
+  begin
+    return ElementsValue.GetEnumerator();
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • CLASS • WhereEnumerator<T>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 /// <summary>Enumerates a filtered view over another enumerable source.</summary>
@@ -917,6 +966,80 @@ begin
     return new ReverseEnumerable<T>(source);
   end;
 
+  public static function OrderBy(source: IEnumerable<T>; selector: Selector<T, Integer>): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if selector = nil then
+    begin
+      raise new Exception('Enumerable selector must not be nil.');
+    end;
+
+    var result := ToList(source);
+    var index := 1;
+    while index < result.Count do
+    begin
+      var currentItem := result[index];
+      var currentKey := selector(currentItem);
+      var insertIndex := index - 1;
+      while insertIndex >= 0 do
+      begin
+        if selector(result[insertIndex]) <= currentKey then
+        begin
+          break;
+        end;
+
+        result[insertIndex + 1] := result[insertIndex];
+        insertIndex := insertIndex - 1;
+      end;
+
+      result[insertIndex + 1] := currentItem;
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+
+  public static function OrderByDescending(source: IEnumerable<T>; selector: Selector<T, Integer>): IEnumerable<T>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if selector = nil then
+    begin
+      raise new Exception('Enumerable selector must not be nil.');
+    end;
+
+    var result := ToList(source);
+    var index := 1;
+    while index < result.Count do
+    begin
+      var currentItem := result[index];
+      var currentKey := selector(currentItem);
+      var insertIndex := index - 1;
+      while insertIndex >= 0 do
+      begin
+        if selector(result[insertIndex]) >= currentKey then
+        begin
+          break;
+        end;
+
+        result[insertIndex + 1] := result[insertIndex];
+        insertIndex := insertIndex - 1;
+      end;
+
+      result[insertIndex + 1] := currentItem;
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+
   public static function Contains(source: IEnumerable<T>; value: T): Boolean;
   begin
     if source = nil then
@@ -1363,6 +1486,341 @@ begin
     end;
 
     return new SelectEnumerable<TSource, TResult>(source, selector);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Enumerable<TFirst, TSecond, TThird>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Enumerable<TFirst, TSecond, TThird>
+begin
+  public static function SelectMany(source: IEnumerable<TFirst>; collectionSelector: CollectionSelector<TFirst, TSecond>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if collectionSelector = nil then
+    begin
+      raise new Exception('Enumerable collection selector must not be nil.');
+    end;
+
+    if resultSelector = nil then
+    begin
+      raise new Exception('Enumerable result selector must not be nil.');
+    end;
+
+    var result := new List<TThird>();
+    var outerEnumerator := source.GetEnumerator();
+    while outerEnumerator.MoveNext() do
+    begin
+      var outerValue := outerEnumerator.Current;
+      var innerSource := collectionSelector(outerValue);
+      if innerSource = nil then
+      begin
+        raise new Exception('Enumerable collection selector must not return nil.');
+      end;
+
+      var innerEnumerator := innerSource.GetEnumerator();
+      while innerEnumerator.MoveNext() do
+      begin
+        result.Add(resultSelector(outerValue, innerEnumerator.Current));
+      end;
+    end;
+
+    return result;
+  end;
+
+  public static function GroupBy(source: IEnumerable<TFirst>; keySelector: Selector<TFirst, Integer>; elementSelector: Selector<TFirst, TThird>): IEnumerable<Grouping<Integer, TThird>>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if keySelector = nil then
+    begin
+      raise new Exception('Enumerable key selector must not be nil.');
+    end;
+
+    if elementSelector = nil then
+    begin
+      raise new Exception('Enumerable element selector must not be nil.');
+    end;
+
+    var result := new List<Grouping<Integer, TThird>>();
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      var sourceValue := enumerator.Current;
+      var key := keySelector(sourceValue);
+      var found := false;
+      var index := 0;
+      while index < result.Count do
+      begin
+        if result[index].Key = key then
+        begin
+          result[index].Add(elementSelector(sourceValue));
+          found := true;
+          break;
+        end;
+
+        index := index + 1;
+      end;
+
+      if not found then
+      begin
+        var grouping := new Grouping<Integer, TThird>(key);
+        grouping.Add(elementSelector(sourceValue));
+        result.Add(grouping);
+      end;
+    end;
+
+    return result;
+  end;
+
+  public static function GroupBy(source: IEnumerable<TFirst>; keySelector: Selector<TFirst, String>; elementSelector: Selector<TFirst, TThird>): IEnumerable<Grouping<String, TThird>>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if keySelector = nil then
+    begin
+      raise new Exception('Enumerable key selector must not be nil.');
+    end;
+
+    if elementSelector = nil then
+    begin
+      raise new Exception('Enumerable element selector must not be nil.');
+    end;
+
+    var result := new List<Grouping<String, TThird>>();
+    var enumerator := source.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      var sourceValue := enumerator.Current;
+      var key := keySelector(sourceValue);
+      var found := false;
+      var index := 0;
+      while index < result.Count do
+      begin
+        if result[index].Key = key then
+        begin
+          result[index].Add(elementSelector(sourceValue));
+          found := true;
+          break;
+        end;
+
+        index := index + 1;
+      end;
+
+      if not found then
+      begin
+        var grouping := new Grouping<String, TThird>(key);
+        grouping.Add(elementSelector(sourceValue));
+        result.Add(grouping);
+      end;
+    end;
+
+    return result;
+  end;
+
+  public static function GroupJoin(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, Integer>; innerKeySelector: Selector<TSecond, Integer>; resultSelector: GroupResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if inner = nil then
+    begin
+      raise new Exception('Enumerable inner source must not be nil.');
+    end;
+
+    if outerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable outer key selector must not be nil.');
+    end;
+
+    if innerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable inner key selector must not be nil.');
+    end;
+
+    if resultSelector = nil then
+    begin
+      raise new Exception('Enumerable group result selector must not be nil.');
+    end;
+
+    var result := new List<TThird>();
+    var outerEnumerator := source.GetEnumerator();
+    while outerEnumerator.MoveNext() do
+    begin
+      var outerValue := outerEnumerator.Current;
+      var outerKey := outerKeySelector(outerValue);
+      var group := new List<TSecond>();
+      var innerEnumerator := inner.GetEnumerator();
+      while innerEnumerator.MoveNext() do
+      begin
+        var innerValue := innerEnumerator.Current;
+        if outerKey = innerKeySelector(innerValue) then
+        begin
+          group.Add(innerValue);
+        end;
+      end;
+
+      result.Add(resultSelector(outerValue, group));
+    end;
+
+    return result;
+  end;
+
+  public static function GroupJoin(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, String>; innerKeySelector: Selector<TSecond, String>; resultSelector: GroupResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if inner = nil then
+    begin
+      raise new Exception('Enumerable inner source must not be nil.');
+    end;
+
+    if outerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable outer key selector must not be nil.');
+    end;
+
+    if innerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable inner key selector must not be nil.');
+    end;
+
+    if resultSelector = nil then
+    begin
+      raise new Exception('Enumerable group result selector must not be nil.');
+    end;
+
+    var result := new List<TThird>();
+    var outerEnumerator := source.GetEnumerator();
+    while outerEnumerator.MoveNext() do
+    begin
+      var outerValue := outerEnumerator.Current;
+      var outerKey := outerKeySelector(outerValue);
+      var group := new List<TSecond>();
+      var innerEnumerator := inner.GetEnumerator();
+      while innerEnumerator.MoveNext() do
+      begin
+        var innerValue := innerEnumerator.Current;
+        if outerKey = innerKeySelector(innerValue) then
+        begin
+          group.Add(innerValue);
+        end;
+      end;
+
+      result.Add(resultSelector(outerValue, group));
+    end;
+
+    return result;
+  end;
+
+  public static function Join(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, Integer>; innerKeySelector: Selector<TSecond, Integer>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if inner = nil then
+    begin
+      raise new Exception('Enumerable inner source must not be nil.');
+    end;
+
+    if outerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable outer key selector must not be nil.');
+    end;
+
+    if innerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable inner key selector must not be nil.');
+    end;
+
+    if resultSelector = nil then
+    begin
+      raise new Exception('Enumerable result selector must not be nil.');
+    end;
+
+    var result := new List<TThird>();
+    var outerEnumerator := source.GetEnumerator();
+    while outerEnumerator.MoveNext() do
+    begin
+      var outerValue := outerEnumerator.Current;
+      var outerKey := outerKeySelector(outerValue);
+      var innerEnumerator := inner.GetEnumerator();
+      while innerEnumerator.MoveNext() do
+      begin
+        var innerValue := innerEnumerator.Current;
+        if outerKey = innerKeySelector(innerValue) then
+        begin
+          result.Add(resultSelector(outerValue, innerValue));
+        end;
+      end;
+    end;
+
+    return result;
+  end;
+
+  public static function Join(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, String>; innerKeySelector: Selector<TSecond, String>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
+  begin
+    if source = nil then
+    begin
+      raise new Exception('Enumerable source must not be nil.');
+    end;
+
+    if inner = nil then
+    begin
+      raise new Exception('Enumerable inner source must not be nil.');
+    end;
+
+    if outerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable outer key selector must not be nil.');
+    end;
+
+    if innerKeySelector = nil then
+    begin
+      raise new Exception('Enumerable inner key selector must not be nil.');
+    end;
+
+    if resultSelector = nil then
+    begin
+      raise new Exception('Enumerable result selector must not be nil.');
+    end;
+
+    var result := new List<TThird>();
+    var outerEnumerator := source.GetEnumerator();
+    while outerEnumerator.MoveNext() do
+    begin
+      var outerValue := outerEnumerator.Current;
+      var outerKey := outerKeySelector(outerValue);
+      var innerEnumerator := inner.GetEnumerator();
+      while innerEnumerator.MoveNext() do
+      begin
+        var innerValue := innerEnumerator.Current;
+        if outerKey = innerKeySelector(innerValue) then
+        begin
+          result.Add(resultSelector(outerValue, innerValue));
+        end;
+      end;
+    end;
+
+    return result;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

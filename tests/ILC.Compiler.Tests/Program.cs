@@ -3407,6 +3407,275 @@ begin
 end;
 """);
 
+var queryExpressionTree = SyntaxTree.Parse("""
+uses System.Collections;
+
+public class QueryHost
+begin
+  public static function Test(): Integer;
+  begin
+    var words := new List<String>();
+    words.Add('one');
+    words.Add('two');
+    words.Add('three');
+
+    var projected :=
+      from value in words
+      join other in words on value equals other
+      let projectedLength := other.Length
+      where other.Contains('o')
+      orderby projectedLength descending, value.Length
+      select projectedLength
+      into length
+      where length > 2
+      orderby length descending, length
+      select length
+      take 1
+      skip 0;
+
+    var enumerator := projected.GetEnumerator();
+    var sum := 0;
+    while enumerator.MoveNext() do
+    begin
+      sum := sum + enumerator.Current;
+    end;
+
+    return sum;
+  end;
+end;
+""");
+
+var groupJoinQueryTree = SyntaxTree.Parse("""
+uses System.Collections;
+
+public class GroupJoinHost
+begin
+  public static function Test(): Integer;
+  begin
+    var words := new List<String>();
+    words.Add('one');
+    words.Add('two');
+    words.Add('three');
+
+    var grouped :=
+      from value in words
+      join other in words on value.Length equals other.Length into matches
+      let matchCount := Enumerable<String>.Count(matches)
+      where matchCount > 1
+      select matchCount;
+
+    var enumerator := grouped.GetEnumerator();
+    var sum := 0;
+    while enumerator.MoveNext() do
+    begin
+      sum := sum + enumerator.Current;
+    end;
+
+    return sum;
+  end;
+end;
+""");
+
+var groupByQueryTree = SyntaxTree.Parse("""
+uses System.Collections;
+
+public class GroupByHost
+begin
+  public static function Test(): Integer;
+  begin
+    var words := new List<String>();
+    words.Add('one');
+    words.Add('two');
+    words.Add('three');
+
+    var grouped :=
+      from value in words
+      group value by value.Length
+      into grouping
+      where Enumerable<String>.Count(grouping) > 1
+      select grouping.Key;
+
+    var enumerator := grouped.GetEnumerator();
+    var sum := 0;
+    while enumerator.MoveNext() do
+    begin
+      sum := sum + enumerator.Current;
+    end;
+
+    return sum;
+  end;
+end;
+""");
+
+if (queryExpressionTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(type => type.Identifier.Text == "QueryHost") is not ClassDeclarationSyntax queryClass ||
+    queryClass.Members.OfType<MethodDeclarationSyntax>()
+        .FirstOrDefault(method => method.Identifier.Text == "Test")?
+        .Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>()
+        .FirstOrDefault(statement => statement.Declarators.Any(declarator => declarator.Identifier.Text == "projected"))?
+        .Declarators.First(declarator => declarator.Identifier.Text == "projected").Initializer is not QueryExpressionSyntax parsedQuery ||
+    parsedQuery.Identifier.Text != "value" ||
+    parsedQuery.JoinIdentifier is null ||
+    parsedQuery.JoinSourceExpression is null ||
+    parsedQuery.JoinLeftExpression is null ||
+    parsedQuery.JoinRightExpression is null ||
+    parsedQuery.LetExpression is null ||
+    parsedQuery.LetIdentifier is null ||
+    parsedQuery.PredicateExpression is null ||
+    parsedQuery.OrderByExpression is null ||
+    parsedQuery.DescendingKeyword is null ||
+    parsedQuery.ThenByExpression is null ||
+    parsedQuery.IntoIdentifier is null ||
+    parsedQuery.ContinuationPredicateExpression is null ||
+    parsedQuery.ContinuationOrderByExpression is null ||
+    parsedQuery.ContinuationDescendingKeyword is null ||
+    parsedQuery.ContinuationThenByExpression is null ||
+    parsedQuery.ContinuationSelectExpression is null ||
+    parsedQuery.TakeExpression is null ||
+    parsedQuery.SkipExpression is null)
+{
+    failures.Add("Parser should capture join/let/select-into/where/orderby descending/select/take/skip query expressions.");
+}
+
+if (groupJoinQueryTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(type => type.Identifier.Text == "GroupJoinHost") is not ClassDeclarationSyntax groupJoinClass ||
+    groupJoinClass.Members.OfType<MethodDeclarationSyntax>()
+        .FirstOrDefault(method => method.Identifier.Text == "Test")?
+        .Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>()
+        .FirstOrDefault(statement => statement.Declarators.Any(declarator => declarator.Identifier.Text == "grouped"))?
+        .Declarators.First(declarator => declarator.Identifier.Text == "grouped").Initializer is not QueryExpressionSyntax parsedGroupJoinQuery ||
+    parsedGroupJoinQuery.JoinIdentifier is null ||
+    parsedGroupJoinQuery.JoinSourceExpression is null ||
+    parsedGroupJoinQuery.JoinLeftExpression is null ||
+    parsedGroupJoinQuery.JoinRightExpression is null ||
+    parsedGroupJoinQuery.JoinIntoIdentifier is null ||
+    parsedGroupJoinQuery.LetExpression is null ||
+    parsedGroupJoinQuery.LetIdentifier is null ||
+    parsedGroupJoinQuery.PredicateExpression is null)
+{
+    failures.Add("Parser should capture group-join query expressions.");
+}
+
+if (groupByQueryTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(type => type.Identifier.Text == "GroupByHost") is not ClassDeclarationSyntax groupByClass ||
+    groupByClass.Members.OfType<MethodDeclarationSyntax>()
+        .FirstOrDefault(method => method.Identifier.Text == "Test")?
+        .Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>()
+        .FirstOrDefault(statement => statement.Declarators.Any(declarator => declarator.Identifier.Text == "grouped"))?
+        .Declarators.First(declarator => declarator.Identifier.Text == "grouped").Initializer is not QueryExpressionSyntax parsedGroupByQuery ||
+    parsedGroupByQuery.GroupKeyword is null ||
+    parsedGroupByQuery.GroupExpression is null ||
+    parsedGroupByQuery.GroupByKeyword is null ||
+    parsedGroupByQuery.GroupByExpression is null ||
+    parsedGroupByQuery.IntoIdentifier is null ||
+    parsedGroupByQuery.ContinuationPredicateExpression is null ||
+    parsedGroupByQuery.ContinuationSelectExpression is null)
+{
+    failures.Add("Parser should capture group-by into query expressions.");
+}
+
+var queryExpressionMergedTree = SyntaxTree.Merge(queryExpressionTree, [systemTree, collectionsTree]);
+var queryExpressionBinding = new Binder().Bind(queryExpressionMergedTree);
+if (queryExpressionBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept query expressions over Enumerable sources. Diagnostics: " +
+        string.Join(
+            " | ",
+            queryExpressionBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (queryExpressionBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QueryHost") is not NamedTypeSymbol queryHostType ||
+         queryHostType.Methods.FirstOrDefault(method => method.Name == "Test") is not MethodSymbol queryHostTestMethod)
+{
+    failures.Add("Binder should surface QueryHost.Test for the query-expression scenario.");
+}
+else
+{
+    var queryMethods = queryExpressionBinding.Compilation.GetAllMethods().ToArray();
+    var queryFields = queryExpressionBinding.Compilation.GetAllFields();
+    var queryProperties = queryExpressionBinding.Compilation.GetAllProperties();
+    var queryConstants = queryExpressionBinding.Compilation.GetAllConstants();
+    var queryProjectedDeclaration = queryHostTestMethod.Declaration?.Body?.Statements
+        .OfType<LocalVariableDeclarationStatementSyntax>()
+        .FirstOrDefault(statement => statement.Declarators.Any(declarator => declarator.Identifier.Text == "projected"));
+    var queryProjectedInitializer = queryProjectedDeclaration?.Declarators
+        .First(declarator => declarator.Identifier.Text == "projected")
+        .Initializer;
+    if (queryProjectedInitializer is null)
+    {
+        failures.Add("QueryHost.Test should contain a 'projected' query initializer.");
+    }
+
+    try
+    {
+        var queryLowerer = new Lowerer(
+            queryMethods,
+            queryFields,
+            queryExpressionBinding.Compilation.Types,
+            queryProperties,
+            queryConstants);
+        var queryIr = queryLowerer.Lower(queryHostTestMethod);
+        var queryCalls = queryIr.Blocks
+            .SelectMany(block => block.Instructions)
+            .Where(instruction =>
+                instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                instruction.Operand is IrCallTarget { Method: not null })
+            .Select(instruction => ((IrCallTarget)instruction.Operand!).Method!)
+            .ToArray();
+
+        if (!queryCalls.Any(method => method.Name == "Where" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String>"))
+        {
+            failures.Add("Lowerer should translate query where-clauses to Enumerable<String>.Where(...).");
+        }
+
+        if (!queryCalls.Any(method => method.Name == "Join" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String, String, String>"))
+        {
+            failures.Add("Lowerer should translate query join-clauses to Enumerable<String, String, String>.Join(...).");
+        }
+
+        if (!queryCalls.Any(method => method.Name == "Select" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String, Integer>"))
+        {
+            failures.Add("Lowerer should translate query select-clauses to Enumerable<String, Integer>.Select(...).");
+        }
+
+        if (!queryCalls.Any(method => method.Name == "Select" && method.IsStatic && method.DeclaringTypeName == "Enumerable<Integer, Integer>"))
+        {
+            failures.Add("Lowerer should translate query into-continuations to Enumerable<Integer, Integer>.Select(...).");
+        }
+
+        if (!queryCalls.Any(method => method.Name == "OrderByDescending" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String>"))
+        {
+            failures.Add("Lowerer should translate descending query orderby-clauses to Enumerable<String>.OrderByDescending(...).");
+        }
+
+        if (queryCalls.Count(method => method.Name == "OrderBy" && method.IsStatic && method.DeclaringTypeName == "Enumerable<String>") < 1)
+        {
+            failures.Add("Lowerer should translate secondary query orderby-keys to an additional Enumerable<String>.OrderBy(...).");
+        }
+
+        if (queryCalls.Count(method => method.Name == "OrderByDescending" && method.IsStatic && method.DeclaringTypeName == "Enumerable<Integer>") < 1)
+        {
+            failures.Add("Lowerer should translate continuation primary descending orderby-keys to Enumerable<Integer>.OrderByDescending(...).");
+        }
+
+        if (queryCalls.Count(method => method.Name == "OrderBy" && method.IsStatic && method.DeclaringTypeName == "Enumerable<Integer>") < 1)
+        {
+            failures.Add("Lowerer should translate continuation secondary orderby-keys to Enumerable<Integer>.OrderBy(...).");
+        }
+
+        if (!queryCalls.Any(method => method.Name == "Take" && method.IsStatic && method.DeclaringTypeName == "Enumerable<Integer>"))
+        {
+            failures.Add("Lowerer should translate query take-clauses to Enumerable<Integer>.Take(...).");
+        }
+
+        if (!queryCalls.Any(method => method.Name == "Skip" && method.IsStatic && method.DeclaringTypeName == "Enumerable<Integer>"))
+        {
+            failures.Add("Lowerer should translate query skip-clauses to Enumerable<Integer>.Skip(...).");
+        }
+    }
+    catch (Exception ex)
+    {
+        failures.Add($"Lowerer should accept query expressions without throwing. Actual: {ex.Message}");
+    }
+}
+
 var enumerablePipelineMergedTree = SyntaxTree.Merge(enumerablePipelineTree, [systemTree, collectionsTree]);
 var enumerablePipelineBinding = new Binder().Bind(enumerablePipelineMergedTree);
 if (enumerablePipelineBinding.Diagnostics.Count > 0)
@@ -3502,9 +3771,109 @@ else
                         enumerablePipelineProperties,
                         enumerableHostTestMethod,
                         enumerablePipelineBinding.Compilation.Types);
-                }
-            }
         }
+    }
+}
+
+var groupJoinMergedTree = SyntaxTree.Merge(groupJoinQueryTree, [systemTree, collectionsTree]);
+var groupJoinBinding = new Binder().Bind(groupJoinMergedTree);
+if (groupJoinBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept group-join query expressions. Diagnostics: " +
+        string.Join(
+            " | ",
+            groupJoinBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (groupJoinBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "GroupJoinHost") is not NamedTypeSymbol groupJoinHostType ||
+         groupJoinHostType.Methods.FirstOrDefault(method => method.Name == "Test") is not MethodSymbol groupJoinHostMethod)
+{
+    failures.Add("Binder should surface GroupJoinHost.Test for the group-join scenario.");
+}
+else
+{
+    try
+    {
+        var groupJoinLowerer = new Lowerer(
+            groupJoinBinding.Compilation.GetAllMethods().ToArray(),
+            groupJoinBinding.Compilation.GetAllFields(),
+            groupJoinBinding.Compilation.Types,
+            groupJoinBinding.Compilation.GetAllProperties(),
+            groupJoinBinding.Compilation.GetAllConstants());
+        var groupJoinIr = groupJoinLowerer.Lower(groupJoinHostMethod);
+        if (!groupJoinIr.Blocks
+                .SelectMany(block => block.Instructions)
+                .Any(instruction =>
+                    instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                    instruction.Operand is MethodSymbol { DeclaringTypeName: "Enumerable<String, String, IEnumerable<String>>", Name: "GroupJoin" }))
+        {
+            failures.Add("Lowerer should translate group-join queries to Enumerable<String, String, IEnumerable<String>>.GroupJoin(...).");
+        }
+    }
+    catch (Exception ex)
+    {
+        failures.Add("Lowerer should handle group-join queries without throwing. Actual: " + ex.Message);
+    }
+}
+
+var groupByMergedTree = SyntaxTree.Merge(groupByQueryTree, [systemTree, collectionsTree]);
+var groupByBinding = new Binder().Bind(groupByMergedTree);
+if (groupByBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept group-by query expressions. Diagnostics: " +
+        string.Join(
+            " | ",
+            groupByBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (groupByBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "GroupByHost") is not NamedTypeSymbol groupByHostType ||
+         groupByHostType.Methods.FirstOrDefault(method => method.Name == "Test") is not MethodSymbol groupByHostMethod)
+{
+    failures.Add("Binder should surface GroupByHost.Test for the group-by scenario.");
+}
+else
+{
+    try
+    {
+        var groupByLowerer = new Lowerer(
+            groupByBinding.Compilation.GetAllMethods().ToArray(),
+            groupByBinding.Compilation.GetAllFields(),
+            groupByBinding.Compilation.Types,
+            groupByBinding.Compilation.GetAllProperties(),
+            groupByBinding.Compilation.GetAllConstants());
+        var groupByIr = groupByLowerer.Lower(groupByHostMethod);
+        if (!groupByIr.Blocks
+                .SelectMany(block => block.Instructions)
+                .Any(instruction =>
+                    instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                    instruction.Operand is MethodSymbol { DeclaringTypeName: "Enumerable<String, Integer, String>", Name: "GroupBy" }))
+        {
+            failures.Add("Lowerer should translate group-by queries to Enumerable<String, Integer, String>.GroupBy(...).");
+        }
+
+        if (!groupByIr.Blocks
+                .SelectMany(block => block.Instructions)
+                .Any(instruction =>
+                    instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                    instruction.Operand is MethodSymbol { DeclaringTypeName: "Enumerable<Grouping<Integer, String>>", Name: "Where" }))
+        {
+            failures.Add("Lowerer should translate group-by continuation filters to Enumerable<Grouping<Integer, String>>.Where(...).");
+        }
+
+        if (!groupByIr.Blocks
+                .SelectMany(block => block.Instructions)
+                .Any(instruction =>
+                    instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                    instruction.Operand is MethodSymbol { DeclaringTypeName: "Enumerable<Grouping<Integer, String>, Integer>", Name: "Select" }))
+        {
+            failures.Add("Lowerer should translate group-by into-continuations to Enumerable<Grouping<Integer, String>, Integer>.Select(...).");
+        }
+    }
+    catch (Exception ex)
+    {
+        failures.Add("Lowerer should handle group-by queries without throwing. Actual: " + ex.Message);
+    }
+}
 
         diagnostic = $"local '{localName}' was not found in EnumerableHost.Test";
         return null;

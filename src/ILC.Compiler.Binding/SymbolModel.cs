@@ -583,7 +583,13 @@ public sealed class Binder
                 syntheticMembers));
         }
 
-        var lambdaArtifacts = CollectSyntheticLambdaArtifacts(syntaxTree.Root.Members, declaredTypes);
+        var lambdaArtifacts = CollectSyntheticLambdaArtifacts(
+            syntaxTree.Root.Members,
+            declaredTypes,
+            knownMethods,
+            knownFields,
+            knownConstants.Concat(topLevelConstants).ToArray(),
+            knownProperties);
         foreach (var lambdaType in lambdaArtifacts.Types)
         {
             if (declaredTypes.All(existing => existing.Name != lambdaType.Name))
@@ -1123,7 +1129,15 @@ public sealed class Binder
 
                         locals[declarator.Identifier.Text] = declarator.TypeName is not null
                             ? BindType(declarator.TypeName, knownTypes)
-                            : SemanticFacts.InferExpressionType(declarator.Initializer, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                            : SemanticFacts.InferExpressionType(
+                                declarator.Initializer,
+                                locals,
+                                knownMethods,
+                                knownFields,
+                                knownConstants,
+                                knownProperties,
+                                currentMethod,
+                                knownTypes);
                     }
                     break;
                 case ReturnStatementSyntax returnStatement when returnStatement.Expression is not null:
@@ -2416,6 +2430,254 @@ public sealed class Binder
                             "Integer.TryParse expects an Integer assignment target as its second argument.",
                             DiagnosticSeverity.Error,
                             GetExpressionDiagnosticSpan(call.Arguments[1].Expression, knownTypes));
+                    }
+                }
+                break;
+            case QueryExpressionSyntax query:
+                ValidateExpression(query.SourceExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                var querySourceType = SemanticFacts.InferExpressionType(query.SourceExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var enumerablePattern = SemanticFacts.ResolveEnumerablePattern(querySourceType, knownTypes);
+                if (enumerablePattern is null)
+                {
+                    diagnostics.Report(
+                        "ILC2141",
+                        $"Expression '{SemanticFacts.GetExpressionDisplayName(query.SourceExpression)}' is not enumerable in the current bootstrap compiler.",
+                        DiagnosticSeverity.Error,
+                        GetExpressionDiagnosticSpan(query.SourceExpression, knownTypes));
+                    break;
+                }
+
+                var queryLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                {
+                    [query.Identifier.Text] = enumerablePattern.ElementType
+                };
+
+                if (query.JoinSourceExpression is not null && query.JoinIdentifier is not null)
+                {
+                    ValidateExpression(query.JoinSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var joinSourceType = SemanticFacts.InferExpressionType(query.JoinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var joinEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(joinSourceType, knownTypes);
+                    if (joinEnumerablePattern is null)
+                    {
+                        diagnostics.Report(
+                            "ILC2141",
+                            $"Expression '{SemanticFacts.GetExpressionDisplayName(query.JoinSourceExpression)}' is not enumerable in the current bootstrap compiler.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.JoinSourceExpression, knownTypes));
+                        break;
+                    }
+
+                    queryLocals[query.JoinIdentifier.Text] = joinEnumerablePattern.ElementType;
+                    if (query.JoinIntoIdentifier is not null)
+                    {
+                        queryLocals[query.JoinIntoIdentifier.Text] =
+                            SemanticFacts.ResolveTypeReference($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", knownTypes)
+                            ?? new TypeSymbol($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", true);
+                    }
+                    if (query.JoinLeftExpression is not null)
+                    {
+                        ValidateExpression(query.JoinLeftExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
+
+                    if (query.JoinRightExpression is not null)
+                    {
+                        ValidateExpression(query.JoinRightExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
+
+                    if (query.JoinLeftExpression is not null && query.JoinRightExpression is not null)
+                    {
+                        var joinLeftType = SemanticFacts.InferExpressionType(query.JoinLeftExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var joinRightType = SemanticFacts.InferExpressionType(query.JoinRightExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        if (joinLeftType.Name != joinRightType.Name)
+                        {
+                            diagnostics.Report(
+                                "ILC2231",
+                                "Query join-clause key expressions must have the same type.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(query.JoinLeftExpression, knownTypes));
+                        }
+                        else if (joinLeftType != TypeSymbol.Integer && joinLeftType != TypeSymbol.String)
+                        {
+                            diagnostics.Report(
+                                "ILC2232",
+                                "Query join-clause keys must be Integer or String in the current bootstrap compiler.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(query.JoinLeftExpression, knownTypes));
+                        }
+                    }
+                }
+
+                if (query.SecondSourceExpression is not null && query.SecondIdentifier is not null)
+                {
+                    ValidateExpression(query.SecondSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var secondSourceType = SemanticFacts.InferExpressionType(query.SecondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var secondEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(secondSourceType, knownTypes);
+                    if (secondEnumerablePattern is null)
+                    {
+                        diagnostics.Report(
+                            "ILC2141",
+                            $"Expression '{SemanticFacts.GetExpressionDisplayName(query.SecondSourceExpression)}' is not enumerable in the current bootstrap compiler.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.SecondSourceExpression, knownTypes));
+                        break;
+                    }
+
+                    queryLocals[query.SecondIdentifier.Text] = secondEnumerablePattern.ElementType;
+                }
+
+                if (query.LetExpression is not null && query.LetIdentifier is not null)
+                {
+                    ValidateExpression(query.LetExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var letType = SemanticFacts.InferExpressionType(query.LetExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    queryLocals[query.LetIdentifier.Text] = letType;
+                }
+
+                if (query.PredicateExpression is not null)
+                {
+                    ValidateExpression(query.PredicateExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var predicateType = SemanticFacts.InferExpressionType(query.PredicateExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (predicateType != TypeSymbol.Boolean)
+                    {
+                        diagnostics.Report(
+                            "ILC2227",
+                            "Query where-clause must be Boolean.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.PredicateExpression, knownTypes));
+                        }
+                }
+
+                if (query.OrderByExpression is not null)
+                {
+                    ValidateExpression(query.OrderByExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var orderByType = SemanticFacts.InferExpressionType(query.OrderByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (orderByType != TypeSymbol.Integer)
+                    {
+                        diagnostics.Report(
+                            "ILC2230",
+                            "Query orderby-clause must be Integer in the current bootstrap compiler.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.OrderByExpression, knownTypes));
+                    }
+                }
+
+                if (query.ThenByExpression is not null)
+                {
+                    ValidateExpression(query.ThenByExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var thenByType = SemanticFacts.InferExpressionType(query.ThenByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (thenByType != TypeSymbol.Integer)
+                    {
+                        diagnostics.Report(
+                            "ILC2230",
+                            "Query orderby-clause must be Integer in the current bootstrap compiler.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.ThenByExpression, knownTypes));
+                    }
+                }
+
+                if (query.GroupExpression is not null && query.GroupByExpression is not null)
+                {
+                    ValidateExpression(query.GroupExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    ValidateExpression(query.GroupByExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var groupKeyType = SemanticFacts.InferExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (groupKeyType != TypeSymbol.Integer && groupKeyType != TypeSymbol.String)
+                    {
+                        diagnostics.Report(
+                            "ILC2233",
+                            "Query group-by keys must be Integer or String in the current bootstrap compiler.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.GroupByExpression, knownTypes));
+                    }
+                }
+                else
+                {
+                    ValidateExpression(query.SelectExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                }
+                if (query.IntoIdentifier is not null && query.ContinuationSelectExpression is not null)
+                {
+                    var continuationRangeType =
+                        query.GroupExpression is not null && query.GroupByExpression is not null
+                            ? SemanticFacts.ResolveTypeReference(
+                                $"Grouping<{SemanticFacts.InferExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {SemanticFacts.InferExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
+                                knownTypes)
+                                ?? new TypeSymbol(
+                                    $"Grouping<{SemanticFacts.InferExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {SemanticFacts.InferExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
+                                    true)
+                            : SemanticFacts.InferExpressionType(query.SelectExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var continuationLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                    {
+                        [query.IntoIdentifier.Text] = continuationRangeType
+                    };
+
+                    if (query.ContinuationPredicateExpression is not null)
+                    {
+                        ValidateExpression(query.ContinuationPredicateExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        var continuationPredicateType = SemanticFacts.InferExpressionType(query.ContinuationPredicateExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        if (continuationPredicateType != TypeSymbol.Boolean)
+                        {
+                            diagnostics.Report(
+                                "ILC2227",
+                                "Query where-clause must be Boolean.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(query.ContinuationPredicateExpression, knownTypes));
+                        }
+                    }
+
+                    if (query.ContinuationOrderByExpression is not null)
+                    {
+                        ValidateExpression(query.ContinuationOrderByExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        var continuationOrderByType = SemanticFacts.InferExpressionType(query.ContinuationOrderByExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        if (continuationOrderByType != TypeSymbol.Integer)
+                        {
+                            diagnostics.Report(
+                                "ILC2230",
+                                "Query orderby-clause must be Integer in the current bootstrap compiler.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(query.ContinuationOrderByExpression, knownTypes));
+                        }
+                    }
+
+                    if (query.ContinuationThenByExpression is not null)
+                    {
+                        ValidateExpression(query.ContinuationThenByExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        var continuationThenByType = SemanticFacts.InferExpressionType(query.ContinuationThenByExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        if (continuationThenByType != TypeSymbol.Integer)
+                        {
+                            diagnostics.Report(
+                                "ILC2230",
+                                "Query orderby-clause must be Integer in the current bootstrap compiler.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(query.ContinuationThenByExpression, knownTypes));
+                        }
+                    }
+
+                    ValidateExpression(query.ContinuationSelectExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                }
+
+                if (query.TakeExpression is not null)
+                {
+                    ValidateExpression(query.TakeExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var takeType = SemanticFacts.InferExpressionType(query.TakeExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (takeType != TypeSymbol.Integer)
+                    {
+                        diagnostics.Report(
+                            "ILC2228",
+                            "Query take-clause must be Integer.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.TakeExpression, knownTypes));
+                    }
+                }
+
+                if (query.SkipExpression is not null)
+                {
+                    ValidateExpression(query.SkipExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    var skipType = SemanticFacts.InferExpressionType(query.SkipExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    if (skipType != TypeSymbol.Integer)
+                    {
+                        diagnostics.Report(
+                            "ILC2229",
+                            "Query skip-clause must be Integer.",
+                            DiagnosticSeverity.Error,
+                            GetExpressionDiagnosticSpan(query.SkipExpression, knownTypes));
                     }
                 }
                 break;
@@ -4706,7 +4968,11 @@ public sealed class Binder
 
     private static SyntheticLambdaArtifacts CollectSyntheticLambdaArtifacts(
         IReadOnlyList<MemberSyntax> members,
-        IReadOnlyList<TypeSymbol> knownTypes)
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties)
     {
         var types = new List<NamedTypeSymbol>();
         var methods = new List<MethodSymbol>();
@@ -4717,7 +4983,15 @@ public sealed class Binder
             var typeScope = knownTypes.Concat(BindTypeParameters(classDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
             foreach (var methodDeclaration in classDeclaration.Members.OfType<MethodDeclarationSyntax>())
             {
-                foreach (var artifact in CollectLambdaArtifacts(methodDeclaration, classDeclaration.Identifier.Text, typeScope, ref nextLambdaId))
+                foreach (var artifact in CollectLambdaArtifacts(
+                             methodDeclaration,
+                             classDeclaration.Identifier.Text,
+                             typeScope,
+                             knownMethods,
+                             knownFields,
+                             knownConstants,
+                             knownProperties,
+                             ref nextLambdaId))
                 {
                     if (artifact.ClosureType is not null)
                     {
@@ -4739,12 +5013,44 @@ public sealed class Binder
         MethodDeclarationSyntax methodDeclaration,
         string declaringTypeName,
         IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
         ref int nextLambdaId)
     {
         var outerLocals = CollectMethodLambdaCaptureScope(methodDeclaration, knownTypes);
+        var queryLocals = CollectMethodQueryScope(
+            methodDeclaration,
+            declaringTypeName,
+            knownTypes,
+            knownMethods,
+            knownFields,
+            knownConstants,
+            knownProperties);
         var lambdas = new List<LambdaExpressionSyntax>();
         CollectLambdaExpressions(methodDeclaration.ExpressionBody, lambdas);
         CollectLambdaExpressions(methodDeclaration.Body, lambdas);
+        var queries = new List<QueryExpressionSyntax>();
+        CollectQueryExpressions(methodDeclaration.ExpressionBody, queries);
+        CollectQueryExpressions(methodDeclaration.Body, queries);
+        var boundMethod = BindMethod(methodDeclaration, declaringTypeName, knownTypes);
+        foreach (var query in queries)
+        {
+            if (SemanticFacts.TryTranslateQueryExpression(
+                    query,
+                    queryLocals,
+                    knownTypes,
+                    knownMethods,
+                    knownFields,
+                    knownConstants,
+                    knownProperties,
+                    boundMethod,
+                    out var translatedQuery))
+            {
+                CollectLambdaExpressions(translatedQuery, lambdas);
+            }
+        }
 
         var artifacts = new List<SyntheticLambdaArtifact>();
         foreach (var lambda in lambdas)
@@ -4781,6 +5087,55 @@ public sealed class Binder
         }
 
         return artifacts;
+    }
+
+    private static Dictionary<string, TypeSymbol> CollectMethodQueryScope(
+        MethodDeclarationSyntax methodDeclaration,
+        string declaringTypeName,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties)
+    {
+        var boundMethod = BindMethod(methodDeclaration, declaringTypeName, knownTypes);
+        var locals = methodDeclaration.Parameters.ToDictionary(
+            parameter => parameter.Identifier.Text,
+            parameter => BindType(parameter.TypeName, knownTypes),
+            StringComparer.Ordinal);
+
+        if (methodDeclaration.Body is null)
+        {
+            return locals;
+        }
+
+        foreach (var statement in methodDeclaration.Body.Statements)
+        {
+            if (statement is not LocalVariableDeclarationStatementSyntax localDeclaration)
+            {
+                continue;
+            }
+
+            foreach (var declarator in localDeclaration.Declarators)
+            {
+                var localType = declarator.TypeName is not null
+                    ? BindType(declarator.TypeName, knownTypes)
+                    : declarator.Initializer is not null
+                        ? SemanticFacts.InferExpressionType(
+                            declarator.Initializer,
+                            locals,
+                            knownMethods,
+                            knownFields,
+                            knownConstants,
+                            knownProperties,
+                            boundMethod,
+                            knownTypes)
+                        : TypeSymbol.Integer;
+                locals[declarator.Identifier.Text] = localType;
+            }
+        }
+
+        return locals;
     }
 
     private static MethodSymbol BindSyntheticLambdaMethod(
@@ -4958,6 +5313,41 @@ public sealed class Binder
             }
 
             CollectLambdaExpressions(property.GetValue(value), lambdas);
+        }
+    }
+
+    private static void CollectQueryExpressions(object? value, List<QueryExpressionSyntax> queries)
+    {
+        if (value is null or string or SyntaxToken)
+        {
+            return;
+        }
+
+        if (value is QueryExpressionSyntax query)
+        {
+            queries.Add(query);
+            return;
+        }
+
+        if (value is System.Collections.IEnumerable enumerable and not SyntaxNode)
+        {
+            foreach (var item in enumerable)
+            {
+                CollectQueryExpressions(item, queries);
+            }
+
+            return;
+        }
+
+        var valueType = value.GetType();
+        foreach (var property in valueType.GetProperties())
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            CollectQueryExpressions(property.GetValue(value), queries);
         }
     }
 
@@ -5708,6 +6098,7 @@ public static class SemanticFacts
                     method.IsStatic) is { } staticMethod
                     ? staticMethod.ReturnType
                     : ResolveInvocation(call.Target, call.Arguments.Count, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)?.Method.ReturnType ?? TypeSymbol.Integer,
+            QueryExpressionSyntax query => InferQueryExpressionType(query, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes ?? []),
             LambdaExpressionSyntax lambda => lambda.SignatureKeyword.Kind == SyntaxKind.FunctionKeyword && lambda.ReturnType is not null
                 ? ResolveTypeReferenceInGenericContext(lambda.ReturnType.ToDisplayString(), currentMethod, knownTypes ?? [])
                     ?? new TypeSymbol(lambda.ReturnType.ToDisplayString(), true)
@@ -5732,6 +6123,33 @@ public static class SemanticFacts
                 : TypeSymbol.Integer,
             _ => TypeSymbol.Integer
         };
+    }
+
+    private static TypeSymbol InferQueryExpressionType(
+        QueryExpressionSyntax query,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (TryTranslateQueryExpression(
+                query,
+                localTypes,
+                knownTypes,
+                knownMethods,
+                knownFields,
+                knownConstants,
+                knownProperties,
+                currentMethod,
+                out var translated))
+        {
+            return InferExpressionType(translated, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        }
+
+        return TypeSymbol.Integer;
     }
 
     private static bool TryGetAssignmentTargetType(
@@ -6019,12 +6437,551 @@ public static class SemanticFacts
             AsExpressionSyntax asExpression => $"{GetExpressionDisplayName(asExpression.Expression)} as {asExpression.TypeName.ToDisplayString()}",
             TypeTestExpressionSyntax typeTest => $"{GetExpressionDisplayName(typeTest.Expression)} is {typeTest.TypeName.ToDisplayString()}",
             CallExpressionSyntax call => $"{GetExpressionDisplayName(call.Target)}(...)",
+            QueryExpressionSyntax => "query",
             MatchExpressionSyntax => "match",
             MatchNotPatternSyntax notPattern => $"not {GetExpressionDisplayName(notPattern.Pattern)}",
             MatchOrPatternSyntax orPattern => string.Join(" or ", orPattern.Patterns.Select(GetExpressionDisplayName)),
             MatchAndPatternSyntax andPattern => string.Join(" and ", andPattern.Patterns.Select(GetExpressionDisplayName)),
             MatchRelationalPatternSyntax relational => $"{relational.OperatorToken.Text}{GetExpressionDisplayName(relational.Operand)}",
             _ => expression.Kind.ToString()
+        };
+
+    public static bool TryTranslateQueryExpression(
+        QueryExpressionSyntax query,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        out ExpressionSyntax translated)
+    {
+        translated = query;
+
+        var sourceType = InferExpressionType(query.SourceExpression, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var enumerablePattern = ResolveEnumerablePattern(sourceType, knownTypes);
+        if (enumerablePattern is null)
+        {
+            return false;
+        }
+
+        var rangeVariableType = enumerablePattern.ElementType;
+        var queryLocals = new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
+        {
+            [query.Identifier.Text] = rangeVariableType
+        };
+        var joinSourceExpression = query.JoinSourceExpression;
+        var joinLeftExpression = query.JoinLeftExpression;
+        var joinRightExpression = query.JoinRightExpression;
+        var joinIntoIdentifier = query.JoinIntoIdentifier;
+        TypeSymbol? joinRangeVariableType = null;
+        TypeSymbol? joinKeyType = null;
+        TypeSymbol? groupedJoinRangeVariableType = null;
+        if (joinSourceExpression is not null && query.JoinIdentifier is not null)
+        {
+            joinRangeVariableType = ResolveEnumerablePattern(
+                InferExpressionType(joinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+                knownTypes)?.ElementType;
+            if (joinRangeVariableType is null)
+            {
+                return false;
+            }
+
+            queryLocals[query.JoinIdentifier.Text] = joinRangeVariableType;
+            if (joinIntoIdentifier is not null)
+            {
+                groupedJoinRangeVariableType =
+                    ResolveTypeReference($"IEnumerable<{joinRangeVariableType.Name}>", knownTypes)
+                    ?? new TypeSymbol($"IEnumerable<{joinRangeVariableType.Name}>", true);
+                queryLocals[joinIntoIdentifier.Text] = groupedJoinRangeVariableType;
+            }
+            if (joinLeftExpression is null || joinRightExpression is null)
+            {
+                return false;
+            }
+
+            joinKeyType = InferExpressionType(joinLeftExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var rightJoinKeyType = InferExpressionType(joinRightExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            if (joinKeyType.Name != rightJoinKeyType.Name ||
+                (joinKeyType != TypeSymbol.Integer && joinKeyType != TypeSymbol.String))
+            {
+                return false;
+            }
+        }
+
+        var secondSourceExpression = query.SecondSourceExpression;
+        TypeSymbol? secondRangeVariableType = null;
+        if (secondSourceExpression is not null && query.SecondIdentifier is not null)
+        {
+            secondRangeVariableType = ResolveEnumerablePattern(
+                InferExpressionType(secondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+                knownTypes)?.ElementType;
+            if (secondRangeVariableType is null)
+            {
+                return false;
+            }
+
+            queryLocals[query.SecondIdentifier.Text] = secondRangeVariableType;
+        }
+
+        var letExpression = query.LetExpression;
+        if (letExpression is not null && query.LetIdentifier is not null)
+        {
+            queryLocals[query.LetIdentifier.Text] = InferExpressionType(letExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        }
+
+        var predicateExpression = query.PredicateExpression;
+        var orderByExpression = query.OrderByExpression;
+        var thenByExpression = query.ThenByExpression;
+        var selectExpression = query.SelectExpression;
+        var groupExpression = query.GroupExpression;
+        var groupByExpression = query.GroupByExpression;
+        var continuationPredicateExpression = query.ContinuationPredicateExpression;
+        var continuationOrderByExpression = query.ContinuationOrderByExpression;
+        var continuationThenByExpression = query.ContinuationThenByExpression;
+        var continuationSelectExpression = query.ContinuationSelectExpression;
+        var takeExpression = query.TakeExpression;
+        var skipExpression = query.SkipExpression;
+        if (letExpression is not null && query.LetIdentifier is not null)
+        {
+            predicateExpression = predicateExpression is null ? null : RewriteQueryLetReference(predicateExpression, query.LetIdentifier.Text, letExpression);
+            orderByExpression = orderByExpression is null ? null : RewriteQueryLetReference(orderByExpression, query.LetIdentifier.Text, letExpression);
+            thenByExpression = thenByExpression is null ? null : RewriteQueryLetReference(thenByExpression, query.LetIdentifier.Text, letExpression);
+            groupExpression = groupExpression is null ? null : RewriteQueryLetReference(groupExpression, query.LetIdentifier.Text, letExpression);
+            groupByExpression = groupByExpression is null ? null : RewriteQueryLetReference(groupByExpression, query.LetIdentifier.Text, letExpression);
+            selectExpression = RewriteQueryLetReference(selectExpression, query.LetIdentifier.Text, letExpression);
+            continuationPredicateExpression = continuationPredicateExpression is null ? null : RewriteQueryLetReference(continuationPredicateExpression, query.LetIdentifier.Text, letExpression);
+            continuationOrderByExpression = continuationOrderByExpression is null ? null : RewriteQueryLetReference(continuationOrderByExpression, query.LetIdentifier.Text, letExpression);
+            continuationThenByExpression = continuationThenByExpression is null ? null : RewriteQueryLetReference(continuationThenByExpression, query.LetIdentifier.Text, letExpression);
+            continuationSelectExpression = continuationSelectExpression is null ? null : RewriteQueryLetReference(continuationSelectExpression, query.LetIdentifier.Text, letExpression);
+            takeExpression = takeExpression is null ? null : RewriteQueryLetReference(takeExpression, query.LetIdentifier.Text, letExpression);
+            skipExpression = skipExpression is null ? null : RewriteQueryLetReference(skipExpression, query.LetIdentifier.Text, letExpression);
+        }
+
+        var projectedType = groupExpression is not null
+            ? InferExpressionType(groupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
+            : InferExpressionType(selectExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var groupKeyType = groupByExpression is not null
+            ? InferExpressionType(groupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
+            : null;
+        var groupedResultType = groupExpression is not null && groupKeyType is not null
+            ? ResolveTypeReference($"Grouping<{groupKeyType.Name}, {projectedType.Name}>", knownTypes)
+                ?? new TypeSymbol($"Grouping<{groupKeyType.Name}, {projectedType.Name}>", true)
+            : null;
+        var continuationRangeType = groupedResultType ?? projectedType;
+        var finalProjectedType = continuationSelectExpression is not null && query.IntoIdentifier is not null
+            ? InferExpressionType(
+                continuationSelectExpression,
+                new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
+                {
+                    [query.IntoIdentifier.Text] = continuationRangeType
+                },
+                knownMethods,
+                knownFields,
+                knownConstants,
+                knownProperties,
+                currentMethod,
+                knownTypes)
+            : groupedResultType ?? projectedType;
+
+        var currentSource = query.SourceExpression;
+        var currentRangeVariableName = query.Identifier.Text;
+        if (joinSourceExpression is not null &&
+            joinLeftExpression is not null &&
+            joinRightExpression is not null &&
+            joinRangeVariableType is not null &&
+            joinKeyType is not null &&
+            query.JoinIdentifier is not null &&
+            joinIntoIdentifier is not null &&
+            groupedJoinRangeVariableType is not null)
+        {
+            currentSource = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}, {joinRangeVariableType.Name}, {groupedJoinRangeVariableType.Name}>",
+                "GroupJoin",
+                [
+                    currentSource,
+                    joinSourceExpression,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(query.Identifier.Text, rangeVariableType.Name)],
+                        joinKeyType.Name,
+                        joinLeftExpression),
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(query.JoinIdentifier.Text, joinRangeVariableType.Name)],
+                        joinKeyType.Name,
+                        joinRightExpression),
+                    CreateLambda(
+                        "function",
+                        [
+                            CreateParameter(query.Identifier.Text, rangeVariableType.Name),
+                            CreateParameter(joinIntoIdentifier.Text, groupedJoinRangeVariableType.Name)
+                        ],
+                        groupedJoinRangeVariableType.Name,
+                        CreateNameExpression(joinIntoIdentifier.Text))
+                ]);
+            rangeVariableType = groupedJoinRangeVariableType;
+            currentRangeVariableName = joinIntoIdentifier.Text;
+        }
+        else if (joinSourceExpression is not null &&
+            joinLeftExpression is not null &&
+            joinRightExpression is not null &&
+            joinRangeVariableType is not null &&
+            joinKeyType is not null &&
+            query.JoinIdentifier is not null)
+        {
+            currentSource = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}, {joinRangeVariableType.Name}, {joinRangeVariableType.Name}>",
+                "Join",
+                [
+                    currentSource,
+                    joinSourceExpression,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(query.Identifier.Text, rangeVariableType.Name)],
+                        joinKeyType.Name,
+                        joinLeftExpression),
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(query.JoinIdentifier.Text, joinRangeVariableType.Name)],
+                        joinKeyType.Name,
+                        joinRightExpression),
+                    CreateLambda(
+                        "function",
+                        [
+                            CreateParameter(query.Identifier.Text, rangeVariableType.Name),
+                            CreateParameter(query.JoinIdentifier.Text, joinRangeVariableType.Name)
+                        ],
+                        joinRangeVariableType.Name,
+                        CreateNameExpression(query.JoinIdentifier.Text))
+                ]);
+            rangeVariableType = joinRangeVariableType;
+            currentRangeVariableName = query.JoinIdentifier.Text;
+        }
+        else if (secondSourceExpression is not null &&
+            secondRangeVariableType is not null &&
+            query.SecondIdentifier is not null)
+        {
+            currentSource = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}, {secondRangeVariableType.Name}, {secondRangeVariableType.Name}>",
+                "SelectMany",
+                [
+                    currentSource,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(query.Identifier.Text, rangeVariableType.Name)],
+                        $"IEnumerable<{secondRangeVariableType.Name}>",
+                        secondSourceExpression),
+                    CreateLambda(
+                        "function",
+                        [
+                            CreateParameter(query.Identifier.Text, rangeVariableType.Name),
+                            CreateParameter(query.SecondIdentifier.Text, secondRangeVariableType.Name)
+                        ],
+                        secondRangeVariableType.Name,
+                        CreateNameExpression(query.SecondIdentifier.Text))
+                ]);
+            rangeVariableType = secondRangeVariableType;
+            currentRangeVariableName = query.SecondIdentifier.Text;
+        }
+
+        if (predicateExpression is not null)
+        {
+            currentSource = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}>",
+                "Where",
+                [
+                    currentSource,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                        "Boolean",
+                        predicateExpression)
+                ]);
+        }
+
+        if (orderByExpression is not null)
+        {
+            if (thenByExpression is not null)
+            {
+                currentSource = CreateEnumerableCall(
+                    $"Enumerable<{rangeVariableType.Name}>",
+                    query.ThenByDescendingKeyword is null ? "OrderBy" : "OrderByDescending",
+                    [
+                        currentSource,
+                        CreateLambda(
+                            "function",
+                            [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                            "Integer",
+                            thenByExpression)
+                    ]);
+            }
+
+            currentSource = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}>",
+                query.DescendingKeyword is null ? "OrderBy" : "OrderByDescending",
+                [
+                    currentSource,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                        "Integer",
+                        orderByExpression)
+                ]);
+        }
+
+        if (groupExpression is not null && groupByExpression is not null && groupKeyType is not null)
+        {
+            translated = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}, {groupKeyType.Name}, {projectedType.Name}>",
+                "GroupBy",
+                [
+                    currentSource,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                        groupKeyType.Name,
+                        groupByExpression),
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                        projectedType.Name,
+                        groupExpression)
+                ]);
+        }
+        else
+        {
+            translated = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}, {projectedType.Name}>",
+                "Select",
+                [
+                    currentSource,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                        projectedType.Name,
+                        selectExpression)
+                ]);
+        }
+
+        if (query.IntoIdentifier is not null && continuationSelectExpression is not null)
+        {
+            currentSource = translated;
+            rangeVariableType = continuationRangeType;
+            currentRangeVariableName = query.IntoIdentifier.Text;
+
+            if (continuationPredicateExpression is not null)
+            {
+                currentSource = CreateEnumerableCall(
+                    $"Enumerable<{rangeVariableType.Name}>",
+                    "Where",
+                    [
+                        currentSource,
+                        CreateLambda(
+                            "function",
+                            [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                            "Boolean",
+                            continuationPredicateExpression)
+                    ]);
+            }
+
+            if (continuationOrderByExpression is not null)
+            {
+                if (continuationThenByExpression is not null)
+                {
+                    currentSource = CreateEnumerableCall(
+                        $"Enumerable<{rangeVariableType.Name}>",
+                        query.ContinuationThenByDescendingKeyword is null ? "OrderBy" : "OrderByDescending",
+                        [
+                            currentSource,
+                            CreateLambda(
+                                "function",
+                                [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                                "Integer",
+                                continuationThenByExpression)
+                        ]);
+                }
+
+                currentSource = CreateEnumerableCall(
+                    $"Enumerable<{rangeVariableType.Name}>",
+                    query.ContinuationDescendingKeyword is null ? "OrderBy" : "OrderByDescending",
+                    [
+                        currentSource,
+                        CreateLambda(
+                            "function",
+                            [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                            "Integer",
+                            continuationOrderByExpression)
+                    ]);
+            }
+
+            translated = CreateEnumerableCall(
+                $"Enumerable<{rangeVariableType.Name}, {finalProjectedType.Name}>",
+                "Select",
+                [
+                    currentSource,
+                    CreateLambda(
+                        "function",
+                        [CreateParameter(currentRangeVariableName, rangeVariableType.Name)],
+                        finalProjectedType.Name,
+                        continuationSelectExpression)
+                ]);
+        }
+
+        if (takeExpression is not null)
+        {
+            translated = CreateEnumerableCall(
+                $"Enumerable<{finalProjectedType.Name}>",
+                "Take",
+                [
+                    translated,
+                    takeExpression
+                ]);
+        }
+
+        if (skipExpression is not null)
+        {
+            translated = CreateEnumerableCall(
+                $"Enumerable<{finalProjectedType.Name}>",
+                "Skip",
+                [
+                    translated,
+                    skipExpression
+                ]);
+        }
+
+        return true;
+
+        static CallExpressionSyntax CreateEnumerableCall(
+            string receiverTypeName,
+            string methodName,
+            IReadOnlyList<ExpressionSyntax> arguments)
+        {
+            return new CallExpressionSyntax(
+                new MemberAccessExpressionSyntax(
+                    CreateNameExpression(receiverTypeName),
+                    CreateToken(SyntaxKind.DotToken, "."),
+                    CreateToken(SyntaxKind.IdentifierToken, methodName)),
+                CreateToken(SyntaxKind.OpenParenToken, "("),
+                arguments.Select(argument => new ArgumentSyntax(argument)).ToArray(),
+                CreateToken(SyntaxKind.CloseParenToken, ")"));
+        }
+
+        static LambdaExpressionSyntax CreateLambda(
+            string signatureKeyword,
+            IReadOnlyList<ParameterSyntax> parameters,
+            string returnTypeName,
+            ExpressionSyntax body)
+        {
+            return new LambdaExpressionSyntax(
+                CreateToken(signatureKeyword == "function" ? SyntaxKind.FunctionKeyword : SyntaxKind.ProcedureKeyword, signatureKeyword),
+                CreateToken(SyntaxKind.OpenParenToken, "("),
+                parameters,
+                CreateToken(SyntaxKind.CloseParenToken, ")"),
+                signatureKeyword == "function" ? CreateToken(SyntaxKind.ColonToken, ":") : null,
+                signatureKeyword == "function" ? CreateQualifiedName(returnTypeName) : null,
+                CreateToken(SyntaxKind.ArrowToken, "=>"),
+                body);
+        }
+
+        static ParameterSyntax CreateParameter(string name, string typeName) =>
+            new(
+                null,
+                CreateToken(SyntaxKind.IdentifierToken, name),
+                CreateToken(SyntaxKind.ColonToken, ":"),
+                CreateQualifiedName(typeName));
+
+        static NameExpressionSyntax CreateNameExpression(string displayName) =>
+            new(CreateQualifiedName(displayName));
+
+        static QualifiedNameSyntax CreateQualifiedName(string displayName) =>
+            new(ParseQualifiedNameTokens(displayName));
+
+        static IReadOnlyList<SyntaxToken> ParseQualifiedNameTokens(string displayName)
+        {
+            var parts = new List<SyntaxToken>();
+            foreach (var part in displayName.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                parts.Add(CreateToken(SyntaxKind.IdentifierToken, part));
+            }
+
+            return parts;
+        }
+
+        static SyntaxToken CreateToken(SyntaxKind kind, string text) =>
+            new(kind, text, null, new TextSpan(0, 0));
+    }
+
+    private static ExpressionSyntax RewriteQueryLetReference(
+        ExpressionSyntax expression,
+        string localName,
+        ExpressionSyntax replacement) =>
+        expression switch
+        {
+            NameExpressionSyntax name when name.Name.Parts.Count == 1 && name.Name.Parts[0].Text == localName => replacement,
+            ParenthesizedExpressionSyntax parenthesized => parenthesized with
+            {
+                Expression = RewriteQueryLetReference(parenthesized.Expression, localName, replacement)
+            },
+            AssignmentExpressionSyntax assignment => assignment with
+            {
+                Expression = RewriteQueryLetReference(assignment.Expression, localName, replacement)
+            },
+            CompoundAssignmentExpressionSyntax assignment => assignment with
+            {
+                Expression = RewriteQueryLetReference(assignment.Expression, localName, replacement)
+            },
+            UnaryExpressionSyntax unary => unary with
+            {
+                Operand = RewriteQueryLetReference(unary.Operand, localName, replacement)
+            },
+            BinaryExpressionSyntax binary => binary with
+            {
+                Left = RewriteQueryLetReference(binary.Left, localName, replacement),
+                Right = RewriteQueryLetReference(binary.Right, localName, replacement)
+            },
+            CallExpressionSyntax call => call with
+            {
+                Target = RewriteQueryLetReference(call.Target, localName, replacement),
+                Arguments = call.Arguments.Select(argument => argument with
+                {
+                    Expression = RewriteQueryLetReference(argument.Expression, localName, replacement)
+                }).ToArray()
+            },
+            MemberAccessExpressionSyntax memberAccess => memberAccess with
+            {
+                Receiver = RewriteQueryLetReference(memberAccess.Receiver, localName, replacement)
+            },
+            PostfixElementAccessExpressionSyntax elementAccess => elementAccess with
+            {
+                Target = RewriteQueryLetReference(elementAccess.Target, localName, replacement),
+                IndexExpressions = elementAccess.IndexExpressions.Select(index => RewriteQueryLetReference(index, localName, replacement)).ToArray()
+            },
+            ElementAccessExpressionSyntax elementAccess => elementAccess with
+            {
+                IndexExpressions = elementAccess.IndexExpressions.Select(index => RewriteQueryLetReference(index, localName, replacement)).ToArray()
+            },
+            AsExpressionSyntax asExpression => asExpression with
+            {
+                Expression = RewriteQueryLetReference(asExpression.Expression, localName, replacement)
+            },
+            TypeTestExpressionSyntax typeTest => typeTest with
+            {
+                Expression = RewriteQueryLetReference(typeTest.Expression, localName, replacement)
+            },
+            NewExpressionSyntax newExpression => newExpression with
+            {
+                Arguments = newExpression.Arguments.Select(argument => argument with
+                {
+                    Expression = RewriteQueryLetReference(argument.Expression, localName, replacement)
+                }).ToArray()
+            },
+            NewArrayExpressionSyntax newArray => newArray with
+            {
+                LengthExpressions = newArray.LengthExpressions.Select(length => RewriteQueryLetReference(length, localName, replacement)).ToArray()
+            },
+            _ => expression
         };
 
     private static InvocationResolution? ResolveMemberInvocation(
@@ -6677,14 +7634,28 @@ public static class SemanticFacts
         if (target.Parts.Count >= 2)
         {
             var declaringTypeName = string.Join(".", target.Parts.Take(target.Parts.Count - 1).Select(part => part.Text));
-            if (ResolveTypeReference(declaringTypeName, knownTypes) is { } targetType &&
-                TryResolveTypeIntrinsic(targetType, target.Parts[^1].Text, argumentCount) is { } typeIntrinsic)
+            if (ResolveTypeReference(declaringTypeName, knownTypes) is { } targetType)
             {
-                return new InvocationResolution(typeIntrinsic);
+                if (TryResolveTypeIntrinsic(targetType, target.Parts[^1].Text, argumentCount) is { } typeIntrinsic)
+                {
+                    return new InvocationResolution(typeIntrinsic);
+                }
+
+                if (targetType is NamedTypeSymbol namedTargetType)
+                {
+                    var staticTargetMethod = namedTargetType.Methods.FirstOrDefault(method =>
+                        method.Name == target.Parts[^1].Text &&
+                        SupportsArgumentCount(method, argumentCount) &&
+                        method.IsStatic);
+                    if (staticTargetMethod is not null)
+                    {
+                        return new InvocationResolution(staticTargetMethod);
+                    }
+                }
             }
         }
 
-        var staticMethod = ResolveMethod(target.ToDisplayString(), argumentCount, knownMethods, currentMethod);
+        var staticMethod = ResolveMethod(target.ToDisplayString(), argumentCount, knownMethods, currentMethod, knownTypes);
         return staticMethod is null ? null : new InvocationResolution(staticMethod);
     }
 
@@ -6692,12 +7663,25 @@ public static class SemanticFacts
         string name,
         int argumentCount,
         IEnumerable<MethodSymbol> knownMethods,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
     {
         var candidates = ResolveMethodCandidates(name, argumentCount, knownMethods);
         var qualifiedTarget = ParseQualifiedMethodTarget(name);
         if (qualifiedTarget.DeclaringTypeName is not null)
         {
+            if (ResolveTypeReference(qualifiedTarget.DeclaringTypeName, knownTypes) is NamedTypeSymbol targetType)
+            {
+                var targetTypeMethod = targetType.Methods.FirstOrDefault(method =>
+                    method.Name == qualifiedTarget.MethodName &&
+                    SupportsArgumentCount(method, argumentCount) &&
+                    method.IsStatic);
+                if (targetTypeMethod is not null)
+                {
+                    return targetTypeMethod;
+                }
+            }
+
             return candidates.FirstOrDefault(method => method.IsStatic);
         }
 
@@ -6708,6 +7692,18 @@ public static class SemanticFacts
             {
                 return sameTypeCandidate;
             }
+
+            if (ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is NamedTypeSymbol currentDeclaringType)
+            {
+                var currentTypeMethod = currentDeclaringType.Methods.FirstOrDefault(method =>
+                    method.Name == qualifiedTarget.MethodName &&
+                    SupportsArgumentCount(method, argumentCount) &&
+                    (method.IsStatic || !currentMethod.IsStatic));
+                if (currentTypeMethod is not null)
+                {
+                    return currentTypeMethod;
+                }
+            }
         }
 
         return candidates.FirstOrDefault(method => method.IsStatic) ?? candidates.FirstOrDefault();
@@ -6717,12 +7713,24 @@ public static class SemanticFacts
         string name,
         int argumentCount,
         IEnumerable<MethodSymbol> knownMethods,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
     {
         var candidates = ResolveMethodCandidates(name, argumentCount, knownMethods);
         var qualifiedTarget = ParseQualifiedMethodTarget(name);
         if (qualifiedTarget.DeclaringTypeName is not null)
         {
+            if (ResolveTypeReference(qualifiedTarget.DeclaringTypeName, knownTypes) is NamedTypeSymbol targetType)
+            {
+                var targetTypeMethod = targetType.Methods.FirstOrDefault(method =>
+                    method.Name == qualifiedTarget.MethodName &&
+                    SupportsArgumentCount(method, argumentCount));
+                if (targetTypeMethod is not null)
+                {
+                    return targetTypeMethod;
+                }
+            }
+
             return candidates.FirstOrDefault();
         }
 
@@ -6732,6 +7740,17 @@ public static class SemanticFacts
             if (sameTypeCandidate is not null)
             {
                 return sameTypeCandidate;
+            }
+
+            if (ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is NamedTypeSymbol currentDeclaringType)
+            {
+                var currentTypeMethod = currentDeclaringType.Methods.FirstOrDefault(method =>
+                    method.Name == qualifiedTarget.MethodName &&
+                    SupportsArgumentCount(method, argumentCount));
+                if (currentTypeMethod is not null)
+                {
+                    return currentTypeMethod;
+                }
             }
         }
 
@@ -6771,14 +7790,27 @@ public static class SemanticFacts
         if (target.Parts.Count >= 2)
         {
             var declaringTypeName = string.Join(".", target.Parts.Take(target.Parts.Count - 1).Select(part => part.Text));
-            if (ResolveTypeReference(declaringTypeName, knownTypes) is { } targetType &&
-                TryResolveTypeIntrinsic(targetType, target.Parts[^1].Text, argumentCount) is { } typeIntrinsic)
+            if (ResolveTypeReference(declaringTypeName, knownTypes) is { } targetType)
             {
-                return new InvocationResolution(typeIntrinsic);
+                if (TryResolveTypeIntrinsic(targetType, target.Parts[^1].Text, argumentCount) is { } typeIntrinsic)
+                {
+                    return new InvocationResolution(typeIntrinsic);
+                }
+
+                if (targetType is NamedTypeSymbol namedTargetType)
+                {
+                    var staticTargetMethod = namedTargetType.Methods.FirstOrDefault(method =>
+                        method.Name == target.Parts[^1].Text &&
+                        SupportsArgumentCount(method, argumentCount));
+                    if (staticTargetMethod is not null)
+                    {
+                        return new InvocationResolution(staticTargetMethod);
+                    }
+                }
             }
         }
 
-        var staticMethod = ResolveMethodIgnoringAccess(target.ToDisplayString(), argumentCount, knownMethods, currentMethod);
+        var staticMethod = ResolveMethodIgnoringAccess(target.ToDisplayString(), argumentCount, knownMethods, currentMethod, knownTypes);
         return staticMethod is null ? null : new InvocationResolution(staticMethod);
     }
 

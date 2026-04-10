@@ -2392,6 +2392,21 @@ public sealed class Lowerer
             case ArrayLengthExpressionSyntax lengthExpression when ResolveBoundLengthRead(lengthExpression, registerByName, currentMethod) is { } boundLengthRead:
                 LowerBoundLengthReadInto(boundLengthRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
+            case ArrayLengthExpressionSyntax lengthExpression:
+            {
+                var targetExpression = new NameExpressionSyntax(lengthExpression.Target);
+                var lengthLocalTypes = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+                var targetType = SemanticFacts.InferExpressionType(targetExpression, lengthLocalTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+                if (SemanticFacts.HasLengthProperty(targetType))
+                {
+                    var receiverRegister = AllocateTemp(targetType, registers);
+                    LowerExpressionInto(targetExpression, receiverRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                    instructions.Add(new IrInstruction(IrOpCode.LoadLength, destination, new IrArrayTarget(receiverRegister)));
+                    return;
+                }
+
+                break;
+            }
             case ElementAccessExpressionSyntax elementAccess:
                 if (ResolveBoundSliceRead(new NameExpressionSyntax(elementAccess.Target), elementAccess.IndexExpressions, registerByName, currentMethod) is { } boundSliceRead)
                 {
@@ -2542,6 +2557,25 @@ public sealed class Lowerer
             case TypeTestExpressionSyntax typeTest:
                 LowerTypeTestInto(typeTest, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
+            case QueryExpressionSyntax query:
+                var queryLocalTypes = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+                if (!SemanticFacts.TryTranslateQueryExpression(
+                        query,
+                        queryLocalTypes,
+                        _knownTypes,
+                        _knownMethods,
+                        _knownFields,
+                        _knownConstants,
+                        _knownProperties,
+                        currentMethod,
+                        out var translatedQuery))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot lower query expression because source '{SemanticFacts.GetExpressionDisplayName(query.SourceExpression)}' is not enumerable.");
+                }
+
+                LowerExpressionInto(translatedQuery, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                return;
             case CallExpressionSyntax call:
                 var invocation = ResolveInvocationForLowering(call, registerByName, currentMethod);
                 var boundCall = ResolveBoundCall(call, registerByName, currentMethod);
@@ -2684,6 +2718,20 @@ public sealed class Lowerer
         var constructor = delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2);
         if (targetMethod is null || constructor is null)
         {
+            if (currentMethod?.DeclaringTypeName == "Program" && currentMethod.Name == "Main")
+            {
+                var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+                var lambdaCandidates = _knownMethods
+                    .Where(method => method.LambdaSource is not null)
+                    .Select(method => $"{method.DeclaringTypeName}.{method.Name}({string.Join(", ", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}")
+                    .ToArray();
+                throw new InvalidOperationException(
+                    "Failed to lower delegate target in Program.Main: " +
+                    $"delegate='{delegateType.Name}', " +
+                    $"invoke='{invokeMethod?.DeclaringTypeName ?? delegateType.Name}.{invokeMethod?.Name ?? "<null>"}', " +
+                    $"candidates=[{string.Join(" | ", lambdaCandidates)}]");
+            }
+
             return false;
         }
 
@@ -2730,10 +2778,82 @@ public sealed class Lowerer
             return false;
         }
 
-        var targetMethod = _knownMethods.FirstOrDefault(method => ReferenceEquals(method.LambdaSource, lambda));
+        static bool TypesMatch(TypeSymbol left, TypeSymbol right)
+        {
+            if (ReferenceEquals(left, right))
+            {
+                return true;
+            }
+
+            return string.Equals(left.Name, right.Name, StringComparison.Ordinal);
+        }
+
+        var targetMethod = _knownMethods.FirstOrDefault(method => method.LambdaSource is not null && method.LambdaSource.Equals(lambda));
+        if (targetMethod is null)
+        {
+            var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+            if (invokeMethod is not null)
+            {
+                var matchingLambdaMethods = _knownMethods
+                    .Where(method =>
+                        method.LambdaSource is not null &&
+                        method.Parameters.Count == invokeMethod.Parameters.Count &&
+                        TypesMatch(method.ReturnType, invokeMethod.ReturnType))
+                    .Where(method => method.Parameters.Zip(invokeMethod.Parameters, (left, right) => TypesMatch(left.Type, right.Type)).All(matches => matches))
+                    .ToArray();
+                var bodyDisplayName = SemanticFacts.GetExpressionDisplayName(lambda.Body);
+                var exactBodyMatches = matchingLambdaMethods
+                    .Where(method => method.LambdaSource is not null && method.LambdaSource.Body.Equals(lambda.Body))
+                    .ToArray();
+                if (exactBodyMatches.Length > 0)
+                {
+                    targetMethod = exactBodyMatches[0];
+                }
+                else
+                {
+                    exactBodyMatches = matchingLambdaMethods
+                        .Where(method => method.LambdaSource is not null && SemanticFacts.GetExpressionDisplayName(method.LambdaSource.Body) == bodyDisplayName)
+                        .ToArray();
+                    if (exactBodyMatches.Length > 0)
+                    {
+                        targetMethod = exactBodyMatches[0];
+                    }
+                }
+
+                if (targetMethod is null && matchingLambdaMethods.Length > 0)
+                {
+                    targetMethod = matchingLambdaMethods[0];
+                }
+            }
+        }
+
         var constructor = delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2);
         if (targetMethod is null || constructor is null)
         {
+            if (currentMethod?.DeclaringTypeName == "Program" &&
+                currentMethod.Name == "Main")
+            {
+                var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+                var helperCandidates = _knownMethods
+                    .Where(method => method.LambdaSource is not null)
+                    .Select(method =>
+                    {
+                        var parameterTypes = string.Join(", ", method.Parameters.Select(parameter => parameter.Type.Name));
+                        var lambdaBody = method.LambdaSource is null
+                            ? "<none>"
+                            : SemanticFacts.GetExpressionDisplayName(method.LambdaSource.Body);
+                        return $"{method.DeclaringTypeName}.{method.Name}({parameterTypes}):{method.ReturnType.Name} static={method.IsStatic} body={lambdaBody}";
+                    })
+                    .ToArray();
+                var invokeSignature = invokeMethod is null
+                    ? "<missing>"
+                    : $"({string.Join(", ", invokeMethod.Parameters.Select(parameter => parameter.Type.Name))}):{invokeMethod.ReturnType.Name}";
+                throw new InvalidOperationException(
+                    $"Failed to resolve delegate lambda target for delegate '{delegateType.Name}' invoke='{invokeSignature}' " +
+                    $"lambdaBody='{SemanticFacts.GetExpressionDisplayName(lambda.Body)}' currentMethod='{currentMethod.DeclaringTypeName}.{currentMethod.Name}'. " +
+                    $"constructorFound={(constructor is not null).ToString()} helperCandidates=[{string.Join(" | ", helperCandidates)}]");
+            }
+
             return false;
         }
 
@@ -2908,7 +3028,21 @@ public sealed class Lowerer
                 SemanticFacts.InferExpressionType(argument.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
             var temp = AllocateTemp(argumentType, registers);
             argumentTemps.Add(temp);
-            LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            try
+            {
+                LowerExpressionInto(argument.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            }
+            catch (InvalidOperationException ex) when (argument.Expression is LambdaExpressionSyntax lambda)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to lower lambda call argument for target '{SemanticFacts.GetExpressionDisplayName(call.Target)}' " +
+                    $"parameter='{parameter?.Name ?? "<none>"}:{parameter?.Type.Name ?? argumentType.Name}' " +
+                    $"currentMethod='{(currentMethod?.DeclaringTypeName is null ? currentMethod?.Name : $"{currentMethod.DeclaringTypeName}.{currentMethod.Name}")}' " +
+                    $"lambdaReturn='{lambda.ReturnType?.ToDisplayString() ?? "<void>"}' " +
+                    $"lambdaBody='{SemanticFacts.GetExpressionDisplayName(lambda.Body)}'. " +
+                    $"Inner: {ex.Message}",
+                    ex);
+            }
         }
 
         if (!hasParams)
@@ -4374,7 +4508,7 @@ public sealed class Lowerer
     private string AllocateLabel(string prefix) => $"{prefix}_{++_labelCounter}";
 
     private MethodSymbol? ResolveMethod(string name, int argumentCount, MethodSymbol? currentMethod)
-        => SemanticFacts.ResolveMethod(name, argumentCount, _knownMethods, currentMethod);
+        => SemanticFacts.ResolveMethod(name, argumentCount, _knownMethods, currentMethod, _knownTypes);
 
     private FieldSymbol? ResolveStorageField(ExpressionSyntax expression, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod, bool forWrite)
     {
@@ -4533,6 +4667,9 @@ public sealed class Lowerer
                 _knownConstants,
                 _knownProperties,
                 currentMethod);
+        var qualifiedTargetInfo = flattenedTarget is null
+            ? null
+            : GetQualifiedTargetDebugInfo(flattenedTarget);
 
         var candidateSummary = receiverType is null
             ? "<none>"
@@ -4554,8 +4691,48 @@ public sealed class Lowerer
             $"directInvocation={(directInvocation?.Method is null ? "<null>" : $"{directInvocation.Method.DeclaringTypeName}.{directInvocation.Method.Name}")}, " +
             $"flattenedTarget={(flattenedTarget?.ToDisplayString() ?? "<null>")}, " +
             $"flattenedInvocation={(flattenedInvocation?.Method is null ? "<null>" : $"{flattenedInvocation.Method.DeclaringTypeName}.{flattenedInvocation.Method.Name}")}, " +
+            $"qualifiedTargetInfo={qualifiedTargetInfo ?? "<null>"}, " +
             $"receiverCandidates=[{candidateSummary}], " +
             $"locals=[{localSummary}]";
+
+        string? GetQualifiedTargetDebugInfo(QualifiedNameSyntax qualifiedTarget)
+        {
+            if (qualifiedTarget.Parts.Count < 2)
+            {
+                return null;
+            }
+
+            var declaringTypeName = string.Join(".", qualifiedTarget.Parts.Take(qualifiedTarget.Parts.Count - 1).Select(part => part.Text));
+            var targetType = SemanticFacts.ResolveTypeReference(declaringTypeName, _knownTypes);
+            var namedTargetType = targetType as NamedTypeSymbol;
+            var typeMethodSummary = namedTargetType is null
+                ? "<none>"
+                : string.Join(
+                    ", ",
+                    namedTargetType.Methods
+                        .Where(method => method.Name == qualifiedTarget.Parts[^1].Text)
+                        .Select(method => $"{method.DeclaringTypeName}.{method.Name}/{method.Parameters.Count}[static={method.IsStatic}]"));
+            var knownMethodSummary = string.Join(
+                ", ",
+                _knownMethods
+                    .Where(method =>
+                        method.DeclaringTypeName == (targetType?.Name ?? declaringTypeName) &&
+                        method.Name == qualifiedTarget.Parts[^1].Text)
+                    .Select(method => $"{method.DeclaringTypeName}.{method.Name}/{method.Parameters.Count}[static={method.IsStatic}]"));
+            var relatedTypes = string.Join(
+                ", ",
+                _knownTypes
+                    .OfType<NamedTypeSymbol>()
+                    .Where(type => type.Name == qualifiedTarget.Parts[0].Text)
+                    .Select(type => $"{type.Name}[arity={type.GenericArity}]"));
+
+            return
+                $"declaringTypeName={declaringTypeName}; " +
+                $"resolvedType={(targetType?.Name ?? "<null>")}; " +
+                $"typeMethods=[{typeMethodSummary}]; " +
+                $"knownMethods=[{knownMethodSummary}]; " +
+                $"relatedTypes=[{relatedTypes}]";
+        }
     }
 
     private void StoreIntoBoundWriteTarget(
@@ -5345,11 +5522,15 @@ public sealed class Lowerer
                 var declaringTypeName = string.Join(".", qualifiedTarget.Parts.Take(qualifiedTarget.Parts.Count - 1).Select(part => part.Text));
                 if (SemanticFacts.ResolveTypeReference(declaringTypeName, _knownTypes) is { } targetType)
                 {
-                    var staticMethod = _knownMethods.FirstOrDefault(method =>
-                        method.IsStatic &&
-                        method.DeclaringTypeName == targetType.Name &&
-                        method.Name == qualifiedTarget.Parts[^1].Text &&
-                        SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
+                    var staticMethod = (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(method =>
+                            method.IsStatic &&
+                            method.Name == qualifiedTarget.Parts[^1].Text &&
+                            SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count))
+                        ?? _knownMethods.FirstOrDefault(method =>
+                            method.IsStatic &&
+                            method.DeclaringTypeName == targetType.Name &&
+                            method.Name == qualifiedTarget.Parts[^1].Text &&
+                            SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
                     if (staticMethod is not null)
                     {
                         return new InvocationResolution(staticMethod);
@@ -5382,11 +5563,15 @@ public sealed class Lowerer
             if (memberAccess.Receiver is NameExpressionSyntax receiverName &&
                 SemanticFacts.ResolveTypeReference(receiverName.Name.ToDisplayString(), _knownTypes) is { } targetType)
             {
-                var staticMethod = _knownMethods.FirstOrDefault(method =>
-                    method.IsStatic &&
-                    method.DeclaringTypeName == targetType.Name &&
-                    method.Name == memberAccess.MemberName.Text &&
-                    SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
+                var staticMethod = (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(method =>
+                        method.IsStatic &&
+                        method.Name == memberAccess.MemberName.Text &&
+                        SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count))
+                    ?? _knownMethods.FirstOrDefault(method =>
+                        method.IsStatic &&
+                        method.DeclaringTypeName == targetType.Name &&
+                        method.Name == memberAccess.MemberName.Text &&
+                        SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
                 if (staticMethod is not null)
                 {
                     return new InvocationResolution(staticMethod);
@@ -5872,6 +6057,55 @@ public sealed class Lowerer
                         Expression = RewriteWithExpression(argument.Expression, receiver, registerByName, localTypes, currentMethod)
                     })
                     .ToArray()
+            },
+            QueryExpressionSyntax query => query with
+            {
+                SourceExpression = RewriteWithExpression(query.SourceExpression, receiver, registerByName, localTypes, currentMethod),
+                JoinSourceExpression = query.JoinSourceExpression is null
+                    ? null
+                    : RewriteWithExpression(query.JoinSourceExpression, receiver, registerByName, localTypes, currentMethod),
+                JoinLeftExpression = query.JoinLeftExpression is null
+                    ? null
+                    : RewriteWithExpression(query.JoinLeftExpression, receiver, registerByName, localTypes, currentMethod),
+                JoinRightExpression = query.JoinRightExpression is null
+                    ? null
+                    : RewriteWithExpression(query.JoinRightExpression, receiver, registerByName, localTypes, currentMethod),
+                JoinIntoKeyword = query.JoinIntoKeyword,
+                JoinIntoIdentifier = query.JoinIntoIdentifier,
+                SecondSourceExpression = query.SecondSourceExpression is null
+                    ? null
+                    : RewriteWithExpression(query.SecondSourceExpression, receiver, registerByName, localTypes, currentMethod),
+                LetExpression = query.LetExpression is null
+                    ? null
+                    : RewriteWithExpression(query.LetExpression, receiver, registerByName, localTypes, currentMethod),
+                PredicateExpression = query.PredicateExpression is null
+                    ? null
+                    : RewriteWithExpression(query.PredicateExpression, receiver, registerByName, localTypes, currentMethod),
+                OrderByExpression = query.OrderByExpression is null
+                    ? null
+                    : RewriteWithExpression(query.OrderByExpression, receiver, registerByName, localTypes, currentMethod),
+                GroupExpression = query.GroupExpression is null
+                    ? null
+                    : RewriteWithExpression(query.GroupExpression, receiver, registerByName, localTypes, currentMethod),
+                GroupByExpression = query.GroupByExpression is null
+                    ? null
+                    : RewriteWithExpression(query.GroupByExpression, receiver, registerByName, localTypes, currentMethod),
+                SelectExpression = RewriteWithExpression(query.SelectExpression, receiver, registerByName, localTypes, currentMethod),
+                ContinuationPredicateExpression = query.ContinuationPredicateExpression is null
+                    ? null
+                    : RewriteWithExpression(query.ContinuationPredicateExpression, receiver, registerByName, localTypes, currentMethod),
+                ContinuationOrderByExpression = query.ContinuationOrderByExpression is null
+                    ? null
+                    : RewriteWithExpression(query.ContinuationOrderByExpression, receiver, registerByName, localTypes, currentMethod),
+                ContinuationSelectExpression = query.ContinuationSelectExpression is null
+                    ? null
+                    : RewriteWithExpression(query.ContinuationSelectExpression, receiver, registerByName, localTypes, currentMethod),
+                TakeExpression = query.TakeExpression is null
+                    ? null
+                    : RewriteWithExpression(query.TakeExpression, receiver, registerByName, localTypes, currentMethod),
+                SkipExpression = query.SkipExpression is null
+                    ? null
+                    : RewriteWithExpression(query.SkipExpression, receiver, registerByName, localTypes, currentMethod)
             },
             MemberAccessExpressionSyntax memberAccess => memberAccess with
             {

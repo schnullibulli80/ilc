@@ -50,6 +50,16 @@ public enum SyntaxKind
     EachKeyword,
     ForeachKeyword,
     WithKeyword,
+    FromKeyword,
+    JoinKeyword,
+    IntoKeyword,
+    LetKeyword,
+    WhereKeyword,
+    SelectKeyword,
+    OrderByKeyword,
+    DescendingKeyword,
+    TakeKeyword,
+    SkipKeyword,
     DivKeyword,
     ToKeyword,
     DowntoKeyword,
@@ -192,6 +202,7 @@ public enum SyntaxKind
     AsExpression,
     TypeTestExpression,
     CallExpression,
+    QueryExpression,
     LambdaExpression,
     Argument,
     UnaryExpression,
@@ -694,6 +705,60 @@ public sealed record CallExpressionSyntax(
     IReadOnlyList<ArgumentSyntax> Arguments,
     SyntaxToken CloseParenToken) : ExpressionSyntax(SyntaxKind.CallExpression);
 
+public sealed record QueryExpressionSyntax(
+    SyntaxToken FromKeyword,
+    SyntaxToken Identifier,
+    SyntaxToken InKeyword,
+    ExpressionSyntax SourceExpression,
+    SyntaxToken? JoinKeyword,
+    SyntaxToken? JoinIdentifier,
+    SyntaxToken? JoinInKeyword,
+    ExpressionSyntax? JoinSourceExpression,
+    SyntaxToken? JoinOnKeyword,
+    ExpressionSyntax? JoinLeftExpression,
+    SyntaxToken? JoinEqualsKeyword,
+    ExpressionSyntax? JoinRightExpression,
+    SyntaxToken? JoinIntoKeyword,
+    SyntaxToken? JoinIntoIdentifier,
+    SyntaxToken? SecondFromKeyword,
+    SyntaxToken? SecondIdentifier,
+    SyntaxToken? SecondInKeyword,
+    ExpressionSyntax? SecondSourceExpression,
+    SyntaxToken? LetKeyword,
+    SyntaxToken? LetIdentifier,
+    SyntaxToken? LetAssignToken,
+    ExpressionSyntax? LetExpression,
+    SyntaxToken? WhereKeyword,
+    ExpressionSyntax? PredicateExpression,
+    SyntaxToken? OrderByKeyword,
+    ExpressionSyntax? OrderByExpression,
+    SyntaxToken? DescendingKeyword,
+    SyntaxToken? ThenByCommaToken,
+    ExpressionSyntax? ThenByExpression,
+    SyntaxToken? ThenByDescendingKeyword,
+    SyntaxToken? GroupKeyword,
+    ExpressionSyntax? GroupExpression,
+    SyntaxToken? GroupByKeyword,
+    ExpressionSyntax? GroupByExpression,
+    SyntaxToken SelectKeyword,
+    ExpressionSyntax SelectExpression,
+    SyntaxToken? IntoKeyword,
+    SyntaxToken? IntoIdentifier,
+    SyntaxToken? ContinuationWhereKeyword,
+    ExpressionSyntax? ContinuationPredicateExpression,
+    SyntaxToken? ContinuationOrderByKeyword,
+    ExpressionSyntax? ContinuationOrderByExpression,
+    SyntaxToken? ContinuationDescendingKeyword,
+    SyntaxToken? ContinuationThenByCommaToken,
+    ExpressionSyntax? ContinuationThenByExpression,
+    SyntaxToken? ContinuationThenByDescendingKeyword,
+    SyntaxToken? ContinuationSelectKeyword,
+    ExpressionSyntax? ContinuationSelectExpression,
+    SyntaxToken? TakeKeyword,
+    ExpressionSyntax? TakeExpression,
+    SyntaxToken? SkipKeyword,
+    ExpressionSyntax? SkipExpression) : ExpressionSyntax(SyntaxKind.QueryExpression);
+
 public sealed record LambdaExpressionSyntax(
     SyntaxToken SignatureKeyword,
     SyntaxToken? OpenParenToken,
@@ -1037,6 +1102,15 @@ internal sealed class Lexer
             "each" => SyntaxKind.EachKeyword,
             "foreach" => SyntaxKind.ForeachKeyword,
             "with" => SyntaxKind.WithKeyword,
+            "from" => SyntaxKind.FromKeyword,
+            "join" => SyntaxKind.JoinKeyword,
+            "into" => SyntaxKind.IntoKeyword,
+            "let" => SyntaxKind.LetKeyword,
+            "where" => SyntaxKind.WhereKeyword,
+            "select" => SyntaxKind.SelectKeyword,
+            "orderby" => SyntaxKind.OrderByKeyword,
+            "take" => SyntaxKind.TakeKeyword,
+            "skip" => SyntaxKind.SkipKeyword,
             "div" => SyntaxKind.DivKeyword,
             "to" => SyntaxKind.ToKeyword,
             "downto" => SyntaxKind.DowntoKeyword,
@@ -2552,6 +2626,11 @@ internal sealed class Parser
             return ParseMatchExpression();
         }
 
+        if (Current.Kind == SyntaxKind.FromKeyword)
+        {
+            return ParseQueryExpression();
+        }
+
         if (Current.Kind is SyntaxKind.FunctionKeyword or SyntaxKind.ProcedureKeyword)
         {
             return ParseLambdaExpression();
@@ -2821,6 +2900,259 @@ internal sealed class Parser
         var arrowToken = Match(SyntaxKind.ArrowToken);
         var body = ParseExpression();
         return new LambdaExpressionSyntax(signatureKeyword, openParen, parameters, closeParen, colonToken, returnType, arrowToken, body);
+    }
+
+    private QueryExpressionSyntax ParseQueryExpression()
+    {
+        var fromKeyword = Match(SyntaxKind.FromKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var inKeyword = Match(SyntaxKind.InKeyword);
+        var sourceExpression = ParseExpression();
+
+        SyntaxToken? joinKeyword = null;
+        SyntaxToken? joinIdentifier = null;
+        SyntaxToken? joinInKeyword = null;
+        ExpressionSyntax? joinSourceExpression = null;
+        SyntaxToken? joinOnKeyword = null;
+        ExpressionSyntax? joinLeftExpression = null;
+        SyntaxToken? joinEqualsKeyword = null;
+        ExpressionSyntax? joinRightExpression = null;
+        SyntaxToken? joinIntoKeyword = null;
+        SyntaxToken? joinIntoIdentifier = null;
+        if (Current.Kind == SyntaxKind.JoinKeyword)
+        {
+            joinKeyword = Match(SyntaxKind.JoinKeyword);
+            joinIdentifier = Match(SyntaxKind.IdentifierToken);
+            joinInKeyword = Match(SyntaxKind.InKeyword);
+            joinSourceExpression = ParseExpression();
+            joinOnKeyword = Match(SyntaxKind.OnKeyword);
+            joinLeftExpression = ParseExpression();
+            if (Current.Kind == SyntaxKind.IdentifierToken &&
+                string.Equals(Current.Text, "equals", StringComparison.Ordinal))
+            {
+                joinEqualsKeyword = NextToken();
+            }
+            else
+            {
+                joinEqualsKeyword = Match(SyntaxKind.IdentifierToken);
+            }
+
+            joinRightExpression = ParseExpression();
+            if (Current.Kind == SyntaxKind.IntoKeyword)
+            {
+                joinIntoKeyword = Match(SyntaxKind.IntoKeyword);
+                joinIntoIdentifier = Match(SyntaxKind.IdentifierToken);
+            }
+        }
+
+        SyntaxToken? secondFromKeyword = null;
+        SyntaxToken? secondIdentifier = null;
+        SyntaxToken? secondInKeyword = null;
+        ExpressionSyntax? secondSourceExpression = null;
+        if (joinKeyword is null && Current.Kind == SyntaxKind.FromKeyword)
+        {
+            secondFromKeyword = Match(SyntaxKind.FromKeyword);
+            secondIdentifier = Match(SyntaxKind.IdentifierToken);
+            secondInKeyword = Match(SyntaxKind.InKeyword);
+            secondSourceExpression = ParseExpression();
+        }
+
+        SyntaxToken? letKeyword = null;
+        SyntaxToken? letIdentifier = null;
+        SyntaxToken? letAssignToken = null;
+        ExpressionSyntax? letExpression = null;
+        if (Current.Kind == SyntaxKind.LetKeyword)
+        {
+            letKeyword = Match(SyntaxKind.LetKeyword);
+            letIdentifier = Match(SyntaxKind.IdentifierToken);
+            letAssignToken = Match(SyntaxKind.AssignToken);
+            letExpression = ParseExpression();
+        }
+
+        SyntaxToken? whereKeyword = null;
+        ExpressionSyntax? predicateExpression = null;
+        if (Current.Kind == SyntaxKind.WhereKeyword)
+        {
+            whereKeyword = Match(SyntaxKind.WhereKeyword);
+            predicateExpression = ParseExpression();
+        }
+
+        SyntaxToken? orderByKeyword = null;
+        ExpressionSyntax? orderByExpression = null;
+        SyntaxToken? descendingKeyword = null;
+        SyntaxToken? thenByCommaToken = null;
+        ExpressionSyntax? thenByExpression = null;
+        SyntaxToken? thenByDescendingKeyword = null;
+        if (Current.Kind == SyntaxKind.OrderByKeyword)
+        {
+            orderByKeyword = Match(SyntaxKind.OrderByKeyword);
+            orderByExpression = ParseExpression();
+            if (Current.Kind == SyntaxKind.IdentifierToken &&
+                string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+            {
+                descendingKeyword = NextToken();
+            }
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                thenByCommaToken = Match(SyntaxKind.CommaToken);
+                thenByExpression = ParseExpression();
+                if (Current.Kind == SyntaxKind.IdentifierToken &&
+                    string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                {
+                    thenByDescendingKeyword = NextToken();
+                }
+            }
+        }
+
+        SyntaxToken? groupKeyword = null;
+        ExpressionSyntax? groupExpression = null;
+        SyntaxToken? groupByKeyword = null;
+        ExpressionSyntax? groupByExpression = null;
+        SyntaxToken selectKeyword;
+        ExpressionSyntax selectExpression;
+        if (Current.Kind == SyntaxKind.IdentifierToken &&
+            string.Equals(Current.Text, "group", StringComparison.Ordinal))
+        {
+            groupKeyword = NextToken();
+            groupExpression = ParseExpression();
+            if (Current.Kind == SyntaxKind.IdentifierToken &&
+                string.Equals(Current.Text, "by", StringComparison.Ordinal))
+            {
+                groupByKeyword = NextToken();
+            }
+            else
+            {
+                groupByKeyword = Match(SyntaxKind.IdentifierToken);
+            }
+
+            groupByExpression = ParseExpression();
+            selectKeyword = new SyntaxToken(SyntaxKind.SelectKeyword, "select", null, new TextSpan(0, 0));
+            selectExpression = groupExpression;
+        }
+        else
+        {
+            selectKeyword = Match(SyntaxKind.SelectKeyword);
+            selectExpression = ParseExpression();
+        }
+
+        SyntaxToken? intoKeyword = null;
+        SyntaxToken? intoIdentifier = null;
+        SyntaxToken? continuationWhereKeyword = null;
+        ExpressionSyntax? continuationPredicateExpression = null;
+        SyntaxToken? continuationOrderByKeyword = null;
+        ExpressionSyntax? continuationOrderByExpression = null;
+        SyntaxToken? continuationDescendingKeyword = null;
+        SyntaxToken? continuationThenByCommaToken = null;
+        ExpressionSyntax? continuationThenByExpression = null;
+        SyntaxToken? continuationThenByDescendingKeyword = null;
+        SyntaxToken? continuationSelectKeyword = null;
+        ExpressionSyntax? continuationSelectExpression = null;
+        if (Current.Kind == SyntaxKind.IntoKeyword)
+        {
+            intoKeyword = Match(SyntaxKind.IntoKeyword);
+            intoIdentifier = Match(SyntaxKind.IdentifierToken);
+            if (Current.Kind == SyntaxKind.WhereKeyword)
+            {
+                continuationWhereKeyword = Match(SyntaxKind.WhereKeyword);
+                continuationPredicateExpression = ParseExpression();
+            }
+
+            if (Current.Kind == SyntaxKind.OrderByKeyword)
+            {
+                continuationOrderByKeyword = Match(SyntaxKind.OrderByKeyword);
+                continuationOrderByExpression = ParseExpression();
+                if (Current.Kind == SyntaxKind.IdentifierToken &&
+                    string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                {
+                    continuationDescendingKeyword = NextToken();
+                }
+
+                if (Current.Kind == SyntaxKind.CommaToken)
+                {
+                    continuationThenByCommaToken = Match(SyntaxKind.CommaToken);
+                    continuationThenByExpression = ParseExpression();
+                    if (Current.Kind == SyntaxKind.IdentifierToken &&
+                        string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                    {
+                        continuationThenByDescendingKeyword = NextToken();
+                    }
+                }
+            }
+
+            continuationSelectKeyword = Match(SyntaxKind.SelectKeyword);
+            continuationSelectExpression = ParseExpression();
+        }
+
+        SyntaxToken? takeKeyword = null;
+        ExpressionSyntax? takeExpression = null;
+        if (Current.Kind == SyntaxKind.TakeKeyword)
+        {
+            takeKeyword = Match(SyntaxKind.TakeKeyword);
+            takeExpression = ParseExpression();
+        }
+
+        SyntaxToken? skipKeyword = null;
+        ExpressionSyntax? skipExpression = null;
+        if (Current.Kind == SyntaxKind.SkipKeyword)
+        {
+            skipKeyword = Match(SyntaxKind.SkipKeyword);
+            skipExpression = ParseExpression();
+        }
+
+        return new QueryExpressionSyntax(
+            fromKeyword,
+            identifier,
+            inKeyword,
+            sourceExpression,
+            joinKeyword,
+            joinIdentifier,
+            joinInKeyword,
+            joinSourceExpression,
+            joinOnKeyword,
+            joinLeftExpression,
+            joinEqualsKeyword,
+            joinRightExpression,
+            joinIntoKeyword,
+            joinIntoIdentifier,
+            secondFromKeyword,
+            secondIdentifier,
+            secondInKeyword,
+            secondSourceExpression,
+            letKeyword,
+            letIdentifier,
+            letAssignToken,
+            letExpression,
+            whereKeyword,
+            predicateExpression,
+            orderByKeyword,
+            orderByExpression,
+            descendingKeyword,
+            thenByCommaToken,
+            thenByExpression,
+            thenByDescendingKeyword,
+            groupKeyword,
+            groupExpression,
+            groupByKeyword,
+            groupByExpression,
+            selectKeyword,
+            selectExpression,
+            intoKeyword,
+            intoIdentifier,
+            continuationWhereKeyword,
+            continuationPredicateExpression,
+            continuationOrderByKeyword,
+            continuationOrderByExpression,
+            continuationDescendingKeyword,
+            continuationThenByCommaToken,
+            continuationThenByExpression,
+            continuationThenByDescendingKeyword,
+            continuationSelectKeyword,
+            continuationSelectExpression,
+            takeKeyword,
+            takeExpression,
+            skipKeyword,
+            skipExpression);
     }
 
     private MatchExpressionSyntax ParseMatchExpression()
@@ -3652,6 +3984,29 @@ public sealed class SyntaxTree
             {
                 Target = NormalizeExpression(call.Target, aliases)!,
                 Arguments = call.Arguments.Select(argument => NormalizeArgument(argument, aliases)).ToArray()
+            },
+            QueryExpressionSyntax query => query with
+            {
+                SourceExpression = NormalizeExpression(query.SourceExpression, aliases)!,
+                JoinSourceExpression = query.JoinSourceExpression is null ? null : NormalizeExpression(query.JoinSourceExpression, aliases)!,
+                JoinLeftExpression = query.JoinLeftExpression is null ? null : NormalizeExpression(query.JoinLeftExpression, aliases)!,
+                JoinRightExpression = query.JoinRightExpression is null ? null : NormalizeExpression(query.JoinRightExpression, aliases)!,
+                JoinIntoKeyword = query.JoinIntoKeyword,
+                JoinIntoIdentifier = query.JoinIntoIdentifier,
+                SecondSourceExpression = query.SecondSourceExpression is null ? null : NormalizeExpression(query.SecondSourceExpression, aliases)!,
+                LetExpression = query.LetExpression is null ? null : NormalizeExpression(query.LetExpression, aliases)!,
+                PredicateExpression = query.PredicateExpression is null ? null : NormalizeExpression(query.PredicateExpression, aliases)!,
+                OrderByExpression = query.OrderByExpression is null ? null : NormalizeExpression(query.OrderByExpression, aliases)!,
+                ThenByExpression = query.ThenByExpression is null ? null : NormalizeExpression(query.ThenByExpression, aliases)!,
+                GroupExpression = query.GroupExpression is null ? null : NormalizeExpression(query.GroupExpression, aliases)!,
+                GroupByExpression = query.GroupByExpression is null ? null : NormalizeExpression(query.GroupByExpression, aliases)!,
+                SelectExpression = NormalizeExpression(query.SelectExpression, aliases)!,
+                ContinuationPredicateExpression = query.ContinuationPredicateExpression is null ? null : NormalizeExpression(query.ContinuationPredicateExpression, aliases)!,
+                ContinuationOrderByExpression = query.ContinuationOrderByExpression is null ? null : NormalizeExpression(query.ContinuationOrderByExpression, aliases)!,
+                ContinuationThenByExpression = query.ContinuationThenByExpression is null ? null : NormalizeExpression(query.ContinuationThenByExpression, aliases)!,
+                ContinuationSelectExpression = query.ContinuationSelectExpression is null ? null : NormalizeExpression(query.ContinuationSelectExpression, aliases)!,
+                TakeExpression = query.TakeExpression is null ? null : NormalizeExpression(query.TakeExpression, aliases)!,
+                SkipExpression = query.SkipExpression is null ? null : NormalizeExpression(query.SkipExpression, aliases)!
             },
             LambdaExpressionSyntax lambda => lambda with
             {

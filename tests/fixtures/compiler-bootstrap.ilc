@@ -1239,6 +1239,58 @@ begin
     Program.Trace('CHECKPOINT enumerable-select=', projectedLengthSum);
     current := current + projectedLengthSum;
 
+    var queriedLengths :=
+      from value in genericEnumerable
+      join other in genericEnumerable on value equals other
+      let projectedLength := other.Length
+      where other.Contains('o')
+      orderby projectedLength descending, value.Length
+      select projectedLength
+      into length
+      where length > 2
+      orderby length descending, length
+      select length
+      take 1
+      skip 0;
+    var queriedEnumerator := queriedLengths.GetEnumerator();
+    var queriedLengthSum := 0;
+    while queriedEnumerator.MoveNext() do
+    begin
+      queriedLengthSum := queriedLengthSum + queriedEnumerator.Current;
+    end;
+    Program.Trace('CHECKPOINT enumerable-query=', queriedLengthSum);
+    current := current + queriedLengthSum;
+
+    var groupedLengths :=
+      from value in genericEnumerable
+      join other in genericEnumerable on value.Length equals other.Length into matches
+      let matchCount := Enumerable<String>.Count(matches)
+      where matchCount > 1
+      select matchCount;
+    var groupedEnumerator := groupedLengths.GetEnumerator();
+    var groupedLengthSum := 0;
+    while groupedEnumerator.MoveNext() do
+    begin
+      groupedLengthSum := groupedLengthSum + groupedEnumerator.Current;
+    end;
+    Program.Trace('CHECKPOINT enumerable-groupjoin=', groupedLengthSum);
+    current := current + groupedLengthSum;
+
+    var groupedWords :=
+      from value in genericEnumerable
+      group value by value.Length
+      into grouping
+      where Enumerable<String>.Count(grouping) > 1
+      select grouping.Key;
+    var groupedWordsEnumerator := groupedWords.GetEnumerator();
+    var groupedKeySum := 0;
+    while groupedWordsEnumerator.MoveNext() do
+    begin
+      groupedKeySum := groupedKeySum + groupedWordsEnumerator.Current;
+    end;
+    Program.Trace('CHECKPOINT enumerable-groupby=', groupedKeySum);
+    current := current + groupedKeySum;
+
     var hasWordWithW := Enumerable<String>.Any(genericEnumerable, function(value: String): Boolean => value.Contains('w'));
     Program.Trace('CHECKPOINT enumerable-any=', hasWordWithW);
     var wordsContainingO := Enumerable<String>.Count(genericEnumerable, function(value: String): Boolean => value.Contains('o'));
