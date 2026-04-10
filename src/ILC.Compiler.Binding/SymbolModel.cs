@@ -236,7 +236,8 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<TypeParameterSymbol>? GenericParameters = null,
     NamedTypeSymbol? GenericDefinition = null,
     IReadOnlyList<TypeSymbol>? TypeArguments = null,
-    bool IsDelegate = false) : TypeSymbol(Name, IsReferenceType);
+    bool IsDelegate = false,
+    ProjectorExpressionSyntax? ProjectorSource = null) : TypeSymbol(Name, IsReferenceType);
 
 public enum NameResolutionKind
 {
@@ -595,6 +596,21 @@ public sealed class Binder
             if (declaredTypes.All(existing => existing.Name != lambdaType.Name))
             {
                 declaredTypes.Add(lambdaType);
+            }
+        }
+
+        var projectorArtifacts = CollectSyntheticProjectorArtifacts(
+            syntaxTree.Root.Members,
+            declaredTypes,
+            knownMethods.Concat(lambdaArtifacts.Methods).ToArray(),
+            knownFields,
+            knownConstants.Concat(topLevelConstants).ToArray(),
+            knownProperties);
+        foreach (var projectorType in projectorArtifacts.Types)
+        {
+            if (declaredTypes.All(existing => existing.Name != projectorType.Name))
+            {
+                declaredTypes.Add(projectorType);
             }
         }
 
@@ -1822,6 +1838,15 @@ public sealed class Binder
                     })
                     .ToArray()
             },
+            ProjectorExpressionSyntax projector => projector with
+            {
+                Members = projector.Members
+                    .Select(member => member with
+                    {
+                        Expression = RewriteWithExpression(member.Expression, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                    })
+                    .ToArray()
+            },
             NewArrayExpressionSyntax newArray => newArray with
             {
                 LengthExpressions = newArray.LengthExpressions
@@ -2608,6 +2633,13 @@ public sealed class Binder
                         [query.IntoIdentifier.Text] = continuationRangeType
                     };
 
+                    if (query.ContinuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
+                    {
+                        ValidateExpression(query.ContinuationLetExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        var continuationLetType = SemanticFacts.InferExpressionType(query.ContinuationLetExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        continuationLocals[query.ContinuationLetIdentifier.Text] = continuationLetType;
+                    }
+
                     if (query.ContinuationPredicateExpression is not null)
                     {
                         ValidateExpression(query.ContinuationPredicateExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -2727,6 +2759,13 @@ public sealed class Binder
                     {
                         ValidateExpression(argument.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     }
+                }
+
+                break;
+            case ProjectorExpressionSyntax projector:
+                foreach (var member in projector.Members)
+                {
+                    ValidateExpression(member.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 }
 
                 break;
@@ -4966,6 +5005,9 @@ public sealed class Binder
         IReadOnlyList<NamedTypeSymbol> Types,
         IReadOnlyList<MethodSymbol> Methods);
 
+    private sealed record SyntheticProjectorArtifacts(
+        IReadOnlyList<NamedTypeSymbol> Types);
+
     private static SyntheticLambdaArtifacts CollectSyntheticLambdaArtifacts(
         IReadOnlyList<MemberSyntax> members,
         IReadOnlyList<TypeSymbol> knownTypes,
@@ -5007,6 +5049,279 @@ public sealed class Binder
         }
 
         return new SyntheticLambdaArtifacts(types, methods);
+    }
+
+    private static SyntheticProjectorArtifacts CollectSyntheticProjectorArtifacts(
+        IReadOnlyList<MemberSyntax> members,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties)
+    {
+        var types = new List<NamedTypeSymbol>();
+
+        foreach (var classDeclaration in members.OfType<ClassDeclarationSyntax>())
+        {
+            var typeScope = knownTypes.Concat(BindTypeParameters(classDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
+            foreach (var methodDeclaration in classDeclaration.Members.OfType<MethodDeclarationSyntax>())
+            {
+                foreach (var projectorType in CollectProjectorTypes(
+                             methodDeclaration,
+                             classDeclaration.Identifier.Text,
+                             typeScope,
+                             knownMethods,
+                             knownFields,
+                             knownConstants,
+                             knownProperties))
+                {
+                    types.Add(projectorType);
+                }
+            }
+        }
+
+        return new SyntheticProjectorArtifacts(types);
+    }
+
+    private static IReadOnlyList<NamedTypeSymbol> CollectProjectorTypes(
+        MethodDeclarationSyntax methodDeclaration,
+        string declaringTypeName,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties)
+    {
+        var boundMethod = BindMethod(methodDeclaration, declaringTypeName, knownTypes);
+        var methodLocals = CollectMethodQueryScope(
+            methodDeclaration,
+            declaringTypeName,
+            knownTypes,
+            knownMethods,
+            knownFields,
+            knownConstants,
+            knownProperties);
+        var projectorTypes = new List<NamedTypeSymbol>();
+        var projectorTypesBySignature = new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal);
+
+        void AddProjectorsFromExpression(ExpressionSyntax? expression, IReadOnlyDictionary<string, TypeSymbol> locals)
+        {
+            if (expression is null)
+            {
+                return;
+            }
+
+            var projectors = new List<ProjectorExpressionSyntax>();
+            CollectProjectorExpressions(expression, projectors);
+            foreach (var projector in projectors)
+            {
+                var signature = GetProjectorSignature(projector, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, boundMethod);
+                if (!projectorTypesBySignature.TryGetValue(signature, out var projectorType))
+                {
+                    projectorType = BindSyntheticProjectorType(
+                        projector,
+                        signature,
+                        locals,
+                        knownTypes,
+                        knownMethods,
+                        knownFields,
+                        knownConstants,
+                        knownProperties,
+                        boundMethod);
+                    projectorTypesBySignature[signature] = projectorType;
+                    projectorTypes.Add(projectorType);
+                }
+            }
+        }
+
+        AddProjectorsFromExpression(methodDeclaration.ExpressionBody, methodLocals);
+        if (methodDeclaration.Body is not null)
+        {
+            foreach (var statement in methodDeclaration.Body.Statements)
+            {
+                if (statement is LocalVariableDeclarationStatementSyntax localDeclaration)
+                {
+                    foreach (var declarator in localDeclaration.Declarators)
+                    {
+                        AddProjectorsFromExpression(declarator.Initializer, methodLocals);
+                    }
+                }
+                else if (statement is ExpressionStatementSyntax expressionStatement)
+                {
+                    AddProjectorsFromExpression(expressionStatement.Expression, methodLocals);
+                }
+                else if (statement is ReturnStatementSyntax returnStatement)
+                {
+                    AddProjectorsFromExpression(returnStatement.Expression, methodLocals);
+                }
+            }
+        }
+
+        var translatedLambdas = new List<LambdaExpressionSyntax>();
+        CollectLambdaExpressions(methodDeclaration.ExpressionBody, translatedLambdas);
+        CollectLambdaExpressions(methodDeclaration.Body, translatedLambdas);
+        var queries = new List<QueryExpressionSyntax>();
+        CollectQueryExpressions(methodDeclaration.ExpressionBody, queries);
+        CollectQueryExpressions(methodDeclaration.Body, queries);
+        foreach (var query in queries)
+        {
+            if (!SemanticFacts.TryTranslateQueryExpression(
+                    query,
+                    methodLocals,
+                    knownTypes,
+                    knownMethods,
+                    knownFields,
+                    knownConstants,
+                    knownProperties,
+                    boundMethod,
+                    out var translatedQuery))
+            {
+                continue;
+            }
+
+            translatedLambdas.Clear();
+            CollectLambdaExpressions(translatedQuery, translatedLambdas);
+            foreach (var lambda in translatedLambdas)
+            {
+                var lambdaLocals = new Dictionary<string, TypeSymbol>(methodLocals, StringComparer.Ordinal);
+                foreach (var parameter in lambda.Parameters)
+                {
+                    lambdaLocals[parameter.Identifier.Text] = BindType(parameter.TypeName, knownTypes);
+                }
+
+                AddProjectorsFromExpression(lambda.Body, lambdaLocals);
+            }
+        }
+
+        return projectorTypes
+            .GroupBy(type => type.Name, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static string GetProjectorSignature(
+        ProjectorExpressionSyntax projector,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod) =>
+        string.Join(
+            "|",
+            projector.Members.Select(member =>
+                $"{member.Identifier.Text}:{SemanticFacts.InferExpressionType(member.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}={SemanticFacts.GetExpressionDisplayName(member.Expression)}"));
+
+    private static NamedTypeSymbol BindSyntheticProjectorType(
+        ProjectorExpressionSyntax projector,
+        string signature,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol currentMethod)
+    {
+        var typeName = SemanticFacts.GetProjectorTypeName(signature);
+        var fields = projector.Members
+            .Select(member => new FieldSymbol(
+                member.Identifier.Text,
+                SemanticFacts.InferExpressionType(member.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+                typeName,
+                false,
+                null))
+            .ToArray();
+
+        var parameters = projector.Members
+            .Select(member => new ParameterSymbol(
+                member.Identifier.Text,
+                SemanticFacts.InferExpressionType(member.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)))
+            .ToArray();
+
+        var constructorDeclaration = CreateSyntheticProjectorConstructor(typeName, parameters, fields);
+        var constructorMethod = BindMethod(constructorDeclaration, typeName, knownTypes) with
+        {
+            IsSynthetic = true
+        };
+
+        return new NamedTypeSymbol(
+            typeName,
+            true,
+            false,
+            false,
+            TypeSymbol.Object,
+            [],
+            [constructorMethod],
+            fields,
+            [],
+            [],
+            0,
+            [],
+            null,
+            null,
+            false,
+            projector);
+    }
+
+    private static MethodDeclarationSyntax CreateSyntheticProjectorConstructor(
+        string typeName,
+        IReadOnlyList<ParameterSymbol> parameters,
+        IReadOnlyList<FieldSymbol> fields)
+    {
+        var statements = new List<StatementSyntax>();
+        for (var index = 0; index < parameters.Count && index < fields.Count; index++)
+        {
+            var field = fields[index];
+            var parameter = parameters[index];
+            statements.Add(new ExpressionStatementSyntax(
+                new AssignmentExpressionSyntax(
+                    new MemberAccessExpressionSyntax(
+                        CreateNameExpression("self"),
+                        CreateToken(SyntaxKind.DotToken, "."),
+                        CreateToken(SyntaxKind.IdentifierToken, field.Name)),
+                    CreateToken(SyntaxKind.AssignToken, ":="),
+                    CreateNameExpression(parameter.Name)),
+                CreateToken(SyntaxKind.SemicolonToken, ";")));
+        }
+
+        return new MethodDeclarationSyntax(
+            [],
+            [],
+            CreateToken(SyntaxKind.ConstructorKeyword, "constructor"),
+            CreateToken(SyntaxKind.IdentifierToken, typeName),
+            CreateToken(SyntaxKind.OpenParenToken, "("),
+            parameters.Select(parameter => new ParameterSyntax(
+                null,
+                CreateToken(SyntaxKind.IdentifierToken, parameter.Name),
+                CreateToken(SyntaxKind.ColonToken, ":"),
+                CreateQualifiedName(parameter.Type.Name))).ToArray(),
+            CreateToken(SyntaxKind.CloseParenToken, ")"),
+            null,
+            null,
+            null,
+            null,
+            new BlockStatementSyntax(
+                CreateToken(SyntaxKind.BeginKeyword, "begin"),
+                statements,
+                CreateToken(SyntaxKind.EndKeyword, "end"),
+                CreateToken(SyntaxKind.SemicolonToken, ";")),
+            CreateToken(SyntaxKind.SemicolonToken, ";"));
+
+        static NameExpressionSyntax CreateNameExpression(string displayName) =>
+            new(CreateQualifiedName(displayName));
+
+        static QualifiedNameSyntax CreateQualifiedName(string displayName)
+        {
+            var parts = displayName.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(part => CreateToken(SyntaxKind.IdentifierToken, part))
+                .ToArray();
+            return new QualifiedNameSyntax(parts);
+        }
+
+        static SyntaxToken CreateToken(SyntaxKind kind, string text) =>
+            new(kind, text, null, new TextSpan(0, text.Length));
     }
 
     private static IReadOnlyList<SyntheticLambdaArtifact> CollectLambdaArtifacts(
@@ -5348,6 +5663,40 @@ public sealed class Binder
             }
 
             CollectQueryExpressions(property.GetValue(value), queries);
+        }
+    }
+
+    private static void CollectProjectorExpressions(object? value, List<ProjectorExpressionSyntax> projectors)
+    {
+        if (value is null or string or SyntaxToken)
+        {
+            return;
+        }
+
+        if (value is ProjectorExpressionSyntax projector)
+        {
+            projectors.Add(projector);
+        }
+
+        if (value is System.Collections.IEnumerable enumerable and not SyntaxNode)
+        {
+            foreach (var item in enumerable)
+            {
+                CollectProjectorExpressions(item, projectors);
+            }
+
+            return;
+        }
+
+        var valueType = value.GetType();
+        foreach (var property in valueType.GetProperties())
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            CollectProjectorExpressions(property.GetValue(value), projectors);
         }
     }
 
@@ -5961,10 +6310,64 @@ public sealed class Binder
 
 public static class SemanticFacts
 {
+    public static string GetProjectorTypeName(string signature)
+    {
+        const ulong basis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = basis;
+        foreach (var ch in signature)
+        {
+            hash ^= ch;
+            hash *= prime;
+        }
+
+        return $"__Projector_{hash:x16}";
+    }
+
     private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
         knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name) ??
         (ResolveTypeReference(type.Name, knownTypes) as NamedTypeSymbol) ??
         (type as NamedTypeSymbol);
+
+    private static string GetProjectorSignature(
+        ProjectorExpressionSyntax projector,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod) =>
+        string.Join(
+            "|",
+            projector.Members.Select(member =>
+                $"{member.Identifier.Text}:{InferExpressionType(member.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}={GetExpressionDisplayName(member.Expression)}"));
+
+    public static NamedTypeSymbol? ResolveProjectorType(
+        ProjectorExpressionSyntax projector,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        IEnumerable<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol>? knownFields,
+        IEnumerable<ConstantSymbol>? knownConstants,
+        IEnumerable<PropertySymbol>? knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var knownTypeList = knownTypes.ToArray();
+        var signature = GetProjectorSignature(
+            projector,
+            localTypes,
+            knownTypeList,
+            knownMethods.ToArray(),
+            (knownFields ?? []).ToArray(),
+            (knownConstants ?? []).ToArray(),
+            (knownProperties ?? []).ToArray(),
+            currentMethod);
+
+        return knownTypeList
+            .OfType<NamedTypeSymbol>()
+            .FirstOrDefault(type => type.Name == GetProjectorTypeName(signature));
+    }
 
     private static IEnumerable<NamedTypeSymbol> GetTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
     {
@@ -6059,6 +6462,27 @@ public static class SemanticFacts
                 ? InferExpressionType(orPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes)
                 : TypeSymbol.Integer,
             MatchRelationalPatternSyntax relational => InferExpressionType(relational.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
+            ProjectorExpressionSyntax projector => ResolveProjectorType(
+                        projector,
+                        localTypes,
+                        knownTypes ?? [],
+                        knownMethods,
+                        knownFields,
+                        knownConstants,
+                        knownProperties,
+                        currentMethod)
+                ?? new TypeSymbol(
+                    GetProjectorTypeName(
+                        GetProjectorSignature(
+                            projector,
+                            localTypes,
+                            knownTypes ?? [],
+                            knownMethods.ToArray(),
+                            (knownFields ?? []).ToArray(),
+                            (knownConstants ?? []).ToArray(),
+                            (knownProperties ?? []).ToArray(),
+                            currentMethod)),
+                    true),
             NewExpressionSyntax newExpression => ResolveTypeReferenceInGenericContext(newExpression.TypeName.ToDisplayString(), currentMethod, knownTypes ?? [])
                 ?? new TypeSymbol(newExpression.TypeName.ToDisplayString(), true),
             NewArrayExpressionSyntax newArray => new TypeSymbol(
@@ -6541,6 +6965,7 @@ public static class SemanticFacts
         var continuationOrderByExpression = query.ContinuationOrderByExpression;
         var continuationThenByExpression = query.ContinuationThenByExpression;
         var continuationSelectExpression = query.ContinuationSelectExpression;
+        var continuationLetExpression = query.ContinuationLetExpression;
         var takeExpression = query.TakeExpression;
         var skipExpression = query.SkipExpression;
         if (letExpression is not null && query.LetIdentifier is not null)
@@ -6554,6 +6979,7 @@ public static class SemanticFacts
             continuationPredicateExpression = continuationPredicateExpression is null ? null : RewriteQueryLetReference(continuationPredicateExpression, query.LetIdentifier.Text, letExpression);
             continuationOrderByExpression = continuationOrderByExpression is null ? null : RewriteQueryLetReference(continuationOrderByExpression, query.LetIdentifier.Text, letExpression);
             continuationThenByExpression = continuationThenByExpression is null ? null : RewriteQueryLetReference(continuationThenByExpression, query.LetIdentifier.Text, letExpression);
+            continuationLetExpression = continuationLetExpression is null ? null : RewriteQueryLetReference(continuationLetExpression, query.LetIdentifier.Text, letExpression);
             continuationSelectExpression = continuationSelectExpression is null ? null : RewriteQueryLetReference(continuationSelectExpression, query.LetIdentifier.Text, letExpression);
             takeExpression = takeExpression is null ? null : RewriteQueryLetReference(takeExpression, query.LetIdentifier.Text, letExpression);
             skipExpression = skipExpression is null ? null : RewriteQueryLetReference(skipExpression, query.LetIdentifier.Text, letExpression);
@@ -6570,13 +6996,31 @@ public static class SemanticFacts
                 ?? new TypeSymbol($"Grouping<{groupKeyType.Name}, {projectedType.Name}>", true)
             : null;
         var continuationRangeType = groupedResultType ?? projectedType;
-        var finalProjectedType = continuationSelectExpression is not null && query.IntoIdentifier is not null
-            ? InferExpressionType(
-                continuationSelectExpression,
-                new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
+        var continuationLocals = query.IntoIdentifier is not null
+            ? new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
                 {
                     [query.IntoIdentifier.Text] = continuationRangeType
-                },
+                }
+            : null;
+
+        if (continuationLocals is not null && continuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
+        {
+            continuationLocals[query.ContinuationLetIdentifier.Text] =
+                InferExpressionType(
+                    continuationLetExpression,
+                    continuationLocals,
+                    knownMethods,
+                    knownFields,
+                    knownConstants,
+                    knownProperties,
+                    currentMethod,
+                    knownTypes);
+        }
+
+        var finalProjectedType = continuationSelectExpression is not null && continuationLocals is not null
+            ? InferExpressionType(
+                continuationSelectExpression,
+                continuationLocals,
                 knownMethods,
                 knownFields,
                 knownConstants,
@@ -6770,6 +7214,21 @@ public static class SemanticFacts
             currentSource = translated;
             rangeVariableType = continuationRangeType;
             currentRangeVariableName = query.IntoIdentifier.Text;
+
+            if (continuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
+            {
+                continuationPredicateExpression = continuationPredicateExpression is null
+                    ? null
+                    : RewriteQueryLetReference(continuationPredicateExpression, query.ContinuationLetIdentifier.Text, continuationLetExpression);
+                continuationOrderByExpression = continuationOrderByExpression is null
+                    ? null
+                    : RewriteQueryLetReference(continuationOrderByExpression, query.ContinuationLetIdentifier.Text, continuationLetExpression);
+                continuationThenByExpression = continuationThenByExpression is null
+                    ? null
+                    : RewriteQueryLetReference(continuationThenByExpression, query.ContinuationLetIdentifier.Text, continuationLetExpression);
+                continuationSelectExpression =
+                    RewriteQueryLetReference(continuationSelectExpression, query.ContinuationLetIdentifier.Text, continuationLetExpression);
+            }
 
             if (continuationPredicateExpression is not null)
             {
@@ -6975,6 +7434,13 @@ public static class SemanticFacts
                 Arguments = newExpression.Arguments.Select(argument => argument with
                 {
                     Expression = RewriteQueryLetReference(argument.Expression, localName, replacement)
+                }).ToArray()
+            },
+            ProjectorExpressionSyntax projector => projector with
+            {
+                Members = projector.Members.Select(member => member with
+                {
+                    Expression = RewriteQueryLetReference(member.Expression, localName, replacement)
                 }).ToArray()
             },
             NewArrayExpressionSyntax newArray => newArray with
@@ -7860,10 +8326,14 @@ public static class SemanticFacts
         {
             var hierarchy = GetReceiverTypeHierarchy(receiverType, knownTypes);
             var instanceField = hierarchy
-                .SelectMany(receiver => knownFields.Where(field =>
-                    field.DeclaringTypeName == receiver.Name &&
-                    field.Name == name.Parts[^1].Text &&
-                    !field.IsStatic))
+                .SelectMany(receiver => receiver.Fields
+                    .Where(field =>
+                        field.Name == name.Parts[^1].Text &&
+                        !field.IsStatic)
+                    .Concat(knownFields.Where(field =>
+                        field.DeclaringTypeName == receiver.Name &&
+                        field.Name == name.Parts[^1].Text &&
+                        !field.IsStatic)))
                 .FirstOrDefault();
             if (instanceField is not null)
             {
@@ -7871,10 +8341,14 @@ public static class SemanticFacts
             }
 
             var instanceProperty = hierarchy
-                .SelectMany(receiver => knownProperties.Where(property =>
-                    property.DeclaringTypeName == receiver.Name &&
-                    property.Name == name.Parts[^1].Text &&
-                    !property.IsStatic))
+                .SelectMany(receiver => receiver.Properties
+                    .Where(property =>
+                        property.Name == name.Parts[^1].Text &&
+                        !property.IsStatic)
+                    .Concat(knownProperties.Where(property =>
+                        property.DeclaringTypeName == receiver.Name &&
+                        property.Name == name.Parts[^1].Text &&
+                        !property.IsStatic)))
                 .FirstOrDefault();
             if (instanceProperty is not null)
             {
@@ -7893,10 +8367,14 @@ public static class SemanticFacts
             }
 
             var instanceMethodGroup = hierarchy
-                .SelectMany(receiver => knownMethods.Where(method =>
-                    method.DeclaringTypeName == receiver.Name &&
-                    method.Name == name.Parts[^1].Text &&
-                    !method.IsStatic))
+                .SelectMany(receiver => receiver.Methods
+                    .Where(method =>
+                        method.Name == name.Parts[^1].Text &&
+                        !method.IsStatic)
+                    .Concat(knownMethods.Where(method =>
+                        method.DeclaringTypeName == receiver.Name &&
+                        method.Name == name.Parts[^1].Text &&
+                        !method.IsStatic)))
                 .FirstOrDefault();
             if (instanceMethodGroup is not null)
             {

@@ -166,7 +166,30 @@ Supported assignment operators:
 - member access: `obj.Member`
 - slice expressions: `start..end`
 - constructor/object creation: `new Type(...)` and `new Type[...]`
+- anonymous projectors: `new { Name := expr, Other := expr }`
 - `match` expressions
+
+Anonymous projectors are currently available as expression-level projection
+shapes, primarily for query pipelines.
+
+Example:
+
+```ilc
+var projected :=
+  from value in words
+  where value.Contains('w')
+  select new { PrimaryLength := value.Length, SecondaryLength := value.Length + 1 };
+```
+
+Current behavior:
+
+- the compiler synthesizes an internal reference type for the projector shape;
+- projector members are readable with normal member syntax;
+- enumerable/query pipelines can carry these shapes through `Select(...)` and
+  enumeration;
+- this is implemented and verified end-to-end, but the internal compiler model
+  is still bootstrap-oriented rather than a finalized public structural type
+  design.
 
 ## 5) Statements and control flow
 
@@ -225,6 +248,10 @@ Call resolution includes:
 - normal local and qualified calls
 - instance and static dispatch semantics
 - a synthetic fast path for host/intrinsic members where available
+
+Anonymous projector values participate in normal member access after binding,
+but today they are still backed by compiler-synthesized internal projector
+symbols rather than a user-visible named type feature.
 
 ## 8) String API surface (compiler-backed)
 

@@ -183,6 +183,8 @@ public enum SyntaxKind
     ExpressionStatement,
     LiteralExpression,
     SetLiteralExpression,
+    ProjectorMember,
+    ProjectorExpression,
     NewExpression,
     NewArrayExpression,
     NameExpression,
@@ -614,6 +616,17 @@ public sealed record SetLiteralExpressionSyntax(
     IReadOnlyList<ExpressionSyntax> Elements,
     SyntaxToken CloseBracketToken) : ExpressionSyntax(SyntaxKind.SetLiteralExpression);
 
+public sealed record ProjectorMemberSyntax(
+    SyntaxToken Identifier,
+    SyntaxToken AssignToken,
+    ExpressionSyntax Expression) : SyntaxNode(SyntaxKind.ProjectorMember);
+
+public sealed record ProjectorExpressionSyntax(
+    SyntaxToken NewKeyword,
+    SyntaxToken OpenBraceToken,
+    IReadOnlyList<ProjectorMemberSyntax> Members,
+    SyntaxToken CloseBraceToken) : ExpressionSyntax(SyntaxKind.ProjectorExpression);
+
 public sealed record RangeExpressionSyntax(
     ExpressionSyntax Start,
     SyntaxToken RangeToken,
@@ -734,6 +747,7 @@ public sealed record QueryExpressionSyntax(
     ExpressionSyntax? OrderByExpression,
     SyntaxToken? DescendingKeyword,
     SyntaxToken? ThenByCommaToken,
+    SyntaxToken? ThenByKeyword,
     ExpressionSyntax? ThenByExpression,
     SyntaxToken? ThenByDescendingKeyword,
     SyntaxToken? GroupKeyword,
@@ -744,12 +758,17 @@ public sealed record QueryExpressionSyntax(
     ExpressionSyntax SelectExpression,
     SyntaxToken? IntoKeyword,
     SyntaxToken? IntoIdentifier,
+    SyntaxToken? ContinuationLetKeyword,
+    SyntaxToken? ContinuationLetIdentifier,
+    SyntaxToken? ContinuationLetAssignToken,
+    ExpressionSyntax? ContinuationLetExpression,
     SyntaxToken? ContinuationWhereKeyword,
     ExpressionSyntax? ContinuationPredicateExpression,
     SyntaxToken? ContinuationOrderByKeyword,
     ExpressionSyntax? ContinuationOrderByExpression,
     SyntaxToken? ContinuationDescendingKeyword,
     SyntaxToken? ContinuationThenByCommaToken,
+    SyntaxToken? ContinuationThenByKeyword,
     ExpressionSyntax? ContinuationThenByExpression,
     SyntaxToken? ContinuationThenByDescendingKeyword,
     SyntaxToken? ContinuationSelectKeyword,
@@ -2670,6 +2689,24 @@ internal sealed class Parser
         if (Current.Kind == SyntaxKind.NewKeyword)
         {
             var newKeyword = NextToken();
+            if (Current.Kind == SyntaxKind.OpenBraceToken)
+            {
+                var openBrace = Match(SyntaxKind.OpenBraceToken);
+                var members = new List<ProjectorMemberSyntax>();
+                if (Current.Kind != SyntaxKind.CloseBraceToken)
+                {
+                    members.Add(ParseProjectorMember());
+                    while (Current.Kind == SyntaxKind.CommaToken)
+                    {
+                        NextToken();
+                        members.Add(ParseProjectorMember());
+                    }
+                }
+
+                var closeBrace = Match(SyntaxKind.CloseBraceToken);
+                return ParsePostfixExpression(new ProjectorExpressionSyntax(newKeyword, openBrace, members, closeBrace));
+            }
+
             var typeName = ParseTypeName();
             if (Current.Kind == SyntaxKind.OpenBracketToken)
             {
@@ -2732,6 +2769,14 @@ internal sealed class Parser
 
         expression = new NameExpressionSyntax(name);
         return ParsePostfixExpression(expression);
+    }
+
+    private ProjectorMemberSyntax ParseProjectorMember()
+    {
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var assignToken = Match(SyntaxKind.AssignToken);
+        var expression = ParseExpression();
+        return new ProjectorMemberSyntax(identifier, assignToken, expression);
     }
 
     private QualifiedNameSyntax ParseExpressionQualifiedName()
@@ -2981,6 +3026,7 @@ internal sealed class Parser
         ExpressionSyntax? orderByExpression = null;
         SyntaxToken? descendingKeyword = null;
         SyntaxToken? thenByCommaToken = null;
+        SyntaxToken? thenByKeyword = null;
         ExpressionSyntax? thenByExpression = null;
         SyntaxToken? thenByDescendingKeyword = null;
         if (Current.Kind == SyntaxKind.OrderByKeyword)
@@ -2996,6 +3042,17 @@ internal sealed class Parser
             if (Current.Kind == SyntaxKind.CommaToken)
             {
                 thenByCommaToken = Match(SyntaxKind.CommaToken);
+                thenByExpression = ParseExpression();
+                if (Current.Kind == SyntaxKind.IdentifierToken &&
+                    string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                {
+                    thenByDescendingKeyword = NextToken();
+                }
+            }
+            else if (Current.Kind == SyntaxKind.IdentifierToken &&
+                     string.Equals(Current.Text, "thenby", StringComparison.Ordinal))
+            {
+                thenByKeyword = NextToken();
                 thenByExpression = ParseExpression();
                 if (Current.Kind == SyntaxKind.IdentifierToken &&
                     string.Equals(Current.Text, "descending", StringComparison.Ordinal))
@@ -3038,12 +3095,17 @@ internal sealed class Parser
 
         SyntaxToken? intoKeyword = null;
         SyntaxToken? intoIdentifier = null;
+        SyntaxToken? continuationLetKeyword = null;
+        SyntaxToken? continuationLetIdentifier = null;
+        SyntaxToken? continuationLetAssignToken = null;
+        ExpressionSyntax? continuationLetExpression = null;
         SyntaxToken? continuationWhereKeyword = null;
         ExpressionSyntax? continuationPredicateExpression = null;
         SyntaxToken? continuationOrderByKeyword = null;
         ExpressionSyntax? continuationOrderByExpression = null;
         SyntaxToken? continuationDescendingKeyword = null;
         SyntaxToken? continuationThenByCommaToken = null;
+        SyntaxToken? continuationThenByKeyword = null;
         ExpressionSyntax? continuationThenByExpression = null;
         SyntaxToken? continuationThenByDescendingKeyword = null;
         SyntaxToken? continuationSelectKeyword = null;
@@ -3052,6 +3114,14 @@ internal sealed class Parser
         {
             intoKeyword = Match(SyntaxKind.IntoKeyword);
             intoIdentifier = Match(SyntaxKind.IdentifierToken);
+            if (Current.Kind == SyntaxKind.LetKeyword)
+            {
+                continuationLetKeyword = Match(SyntaxKind.LetKeyword);
+                continuationLetIdentifier = Match(SyntaxKind.IdentifierToken);
+                continuationLetAssignToken = Match(SyntaxKind.AssignToken);
+                continuationLetExpression = ParseExpression();
+            }
+
             if (Current.Kind == SyntaxKind.WhereKeyword)
             {
                 continuationWhereKeyword = Match(SyntaxKind.WhereKeyword);
@@ -3071,6 +3141,17 @@ internal sealed class Parser
                 if (Current.Kind == SyntaxKind.CommaToken)
                 {
                     continuationThenByCommaToken = Match(SyntaxKind.CommaToken);
+                    continuationThenByExpression = ParseExpression();
+                    if (Current.Kind == SyntaxKind.IdentifierToken &&
+                        string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                    {
+                        continuationThenByDescendingKeyword = NextToken();
+                    }
+                }
+                else if (Current.Kind == SyntaxKind.IdentifierToken &&
+                         string.Equals(Current.Text, "thenby", StringComparison.Ordinal))
+                {
+                    continuationThenByKeyword = NextToken();
                     continuationThenByExpression = ParseExpression();
                     if (Current.Kind == SyntaxKind.IdentifierToken &&
                         string.Equals(Current.Text, "descending", StringComparison.Ordinal))
@@ -3129,6 +3210,7 @@ internal sealed class Parser
             orderByExpression,
             descendingKeyword,
             thenByCommaToken,
+            thenByKeyword,
             thenByExpression,
             thenByDescendingKeyword,
             groupKeyword,
@@ -3139,12 +3221,17 @@ internal sealed class Parser
             selectExpression,
             intoKeyword,
             intoIdentifier,
+            continuationLetKeyword,
+            continuationLetIdentifier,
+            continuationLetAssignToken,
+            continuationLetExpression,
             continuationWhereKeyword,
             continuationPredicateExpression,
             continuationOrderByKeyword,
             continuationOrderByExpression,
             continuationDescendingKeyword,
             continuationThenByCommaToken,
+            continuationThenByKeyword,
             continuationThenByExpression,
             continuationThenByDescendingKeyword,
             continuationSelectKeyword,
@@ -3901,6 +3988,13 @@ public sealed class SyntaxTree
             {
                 Elements = setLiteral.Elements.Select(item => NormalizeExpression(item, aliases)!).ToArray()
             },
+            ProjectorExpressionSyntax projector => projector with
+            {
+                Members = projector.Members.Select(member => member with
+                {
+                    Expression = NormalizeExpression(member.Expression, aliases)!
+                }).ToArray()
+            },
             NewExpressionSyntax newExpression => newExpression with
             {
                 TypeName = NormalizeQualifiedName(newExpression.TypeName, aliases)!,
@@ -4001,6 +4095,7 @@ public sealed class SyntaxTree
                 GroupExpression = query.GroupExpression is null ? null : NormalizeExpression(query.GroupExpression, aliases)!,
                 GroupByExpression = query.GroupByExpression is null ? null : NormalizeExpression(query.GroupByExpression, aliases)!,
                 SelectExpression = NormalizeExpression(query.SelectExpression, aliases)!,
+                ContinuationLetExpression = query.ContinuationLetExpression is null ? null : NormalizeExpression(query.ContinuationLetExpression, aliases)!,
                 ContinuationPredicateExpression = query.ContinuationPredicateExpression is null ? null : NormalizeExpression(query.ContinuationPredicateExpression, aliases)!,
                 ContinuationOrderByExpression = query.ContinuationOrderByExpression is null ? null : NormalizeExpression(query.ContinuationOrderByExpression, aliases)!,
                 ContinuationThenByExpression = query.ContinuationThenByExpression is null ? null : NormalizeExpression(query.ContinuationThenByExpression, aliases)!,

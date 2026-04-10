@@ -53,6 +53,39 @@ This is enough to validate query semantics at the library/runtime level.
 What is still missing is a language surface that makes such code feel more
 native and more obviously data-oriented.
 
+The currently implemented query surface in this repository now goes well beyond
+the original v1 target and includes:
+
+- `from`
+- second `from`
+- `join`
+- `join ... into`
+- `where`
+- `let`
+- `select`
+- `select ... into`
+- `group ... by`
+- `group ... by ... into`
+- `orderby`
+- `descending`
+- `thenby`
+- `take`
+- `skip`
+
+The current implementation also supports anonymous projector projections:
+
+```ilc
+var shapes :=
+  from value in words
+  where value.Contains('w')
+  select new { PrimaryLength := value.Length, SecondaryLength := value.Length + 1 };
+```
+
+These projectors are implemented today through compiler-synthesized internal
+types. The feature is working and verified, but the internal realization is
+still bootstrap-heavy and should not yet be read as the final structural type
+design for the language.
+
 **Design Goals**
 The first query-expression cut should be:
 
@@ -287,6 +320,25 @@ Enumerable<Person, String>.Select(
 
 This gives immediate end-to-end value with no new runtime work.
 
+Anonymous projector projections lower through the same enumerable path: the
+generated selector lambda returns a compiler-synthesized projector shape, and
+later member access binds against that same synthesized shape.
+
+Conceptually:
+
+```ilc
+from value in people
+select new { Name := value.Name, Length := value.Name.Length }
+```
+
+becomes:
+
+```ilc
+Enumerable<Person, __Projector_X>.Select(
+  people,
+  function(value: Person): __Projector_X => new __Projector_X(value.Name, value.Name.Length))
+```
+
 ## 6. Provider-Friendly Future Path
 
 The important architectural rule is:
@@ -361,6 +413,14 @@ The first query-expression cut should not attempt:
 - materialization shortcuts that hide whether execution is lazy or eager.
 
 Those are valuable later, but they would overcomplicate the first milestone.
+
+That historical note is now partly outdated: anonymous projector-style
+projections are implemented in the current compiler/runtime. What remains
+deferred is the cleaner long-term model:
+
+- canonical structural projector typing;
+- fewer projector-specific binder/lowerer recovery paths;
+- a more polished public type-system story than internal `__Projector_*` symbols.
 
 ## 9. Compiler Work Breakdown
 

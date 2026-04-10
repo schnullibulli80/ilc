@@ -3424,12 +3424,15 @@ begin
       join other in words on value equals other
       let projectedLength := other.Length
       where other.Contains('o')
-      orderby projectedLength descending, value.Length
+      orderby projectedLength descending
+      thenby value.Length
       select projectedLength
       into length
-      where length > 2
-      orderby length descending, length
-      select length
+      let doubledLength := length * 2
+      where doubledLength > 5
+      orderby doubledLength descending
+      thenby length
+      select doubledLength
       take 1
       skip 0;
 
@@ -3507,6 +3510,36 @@ begin
 end;
 """);
 
+var queryProjectionTree = SyntaxTree.Parse("""
+uses System.Collections;
+
+public class QueryProjectionHost
+begin
+  public static function Test(): Integer;
+  begin
+    var words := new List<String>();
+    words.Add('one');
+    words.Add('two');
+    words.Add('three');
+
+    var projected :=
+      from value in words
+      where value.Contains('w')
+      select new { PrimaryLength := value.Length, SecondaryLength := value.Length + 1 };
+
+    var enumerator := projected.GetEnumerator();
+    var sum := 0;
+    while enumerator.MoveNext() do
+    begin
+      sum := sum + enumerator.Current.PrimaryLength;
+      sum := sum + enumerator.Current.SecondaryLength;
+    end;
+
+    return sum;
+  end;
+end;
+""");
+
 if (queryExpressionTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(type => type.Identifier.Text == "QueryHost") is not ClassDeclarationSyntax queryClass ||
     queryClass.Members.OfType<MethodDeclarationSyntax>()
         .FirstOrDefault(method => method.Identifier.Text == "Test")?
@@ -3523,17 +3556,22 @@ if (queryExpressionTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDef
     parsedQuery.PredicateExpression is null ||
     parsedQuery.OrderByExpression is null ||
     parsedQuery.DescendingKeyword is null ||
+    parsedQuery.ThenByKeyword is null ||
     parsedQuery.ThenByExpression is null ||
     parsedQuery.IntoIdentifier is null ||
+    parsedQuery.ContinuationLetKeyword is null ||
+    parsedQuery.ContinuationLetIdentifier is null ||
+    parsedQuery.ContinuationLetExpression is null ||
     parsedQuery.ContinuationPredicateExpression is null ||
     parsedQuery.ContinuationOrderByExpression is null ||
     parsedQuery.ContinuationDescendingKeyword is null ||
+    parsedQuery.ContinuationThenByKeyword is null ||
     parsedQuery.ContinuationThenByExpression is null ||
     parsedQuery.ContinuationSelectExpression is null ||
     parsedQuery.TakeExpression is null ||
     parsedQuery.SkipExpression is null)
 {
-    failures.Add("Parser should capture join/let/select-into/where/orderby descending/select/take/skip query expressions.");
+    failures.Add("Parser should capture join/let/select-into/continuation-let/where/orderby/thenby descending/select/take/skip query expressions.");
 }
 
 if (groupJoinQueryTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(type => type.Identifier.Text == "GroupJoinHost") is not ClassDeclarationSyntax groupJoinClass ||
@@ -3569,6 +3607,18 @@ if (groupByQueryTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefaul
     parsedGroupByQuery.ContinuationSelectExpression is null)
 {
     failures.Add("Parser should capture group-by into query expressions.");
+}
+
+if (queryProjectionTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDefault(type => type.Identifier.Text == "QueryProjectionHost") is not ClassDeclarationSyntax queryProjectionClass ||
+    queryProjectionClass.Members.OfType<MethodDeclarationSyntax>()
+        .FirstOrDefault(method => method.Identifier.Text == "Test")?
+        .Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>()
+        .FirstOrDefault(statement => statement.Declarators.Any(declarator => declarator.Identifier.Text == "projected"))?
+        .Declarators.First(declarator => declarator.Identifier.Text == "projected").Initializer is not QueryExpressionSyntax parsedProjectionQuery ||
+    parsedProjectionQuery.PredicateExpression is null ||
+    parsedProjectionQuery.SelectExpression is not ProjectorExpressionSyntax)
+{
+    failures.Add("Parser should capture anonymous query projections using select new { ... } expressions.");
 }
 
 var queryExpressionMergedTree = SyntaxTree.Merge(queryExpressionTree, [systemTree, collectionsTree]);
@@ -3872,6 +3922,60 @@ else
     catch (Exception ex)
     {
         failures.Add("Lowerer should handle group-by queries without throwing. Actual: " + ex.Message);
+    }
+}
+
+var queryProjectionMergedTree = SyntaxTree.Merge(queryProjectionTree, [systemTree, collectionsTree]);
+var queryProjectionBinding = new Binder().Bind(queryProjectionMergedTree);
+if (queryProjectionBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept query projections with select new expressions. Diagnostics: " +
+        string.Join(
+            " | ",
+            queryProjectionBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}@{diagnostic.Span.Start}")));
+}
+else if (queryProjectionBinding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QueryProjectionHost") is not NamedTypeSymbol queryProjectionHostType ||
+         queryProjectionHostType.Methods.FirstOrDefault(method => method.Name == "Test") is not MethodSymbol queryProjectionHostMethod)
+{
+    failures.Add("Binder should surface QueryProjectionHost.Test for the projection scenario.");
+}
+else
+{
+    try
+    {
+        var queryProjectionLowerer = new Lowerer(
+            queryProjectionBinding.Compilation.GetAllMethods().ToArray(),
+            queryProjectionBinding.Compilation.GetAllFields(),
+            queryProjectionBinding.Compilation.Types,
+            queryProjectionBinding.Compilation.GetAllProperties(),
+            queryProjectionBinding.Compilation.GetAllConstants());
+        var queryProjectionIr = queryProjectionLowerer.Lower(queryProjectionHostMethod);
+        if (!queryProjectionIr.Blocks
+                .SelectMany(block => block.Instructions)
+                .Any(instruction =>
+                    instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                    instruction.Operand is MethodSymbol { Name: "Select", DeclaringTypeName: var declaringTypeName } &&
+                    declaringTypeName is not null &&
+                    declaringTypeName.StartsWith("Enumerable<String, __Projector_", StringComparison.Ordinal)))
+        {
+            failures.Add("Lowerer should translate anonymous query projections to Enumerable<String, __Projector_...>.Select(...).");
+        }
+
+        if (!queryProjectionIr.Blocks
+                .SelectMany(block => block.Instructions)
+                .Any(instruction =>
+                    instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                    instruction.Operand is MethodSymbol { Name: ".ctor", DeclaringTypeName: var projectorTypeName } &&
+                    projectorTypeName is not null &&
+                    projectorTypeName.StartsWith("__Projector_", StringComparison.Ordinal)))
+        {
+            failures.Add("Lowerer should materialize anonymous query projections through synthetic projector constructors.");
+        }
+    }
+    catch (Exception ex)
+    {
+        failures.Add("Lowerer should handle select-new query projections without throwing. Actual: " + ex.Message);
     }
 }
 

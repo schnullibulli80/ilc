@@ -1244,12 +1244,15 @@ begin
       join other in genericEnumerable on value equals other
       let projectedLength := other.Length
       where other.Contains('o')
-      orderby projectedLength descending, value.Length
+      orderby projectedLength descending
+      thenby value.Length
       select projectedLength
       into length
-      where length > 2
-      orderby length descending, length
-      select length
+      let doubledLength := length * 2
+      where doubledLength > 5
+      orderby doubledLength descending
+      thenby length
+      select doubledLength
       take 1
       skip 0;
     var queriedEnumerator := queriedLengths.GetEnumerator();
@@ -1290,6 +1293,20 @@ begin
     end;
     Program.Trace('CHECKPOINT enumerable-groupby=', groupedKeySum);
     current := current + groupedKeySum;
+
+    var projectedWordShapes :=
+      from value in genericEnumerable
+      where value.Contains('w')
+      select new { PrimaryLength := value.Length, SecondaryLength := value.Length + 1 };
+    var projectedWordShapesEnumerator := projectedWordShapes.GetEnumerator();
+    var projectedWordShapeSum := 0;
+    while projectedWordShapesEnumerator.MoveNext() do
+    begin
+      projectedWordShapeSum := projectedWordShapeSum + projectedWordShapesEnumerator.Current.PrimaryLength;
+      projectedWordShapeSum := projectedWordShapeSum + projectedWordShapesEnumerator.Current.SecondaryLength;
+    end;
+    Program.Trace('CHECKPOINT enumerable-query-projection=', projectedWordShapeSum);
+    current := current + projectedWordShapeSum;
 
     var hasWordWithW := Enumerable<String>.Any(genericEnumerable, function(value: String): Boolean => value.Contains('w'));
     Program.Trace('CHECKPOINT enumerable-any=', hasWordWithW);

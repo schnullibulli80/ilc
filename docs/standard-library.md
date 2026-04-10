@@ -92,6 +92,29 @@ The current shipped file does **not** define a `System.String` class. String
 helpers such as `StartsWith(...)` or `Trim()` are currently provided as
 compiler-recognized intrinsics on the built-in `String` type.
 
+### 2.1 Query projection note
+
+Anonymous query projectors such as:
+
+```ilc
+select new { PrimaryLength := value.Length, SecondaryLength := value.Length + 1 }
+```
+
+are not shipped as source-level library types. They are compiler-synthesized
+internal shapes used by the query/binding/lowering pipeline.
+
+Current practical model:
+
+- projectors behave like small reference objects with readable members;
+- the compiler emits synthetic internal types and constructors for them;
+- enumerable pipelines can return and iterate these shapes normally;
+- this path is covered by bootstrap compiler tests and runtime smoke.
+
+Current limitation:
+
+- the implementation is still bootstrap-oriented and internally uses synthetic
+  projector symbols rather than a polished public structural type feature.
+
 ### 2.1 `System.Console`
 
 - `public static extern method Write(text: String): void`

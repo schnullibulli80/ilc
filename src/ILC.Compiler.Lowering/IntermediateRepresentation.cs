@@ -2297,6 +2297,56 @@ public sealed class Lowerer
                         lengthRegister,
                         new IrArrayShape(GetShapeRegisters(newArrayExpression.LengthExpressions, arrayShapesByName, registerByName, registers, instructions, currentMethod)))));
                 return;
+            case ProjectorExpressionSyntax projectorExpression:
+                var projectorType = SemanticFacts.ResolveProjectorType(
+                    projectorExpression,
+                    registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                    _knownTypes,
+                    _knownMethods,
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod);
+
+                if (projectorType is null)
+                {
+                    throw new InvalidOperationException("Cannot lower unresolved projector expression.");
+                }
+
+                var projectorConstructor = projectorType.Methods.FirstOrDefault(method =>
+                    method.IsConstructor &&
+                    method.DeclaringTypeName == projectorType.Name &&
+                    method.Parameters.Count == projectorExpression.Members.Count);
+                var projectorArgs = new List<IrValue>();
+                for (var memberIndex = 0; memberIndex < projectorExpression.Members.Count; memberIndex++)
+                {
+                    var member = projectorExpression.Members[memberIndex];
+                    var expectedMemberType = projectorConstructor is not null && memberIndex < projectorConstructor.Parameters.Count
+                        ? projectorConstructor.Parameters[memberIndex].Type
+                        : SemanticFacts.InferExpressionType(
+                            member.Expression,
+                            registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal),
+                            _knownMethods,
+                            _knownFields,
+                            _knownConstants,
+                            _knownProperties,
+                            currentMethod,
+                            _knownTypes);
+                    var temp = AllocateTemp(expectedMemberType, registers);
+                    projectorArgs.Add(temp);
+                    LowerExpressionInto(member.Expression, temp, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                }
+
+                instructions.Add(new IrInstruction(IrOpCode.NewObject, destination, projectorType.Name));
+                if (projectorConstructor is not null)
+                {
+                    instructions.Add(new IrInstruction(
+                        IrOpCode.CallVirtual,
+                        destination,
+                        new IrCallTarget(projectorConstructor, $"{projectorType.Name}.{projectorConstructor.Name}", projectorArgs, destination, true)));
+                }
+
+                return;
             case NewExpressionSyntax newExpression:
                 var syntaxConstructedObjectType = TryCloseTypeReferenceForCurrentMethod(
                     new TypeSymbol(newExpression.TypeName.ToDisplayString(), true),
@@ -2778,15 +2828,9 @@ public sealed class Lowerer
             return false;
         }
 
-        static bool TypesMatch(TypeSymbol left, TypeSymbol right)
-        {
-            if (ReferenceEquals(left, right))
-            {
-                return true;
-            }
-
-            return string.Equals(left.Name, right.Name, StringComparison.Ordinal);
-        }
+        static bool TypesMatch(TypeSymbol left, TypeSymbol right) =>
+            ReferenceEquals(left, right) ||
+            string.Equals(left.Name, right.Name, StringComparison.Ordinal);
 
         var targetMethod = _knownMethods.FirstOrDefault(method => method.LambdaSource is not null && method.LambdaSource.Equals(lambda));
         if (targetMethod is null)
@@ -6127,6 +6171,13 @@ public sealed class Lowerer
             TypeTestExpressionSyntax typeTest => typeTest with
             {
                 Expression = RewriteWithExpression(typeTest.Expression, receiver, registerByName, localTypes, currentMethod)
+            },
+            ProjectorExpressionSyntax projector => projector with
+            {
+                Members = projector.Members.Select(member => member with
+                {
+                    Expression = RewriteWithExpression(member.Expression, receiver, registerByName, localTypes, currentMethod)
+                }).ToArray()
             },
             NewExpressionSyntax newExpression => newExpression with
             {
