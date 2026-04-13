@@ -8,5 +8,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_subdirectory(runtime/ilcvm_core)
 add_subdirectory(runtime/ilcvm_host)
+add_subdirectory(runtime/ilcvm_qtbridge)
 add_subdirectory(runtime/ilcvm_cli)
 add_subdirectory(runtime/ilcvm_tests)

@@ -1,4 +1,5 @@
 #include "ilcvm/heap.h"
+#include "ilc_qtquick_bridge.h"
 #include "ilcvm/host_services.h"
 #include "ilcvm/module.h"
 #include "ilcvm/std_host_services.h"
@@ -3291,6 +3292,41 @@ int main()
         std::cerr << "FAIL: native handle bridge returned " << native_handle_result << ", expected 123\n";
         return EXIT_FAILURE;
     }
+
+    const auto qt_backend_handle = ilc_qtquick_backend_create();
+    if (qt_backend_handle == 0)
+    {
+        std::cerr << "FAIL: qt bridge backend_create returned null handle\n";
+        return EXIT_FAILURE;
+    }
+
+    const auto qt_window_handle = ilc_qtquick_window_create(qt_backend_handle, "ILC Qt Bridge");
+    if (qt_window_handle == 0)
+    {
+        std::cerr << "FAIL: qt bridge window_create returned null handle\n";
+        return EXIT_FAILURE;
+    }
+
+    if (ilc_qtquick_window_set_root_name(qt_window_handle, "root-view") != 1)
+    {
+        std::cerr << "FAIL: qt bridge window_set_root_name should succeed\n";
+        return EXIT_FAILURE;
+    }
+
+    if (ilc_qtquick_window_show(qt_window_handle) != 1)
+    {
+        std::cerr << "FAIL: qt bridge window_show should succeed\n";
+        return EXIT_FAILURE;
+    }
+
+    if (ilc_qtquick_backend_run(qt_backend_handle) != 1)
+    {
+        std::cerr << "FAIL: qt bridge backend_run should succeed\n";
+        return EXIT_FAILURE;
+    }
+
+    ilc_qtquick_window_destroy(qt_window_handle);
+    ilc_qtquick_backend_destroy(qt_backend_handle);
 
     ilcvm::StandardHostServices standard_host_services;
     if (standard_host_services.get_monotonic_timestamp_ms() == 0)
