@@ -215,6 +215,24 @@ Instead, define a backend boundary such as:
 - `IWindowHost`
 - `IViewHost`
 
+For the first real backend, this boundary should stay outside the VM.
+In particular:
+
+- do not grow a UI-specific VM host-import surface;
+- do not hard-code Qt- or windowing-specific behavior into the runtime;
+- implement the native bridge through `DllImport` over a small C ABI shim;
+- keep `System.Ui` and `System.Ui.Hosting` platform-neutral.
+
+That implies a concrete backend structure such as:
+
+- ILC-side neutral UI model in `System.Ui`
+- ILC-side backend adapter in `System.Ui.Backends.QtQuick`
+- native bridge library such as `libilc_qtbridge.so`
+- Qt / C++ implementation hidden behind `extern "C"` functions
+
+The VM should only translate stable ABI values between ILC and the external library.
+It should not become responsible for UI toolkit semantics.
+
 Possible first responsibilities:
 
 - create application
@@ -236,6 +254,25 @@ The neutral UI model is responsible for:
 - state
 - commands
 - binding metadata
+
+### 7.1 FFI baseline for UI backends
+
+The backend bridge should follow these FFI rules:
+
+- primitive types are transparent between ILC and the external library;
+- enums are transparent with a fixed `Int32` underlying type;
+- strings are transparent with explicit encoding and ownership rules;
+- records are transparent only when they are blittable / POD-like;
+- callbacks are transparent via VM-generated trampolines plus explicit lifetime rules;
+- classes and other complex foreign types are always opaque handles / pointers.
+
+Recommended v1 defaults:
+
+- strings use UTF-8 and null termination;
+- ILC -> native strings are borrowed read-only values;
+- native -> ILC strings require an explicit ownership convention;
+- callback exceptions must not cross the FFI boundary;
+- UI callbacks are assumed to be UI-thread-bound unless documented otherwise.
 
 ## 8) Qt Quick / QML Mapping
 

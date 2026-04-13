@@ -91,7 +91,9 @@ public sealed record BytecodeModuleExceptionHandlerInfo(uint FunctionId, ushort 
 public sealed record BytecodeDllImportMetadata(
     string LibraryName,
     string EntryPoint,
-    NativeCallingConvention CallingConvention);
+    NativeCallingConvention CallingConvention,
+    NativeStringReturnMarshalling StringReturnMarshalling,
+    string? StringFreeEntryPoint);
 
 public sealed record BytecodeDebugVmIpRange(
     int IrVmIp,
@@ -844,6 +846,10 @@ public sealed class IlbSerializer
             {
                 stringTable.GetOrAdd(method.DllImport.LibraryName);
                 stringTable.GetOrAdd(method.DllImport.EntryPoint);
+                if (!string.IsNullOrEmpty(method.DllImport.StringFreeEntryPoint))
+                {
+                    stringTable.GetOrAdd(method.DllImport.StringFreeEntryPoint);
+                }
             }
 
             blobTable.Add(BuildSignatureBlob(method, typeList));
@@ -1167,7 +1173,10 @@ public sealed class IlbSerializer
             writer.Write(method.DllImport is null ? 0u : strings.GetOrAdd(method.DllImport.LibraryName));
             writer.Write(method.DllImport is null ? 0u : strings.GetOrAdd(method.DllImport.EntryPoint));
             writer.Write(method.DllImport is null ? 0u : (uint)method.DllImport.CallingConvention);
-            writer.Write(0u);
+            writer.Write(method.DllImport is null ? 0u : (uint)method.DllImport.StringReturnMarshalling);
+            writer.Write(method.DllImport is null || string.IsNullOrEmpty(method.DllImport.StringFreeEntryPoint)
+                ? 0u
+                : strings.GetOrAdd(method.DllImport.StringFreeEntryPoint));
         }
 
         return stream.ToArray();
@@ -2184,7 +2193,9 @@ public sealed class BytecodeEmitter
                 : new BytecodeDllImportMetadata(
                     method.DllImport.LibraryName,
                     method.DllImport.EntryPoint,
-                    method.DllImport.CallingConvention),
+                    method.DllImport.CallingConvention,
+                    method.DllImport.StringReturnMarshalling,
+                    method.DllImport.StringFreeEntryPoint),
             instructions,
             arrayShapes,
             exceptionHandlers,

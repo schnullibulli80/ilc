@@ -116,10 +116,18 @@ public enum NativeCallingConvention
     StdCall
 }
 
+public enum NativeStringReturnMarshalling
+{
+    None,
+    Utf8Owned
+}
+
 public sealed record DllImportMetadata(
     string LibraryName,
     string EntryPoint,
-    NativeCallingConvention CallingConvention);
+    NativeCallingConvention CallingConvention,
+    NativeStringReturnMarshalling StringReturnMarshalling = NativeStringReturnMarshalling.None,
+    string? StringFreeEntryPoint = null);
 
 public sealed record ParameterSymbol(string Name, TypeSymbol Type, ParameterPassingKind PassingKind = ParameterPassingKind.Value) : Symbol(Name);
 
@@ -809,7 +817,7 @@ public sealed class Binder
 
             if (method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod is not null)
             {
-                ValidateDllImportMethod(classDeclaration.Identifier.Text, method, boundMethod, diagnostics);
+                ValidateDllImportMethod(classDeclaration.Identifier.Text, method, boundMethod, typeScope, diagnostics);
             }
 
             foreach (var field in typeFields.Where(field => field.IsStatic))
@@ -5704,6 +5712,7 @@ public sealed class Binder
         string declaringTypeName,
         MethodDeclarationSyntax declaration,
         MethodSymbol method,
+        IReadOnlyList<TypeSymbol> knownTypes,
         DiagnosticBag diagnostics)
     {
         if (!method.IsExtern)
@@ -5741,6 +5750,264 @@ public sealed class Binder
                 DiagnosticSeverity.Error,
                 declaration.Keyword.Span);
         }
+
+        foreach (var parameter in method.Parameters)
+        {
+            if (parameter.PassingKind != ParameterPassingKind.Value)
+            {
+                diagnostics.Report(
+                    "ILC2234",
+                    $"DllImport method '{declaringTypeName}.{declaration.Identifier.Text}' must use value parameters only in the current FFI v1 contract. Parameter '{parameter.Name}' uses '{parameter.PassingKind}'.",
+                    DiagnosticSeverity.Error,
+                    declaration.Identifier.Span);
+            }
+            else if (!IsSupportedDllImportAbiType(parameter.Type, knownTypes))
+            {
+                diagnostics.Report(
+                    "ILC2235",
+                    $"DllImport parameter '{declaringTypeName}.{declaration.Identifier.Text}({parameter.Name}: {parameter.Type.Name})' is not supported by the current FFI v1 contract.",
+                    DiagnosticSeverity.Error,
+                    declaration.Identifier.Span);
+            }
+        }
+
+        if (!IsSupportedDllImportAbiReturnType(method.ReturnType, knownTypes))
+        {
+            diagnostics.Report(
+                "ILC2236",
+                $"DllImport return type '{declaringTypeName}.{declaration.Identifier.Text}: {method.ReturnType.Name}' is not supported by the current FFI v1 contract.",
+                DiagnosticSeverity.Error,
+                declaration.Identifier.Span);
+        }
+        else if (method.ReturnType == TypeSymbol.String &&
+            (method.DllImport is null ||
+             method.DllImport.StringReturnMarshalling != NativeStringReturnMarshalling.Utf8Owned ||
+             string.IsNullOrWhiteSpace(method.DllImport.StringFreeEntryPoint)))
+        {
+            diagnostics.Report(
+                "ILC2237",
+                $"DllImport string return '{declaringTypeName}.{declaration.Identifier.Text}' must declare StringReturn := Utf8Owned and StringFreeEntryPoint := '...'.",
+                DiagnosticSeverity.Error,
+                declaration.Identifier.Span);
+        }
+    }
+
+    private static bool IsSupportedDllImportAbiReturnType(TypeSymbol type, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (type == TypeSymbol.Void)
+        {
+            return true;
+        }
+
+        return IsSupportedDllImportAbiType(type, knownTypes);
+    }
+
+    private static bool IsSupportedDllImportAbiType(TypeSymbol type, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (type == TypeSymbol.Boolean ||
+            type == TypeSymbol.Char ||
+            type == TypeSymbol.Integer ||
+            type == TypeSymbol.UInt128 ||
+            type == TypeSymbol.UInt256 ||
+            type == TypeSymbol.UInt512 ||
+            type == TypeSymbol.UInt1024 ||
+            type == TypeSymbol.UInt2048 ||
+            type == TypeSymbol.String)
+        {
+            return true;
+        }
+
+        if (type is TypeParameterSymbol)
+        {
+            return false;
+        }
+
+        if (!type.IsReferenceType)
+        {
+            return true;
+        }
+
+        var namedType = ResolveDllImportAbiNamedType(type, knownTypes);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        if (namedType.IsDelegate)
+        {
+            return IsSupportedDllImportAbiDelegate(namedType, knownTypes, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        if (!namedType.IsReferenceType && !namedType.IsRecord)
+        {
+            return true;
+        }
+
+        if (namedType.IsRecord && !namedType.IsReferenceType)
+        {
+            return IsSupportedDllImportAbiRecord(namedType, knownTypes, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        return false;
+    }
+
+    private static bool IsSupportedDllImportAbiRecord(
+        NamedTypeSymbol recordType,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        HashSet<string> visited)
+    {
+        if (!visited.Add(recordType.Name))
+        {
+            return true;
+        }
+
+        foreach (var field in recordType.Fields.Where(field => !field.IsStatic))
+        {
+            if (!IsSupportedDllImportAbiRecordFieldType(field.Type, knownTypes))
+            {
+                return false;
+            }
+
+            if (ResolveNamedType(field.Type, knownTypes) is { IsRecord: true, IsReferenceType: false } nestedRecord &&
+                !IsSupportedDllImportAbiRecord(nestedRecord, knownTypes, visited))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsSupportedDllImportAbiRecordFieldType(TypeSymbol type, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (type == TypeSymbol.Boolean ||
+            type == TypeSymbol.Char ||
+            type == TypeSymbol.Integer ||
+            type == TypeSymbol.UInt128 ||
+            type == TypeSymbol.UInt256 ||
+            type == TypeSymbol.UInt512 ||
+            type == TypeSymbol.UInt1024 ||
+            type == TypeSymbol.UInt2048)
+        {
+            return true;
+        }
+
+        if (type is TypeParameterSymbol)
+        {
+            return false;
+        }
+
+        if (!type.IsReferenceType)
+        {
+            return true;
+        }
+
+        var namedType = ResolveDllImportAbiNamedType(type, knownTypes);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        if (!namedType.IsReferenceType && !namedType.IsRecord)
+        {
+            return true;
+        }
+
+        if (namedType.IsRecord && !namedType.IsReferenceType)
+        {
+            return IsSupportedDllImportAbiRecord(namedType, knownTypes, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        return false;
+    }
+
+    private static NamedTypeSymbol? ResolveDllImportAbiNamedType(TypeSymbol type, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (type is NamedTypeSymbol named)
+        {
+            return named;
+        }
+
+        return ResolveNamedType(type, knownTypes);
+    }
+
+    private static bool IsSupportedDllImportAbiDelegate(
+        NamedTypeSymbol delegateType,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        HashSet<string> visited)
+    {
+        if (!visited.Add(delegateType.Name))
+        {
+            return true;
+        }
+
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        if (invokeMethod is null)
+        {
+            return false;
+        }
+
+        // Runtime FFI callback execution currently supports only the compact
+        // synchronous single-argument trampoline slice.
+        if (invokeMethod.Parameters.Count != 1)
+        {
+            return false;
+        }
+
+        foreach (var parameter in invokeMethod.Parameters)
+        {
+            if (parameter.PassingKind != ParameterPassingKind.Value)
+            {
+                return false;
+            }
+
+            if (!IsSupportedDllImportCallbackAbiType(parameter.Type, knownTypes, visited))
+            {
+                return false;
+            }
+        }
+
+        if (invokeMethod.ReturnType == TypeSymbol.Void)
+        {
+            return true;
+        }
+
+        return IsSupportedDllImportCallbackAbiType(invokeMethod.ReturnType, knownTypes, visited);
+    }
+
+    private static bool IsSupportedDllImportCallbackAbiType(
+        TypeSymbol type,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        HashSet<string> visited)
+    {
+        if (type == TypeSymbol.Boolean ||
+            type == TypeSymbol.Integer)
+        {
+            return true;
+        }
+
+        if (type is TypeParameterSymbol)
+        {
+            return false;
+        }
+
+        if (SemanticFacts.IsEnumType(type))
+        {
+            return true;
+        }
+
+        var namedType = ResolveDllImportAbiNamedType(type, knownTypes);
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        if (namedType.IsDelegate)
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private static DllImportMetadata? BindDllImportMetadata(MethodDeclarationSyntax methodDeclaration)
@@ -5760,6 +6027,8 @@ public sealed class Binder
 
         var entryPoint = methodDeclaration.Identifier.Text;
         var callingConvention = NativeCallingConvention.Cdecl;
+        var stringReturnMarshalling = NativeStringReturnMarshalling.None;
+        string? stringFreeEntryPoint = null;
 
         foreach (var argument in dllImportAttribute.Arguments.Select(argument => argument.Expression).OfType<AssignmentExpressionSyntax>())
         {
@@ -5791,11 +6060,32 @@ public sealed class Binder
                         break;
                 }
             }
+            else if (string.Equals(targetName, "StringReturn", StringComparison.Ordinal))
+            {
+                switch (argument.Expression)
+                {
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "Utf8Owned", StringComparison.Ordinal):
+                    case MemberAccessExpressionSyntax { MemberName.Text: "Utf8Owned" }:
+                        stringReturnMarshalling = NativeStringReturnMarshalling.Utf8Owned;
+                        break;
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "None", StringComparison.Ordinal):
+                    case MemberAccessExpressionSyntax { MemberName.Text: "None" }:
+                        stringReturnMarshalling = NativeStringReturnMarshalling.None;
+                        break;
+                }
+            }
+            else if (string.Equals(targetName, "StringFreeEntryPoint", StringComparison.Ordinal))
+            {
+                if (argument.Expression is LiteralExpressionSyntax { LiteralToken.Kind: SyntaxKind.StringToken, LiteralToken.Value: string value })
+                {
+                    stringFreeEntryPoint = value;
+                }
+            }
         }
 
         return libraryName is null
             ? null
-            : new DllImportMetadata(libraryName, entryPoint, callingConvention);
+            : new DllImportMetadata(libraryName, entryPoint, callingConvention, stringReturnMarshalling, stringFreeEntryPoint);
     }
 
     private static bool IsDllImportAttribute(AttributeSyntax attribute) =>

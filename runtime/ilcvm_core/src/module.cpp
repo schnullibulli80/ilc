@@ -411,7 +411,7 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
         }
     }
 
-    const auto method_row_size = static_cast<std::size_t>(62);
+    const auto method_row_size = static_cast<std::size_t>(66);
     if (method_table.size % method_row_size != 0)
     {
         throw std::runtime_error("invalid method table size");
@@ -476,6 +476,8 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
         const auto dll_import_library_name_string_id = read_u32(bytes, cursor + 46);
         const auto dll_import_entry_point_string_id = read_u32(bytes, cursor + 50);
         const auto dll_import_calling_convention = read_u32(bytes, cursor + 54);
+        const auto dll_import_string_return_marshalling = read_u32(bytes, cursor + 58);
+        const auto dll_import_string_free_entry_point_string_id = read_u32(bytes, cursor + 62);
         const auto name = name_string_id < strings.size() ? strings[name_string_id] : std::string();
         const auto argument_count = static_cast<std::uint16_t>(
             parameter_count + ((method_flags & (1u << 4)) == 0 ? 1 : 0));
@@ -544,6 +546,10 @@ Module load_module_from_ilb_bytes(const std::vector<std::uint8_t>& bytes)
                 .library_name = dll_import_library_name_string_id < strings.size() ? strings[dll_import_library_name_string_id] : std::string(),
                 .entry_point = dll_import_entry_point_string_id < strings.size() ? strings[dll_import_entry_point_string_id] : std::string(),
                 .calling_convention = static_cast<NativeCallingConvention>(dll_import_calling_convention),
+                .string_return_marshalling = static_cast<NativeStringReturnMarshalling>(dll_import_string_return_marshalling),
+                .string_free_entry_point = dll_import_string_free_entry_point_string_id < strings.size()
+                    ? strings[dll_import_string_free_entry_point_string_id]
+                    : std::string(),
                 .is_present = dll_import_library_name_string_id != 0
             },
             std::move(parameter_type_ids),

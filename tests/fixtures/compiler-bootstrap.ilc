@@ -17,7 +17,7 @@
 namespace Demo.App;
 
 // Loading shipped libraries to ensure they are included in the bootstrap process
-uses System, System.Diagnostics, System.Text, System.Text.Json, System.Net, System.Threading, System.Collections, System.Ui, Demo.Core;
+uses System, System.Diagnostics, System.Text, System.Text.Json, System.Net, System.Threading, System.Collections, System.Ui, System.Ui.Hosting, System.Ui.Backends.QtQuick, Demo.Core;
 
 // Testing constant declaration
 const TopBonus: Integer = 2;
@@ -1476,6 +1476,7 @@ begin
     uiSettingsPage.Title := 'Settings';
     uiSettingsPage.Content := uiTitle;
     var uiNavigation := new NavigationHost();
+    uiNavigation.Name := 'nav';
     var uiNavigated := uiNavigation.Navigate(uiPage);
     var uiNavigatedSecond := uiNavigation.Navigate(uiSettingsPage);
     var uiWentBack := uiNavigation.GoBack();
@@ -1565,6 +1566,12 @@ begin
     uiWindow.Content := uiNavigation;
     uiApp.AddWindow(uiWindow);
     var shownWindows := uiApp.Run();
+    var uiBackend := new DebugUiBackend();
+    var hostedWindows := uiBackend.Run(uiApp);
+    var uiHostingScore := hostedWindows + uiBackend.LastRootDescription.Length;
+    var uiQtQuickBackend := new QtQuickBackend();
+    var qtQuickHostedWindows := uiQtQuickBackend.Run(uiApp);
+    var uiQtQuickScore := qtQuickHostedWindows + uiQtQuickBackend.IsAvailable + uiQtQuickBackend.LastHostedRootDescription.Length;
     var buttonClicked := uiButton.Click();
     var uiStructureScore := uiBorder.HasContent + uiScrollViewer.HasContent + uiPage.HasContent + uiLayout.ChildCount / 10;
     var uiWindowSizeScore := uiWindow.Width / 100 + uiWindow.Height / 100;
@@ -1572,6 +1579,8 @@ begin
     var uiSpacingScore := uiTitle.Margin.Horizontal + uiTitle.Margin.Vertical + uiInput.Padding.Horizontal + uiBorder.Padding.Vertical;
     var uiStyleApplyScore := uiTitle.Foreground + uiBorder.Background + uiInput.Padding.Horizontal + uiWindow.Background;
     Program.Trace('CHECKPOINT ui-run=', shownWindows);
+    Program.Trace('CHECKPOINT ui-hosting=', uiHostingScore);
+    Program.Trace('CHECKPOINT ui-qtquick=', uiQtQuickScore);
     Program.Trace('CHECKPOINT ui-click=', buttonClicked);
     Program.Trace('CHECKPOINT ui-probe=', uiProbe.Value);
     Program.Trace('CHECKPOINT ui-input=', uiInput.Text.Length);
@@ -1596,7 +1605,7 @@ begin
     Program.Trace('CHECKPOINT ui-style-apply=', uiStyleApplyScore);
     Program.Trace('CHECKPOINT ui-window-size=', uiWindowSizeScore);
     Program.Trace('CHECKPOINT ui-children=', uiLayout.ChildCount);
-    current := current + shownWindows + buttonClicked + uiProbe.Value + uiInput.Text.Length + uiBindingDirty + uiBoundTitle.Text.Length + uiDataContextScore + uiItemsControlScore + uiList.ItemCount + uiTemplateScore + uiSelectionLength + uiNavigationScore + uiToggleScore + uiSliderScore + uiGridScore + uiBorderScore + uiScrollScore + uiMenuScore + uiDialogScore + uiStructureScore + uiStyleScore + uiSpacingScore + uiStyleApplyScore + uiWindowSizeScore + uiLayout.ChildCount + uiWindow.IsOpen;
+    current := current + shownWindows + uiHostingScore + uiQtQuickScore + buttonClicked + uiProbe.Value + uiInput.Text.Length + uiBindingDirty + uiBoundTitle.Text.Length + uiDataContextScore + uiItemsControlScore + uiList.ItemCount + uiTemplateScore + uiSelectionLength + uiNavigationScore + uiToggleScore + uiSliderScore + uiGridScore + uiBorderScore + uiScrollScore + uiMenuScore + uiDialogScore + uiStructureScore + uiStyleScore + uiSpacingScore + uiStyleApplyScore + uiWindowSizeScore + uiLayout.ChildCount + uiWindow.IsOpen;
     Program.Trace('CHECKPOINT ui=', current);
 
     Program.TraceText('SECTION ffi');

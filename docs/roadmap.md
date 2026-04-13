@@ -61,6 +61,13 @@ The expected first practical milestone is a robust `UInt128` baseline, with clea
 - Improve allocation lifecycle clarity and object/array behavior.
 - Revisit exception model edges and stack semantics with more production-like tests.
 - Add dedicated instrumentation around call dispatch and host-import boundaries.
+- Keep future UI integration out of VM-specific host-import growth where possible.
+- Prefer a general FFI path for larger external systems:
+  - primitive and enum transparency
+  - explicit string marshalling rules
+  - transparent POD-style records only
+  - callback trampolines with strict lifetime rules
+  - opaque handles for complex foreign types
 
 ### 6. Build/test engineering
 
@@ -111,4 +118,3 @@ For every milestone above:
 - runtime smoke + full local verification passes
 - benchmark deltas are measured and documented
 - docs are updated where behavior changed
-

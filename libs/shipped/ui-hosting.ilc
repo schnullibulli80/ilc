@@ -1,0 +1,178 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                             I L C   U I   H O S T I N G
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the first shipped hosting boundary for the backend-neutral UI model. It intentionally stays small and purely
+//            managed: backend interfaces plus a debug backend that can be exercised in the bootstrap smoke without native GUI integration.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-13
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+namespace System.Ui.Hosting;
+
+uses System, System.Collections, System.Ui;
+
+public interface IViewHost
+begin
+  public property View: View { get; };
+  public function Describe: String;
+end;
+
+public interface IWindowHost
+begin
+  public property Window: Window { get; };
+  public property RootViewHost: IViewHost { get; };
+  public function Show: Boolean;
+end;
+
+public interface IUiBackend
+begin
+  public function CreateWindowHost(window: Window): IWindowHost;
+  public function Run(application: Application): Integer;
+end;
+
+public class DebugViewHost: IViewHost
+begin
+  private var ViewValue: View;
+
+  public property View: View
+  begin
+    get
+    begin
+      return ViewValue;
+    end;
+  end;
+
+  public constructor(view: View);
+  begin
+    ViewValue := view;
+  end;
+
+  public function Describe: String;
+  begin
+    if ViewValue = nil then
+    begin
+      return 'nil';
+    end;
+
+    if ViewValue.Name <> '' then
+    begin
+      return ViewValue.Name;
+    end;
+
+    return 'view';
+  end;
+end;
+
+public class DebugWindowHost: IWindowHost
+begin
+  private var WindowValue: Window;
+  private var RootViewHostValue: IViewHost;
+
+  public property Window: Window
+  begin
+    get
+    begin
+      return WindowValue;
+    end;
+  end;
+
+  public property RootViewHost: IViewHost
+  begin
+    get
+    begin
+      return RootViewHostValue;
+    end;
+  end;
+
+  public constructor(window: Window);
+  begin
+    WindowValue := window;
+    if window = nil or window.Content = nil then
+    begin
+      RootViewHostValue := nil;
+    end
+    else
+    begin
+      RootViewHostValue := new DebugViewHost(window.Content);
+    end;
+  end;
+
+  public function Show: Boolean;
+  begin
+    if WindowValue = nil then
+    begin
+      return false;
+    end;
+
+    WindowValue.Show();
+    return WindowValue.IsOpen;
+  end;
+end;
+
+public class DebugUiBackend: IUiBackend
+begin
+  private var HostedWindowCountValue: Integer;
+  private var LastRootDescriptionValue: String;
+
+  public property HostedWindowCount: Integer
+  begin
+    get
+    begin
+      return HostedWindowCountValue;
+    end;
+  end;
+
+  public property LastRootDescription: String
+  begin
+    get
+    begin
+      return LastRootDescriptionValue;
+    end;
+  end;
+
+  public constructor;
+  begin
+    HostedWindowCountValue := 0;
+    LastRootDescriptionValue := '';
+  end;
+
+  public function CreateWindowHost(window: Window): IWindowHost;
+  begin
+    return new DebugWindowHost(window);
+  end;
+
+  public function Run(application: Application): Integer;
+  begin
+    HostedWindowCountValue := 0;
+    LastRootDescriptionValue := '';
+    if application = nil then
+    begin
+      return 0;
+    end;
+
+    var windows := application.Windows;
+    if windows = nil then
+    begin
+      return 0;
+    end;
+
+    var enumerator := windows.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      var host := CreateWindowHost(enumerator.Current);
+      if host <> nil and host.Show() then
+      begin
+        HostedWindowCountValue := HostedWindowCountValue + 1;
+        if host.RootViewHost <> nil then
+        begin
+          LastRootDescriptionValue := host.RootViewHost.Describe();
+        end;
+      end;
+    end;
+
+    return HostedWindowCountValue;
+  end;
+end;

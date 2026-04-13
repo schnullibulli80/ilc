@@ -1,0 +1,127 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                 I L C   U I   B A C K E N D S   Q T   Q U I C K
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the first Qt Quick backend contract slice for the backend-neutral UI model. It intentionally stays managed and
+//            testable: the class implements the hosting interfaces and currently falls back to the debug backend, while already exposing the
+//            Qt-specific backend identity and initialization state expected by a future native bridge.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-13
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+namespace System.Ui.Backends.QtQuick;
+
+uses System, System.Ui, System.Ui.Hosting;
+
+public enum QtQuickRenderMode
+begin
+  ManagedPreview = 0;
+  NativeBridge = 1;
+end;
+
+public class QtQuickBackend: IUiBackend
+begin
+  private var FallbackBackendValue: IUiBackend;
+  private var EngineInitializedValue: Boolean;
+  private var LastHostedWindowTitleValue: String;
+  private var LastHostedRootDescriptionValue: String;
+
+  public property BackendName: String
+  begin
+    get
+    begin
+      return 'QtQuick';
+    end;
+  end;
+
+  public property RenderMode: QtQuickRenderMode
+  begin
+    get
+    begin
+      return QtQuickRenderMode.ManagedPreview;
+    end;
+  end;
+
+  public property IsAvailable: Boolean
+  begin
+    get
+    begin
+      return EngineInitializedValue;
+    end;
+  end;
+
+  public property LastHostedWindowTitle: String
+  begin
+    get
+    begin
+      return LastHostedWindowTitleValue;
+    end;
+  end;
+
+  public property LastHostedRootDescription: String
+  begin
+    get
+    begin
+      return LastHostedRootDescriptionValue;
+    end;
+  end;
+
+  public constructor;
+  begin
+    FallbackBackendValue := new DebugUiBackend();
+    EngineInitializedValue := false;
+    LastHostedWindowTitleValue := '';
+    LastHostedRootDescriptionValue := '';
+  end;
+
+  public function InitializeEngine: Boolean;
+  begin
+    EngineInitializedValue := true;
+    return EngineInitializedValue;
+  end;
+
+  public function CreateWindowHost(window: Window): IWindowHost;
+  begin
+    if window = nil then
+    begin
+      return nil;
+    end;
+
+    LastHostedWindowTitleValue := window.Title;
+    return FallbackBackendValue.CreateWindowHost(window);
+  end;
+
+  public function Run(application: Application): Integer;
+  begin
+    InitializeEngine();
+    LastHostedWindowTitleValue := '';
+    LastHostedRootDescriptionValue := '';
+
+    var hosted := FallbackBackendValue.Run(application);
+    var debugBackend := FallbackBackendValue as DebugUiBackend;
+    if debugBackend <> nil then
+    begin
+      LastHostedRootDescriptionValue := debugBackend.LastRootDescription;
+    end;
+
+    if application <> nil then
+    begin
+      var windows := application.Windows;
+      if windows <> nil then
+      begin
+        var enumerator := windows.GetEnumerator();
+        while enumerator.MoveNext() do
+        begin
+          if enumerator.Current <> nil then
+          begin
+            LastHostedWindowTitleValue := enumerator.Current.Title;
+          end;
+        end;
+      end;
+    end;
+
+    return hosted;
+  end;
+end;

@@ -15,6 +15,8 @@ var netFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..
 var threadingFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "threading.ilc"));
 var collectionsFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "collections.ilc"));
 var uiFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "ui.ilc"));
+var uiHostingFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "ui-hosting.ilc"));
+var uiQtQuickFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "ui-backends-qtquick.ilc"));
 var demoCoreFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "demo-core.ilc"));
 var bootstrapSource = File.ReadAllText(bootstrapFixturePath);
 var systemSource = File.ReadAllText(systemFixturePath);
@@ -25,6 +27,8 @@ var netSource = File.ReadAllText(netFixturePath);
 var threadingSource = File.ReadAllText(threadingFixturePath);
 var collectionsSource = File.ReadAllText(collectionsFixturePath);
 var uiSource = File.ReadAllText(uiFixturePath);
+var uiHostingSource = File.ReadAllText(uiHostingFixturePath);
+var uiQtQuickSource = File.ReadAllText(uiQtQuickFixturePath);
 var demoCoreSource = File.ReadAllText(demoCoreFixturePath);
 
 var tree = SyntaxTree.Parse(bootstrapSource);
@@ -36,8 +40,10 @@ var netTree = SyntaxTree.Parse(netSource);
 var threadingTree = SyntaxTree.Parse(threadingSource);
 var collectionsTree = SyntaxTree.Parse(collectionsSource);
 var uiTree = SyntaxTree.Parse(uiSource);
+var uiHostingTree = SyntaxTree.Parse(uiHostingSource);
+var uiQtQuickTree = SyntaxTree.Parse(uiQtQuickSource);
 var demoCoreTree = SyntaxTree.Parse(demoCoreSource);
-var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, jsonTree, netTree, threadingTree, collectionsTree, uiTree, demoCoreTree]);
+var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, jsonTree, netTree, threadingTree, collectionsTree, uiTree, uiHostingTree, uiQtQuickTree, demoCoreTree]);
 
 if (tree.Root.Tokens.Count == 0)
 {
@@ -61,7 +67,7 @@ if (tree.Root.Namespace?.Name.ToDisplayString() != "Demo.App")
     failures.Add("Parser should capture the namespace declaration.");
 }
 
-if (tree.Root.Uses?.Imports.Count != 9)
+if (tree.Root.Uses?.Imports.Count != 11)
 {
     failures.Add("Parser should capture the uses clause.");
 }
@@ -73,7 +79,9 @@ else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" |
          tree.Root.Uses.Imports[5].NamespaceName.ToDisplayString() != "System.Threading" ||
          tree.Root.Uses.Imports[6].NamespaceName.ToDisplayString() != "System.Collections" ||
          tree.Root.Uses.Imports[7].NamespaceName.ToDisplayString() != "System.Ui" ||
-         tree.Root.Uses.Imports[8].NamespaceName.ToDisplayString() != "Demo.Core")
+         tree.Root.Uses.Imports[8].NamespaceName.ToDisplayString() != "System.Ui.Hosting" ||
+         tree.Root.Uses.Imports[9].NamespaceName.ToDisplayString() != "System.Ui.Backends.QtQuick" ||
+         tree.Root.Uses.Imports[10].NamespaceName.ToDisplayString() != "Demo.Core")
 {
     failures.Add("Parser should capture imported namespaces.");
 }
@@ -482,6 +490,12 @@ var commandSurfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().Fir
 var observableObjectType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ObservableObject");
 var observableTextType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ObservableText");
 var textBindingType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TextBinding");
+var uiBackendType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IUiBackend");
+var windowHostType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IWindowHost");
+var viewHostType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IViewHost");
+var debugUiBackendType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "DebugUiBackend");
+var qtQuickBackendType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QtQuickBackend");
+var qtQuickRenderModeType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "QtQuickRenderMode");
 var dialogResultType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "DialogResult");
 var textBlockType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TextBlock");
 var viewType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "View");
@@ -654,6 +668,36 @@ if (observableTextType is null || observableTextType.BaseType?.Name != "Observab
 if (textBindingType is null || !textBindingType.Properties.Any(property => property.Name == "IsDirty" && property.Type == TypeSymbol.Boolean) || !textBindingType.Methods.Any(method => method.Name == "Apply" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TextBlock") || !textBindingType.Methods.Any(method => method.Name == "ApplyToTextBox" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TextBox"))
 {
     failures.Add("Binder should surface System.Ui.TextBinding with the expected first binding operations.");
+}
+
+if (viewHostType is null || !viewHostType.IsInterface || !viewHostType.Properties.Any(property => property.Name == "View" && property.Type.Name == "View") || !viewHostType.Methods.Any(method => method.Name == "Describe" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.String))
+{
+    failures.Add("Binder should surface System.Ui.Hosting.IViewHost with view inspection members.");
+}
+
+if (windowHostType is null || !windowHostType.IsInterface || !windowHostType.Properties.Any(property => property.Name == "Window" && property.Type.Name == "Window") || !windowHostType.Properties.Any(property => property.Name == "RootViewHost" && property.Type.Name == "IViewHost") || !windowHostType.Methods.Any(method => method.Name == "Show" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.Hosting.IWindowHost with window hosting members.");
+}
+
+if (uiBackendType is null || !uiBackendType.IsInterface || !uiBackendType.Methods.Any(method => method.Name == "CreateWindowHost" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Window" && method.ReturnType.Name == "IWindowHost") || !uiBackendType.Methods.Any(method => method.Name == "Run" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Application" && method.ReturnType == TypeSymbol.Integer))
+{
+    failures.Add("Binder should surface System.Ui.Hosting.IUiBackend with backend bootstrap members.");
+}
+
+if (debugUiBackendType is null || !debugUiBackendType.IsReferenceType || !debugUiBackendType.Properties.Any(property => property.Name == "HostedWindowCount" && property.Type == TypeSymbol.Integer) || !debugUiBackendType.Properties.Any(property => property.Name == "LastRootDescription" && property.Type == TypeSymbol.String) || !debugUiBackendType.Methods.Any(method => method.Name == "CreateWindowHost" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Window" && method.ReturnType.Name == "IWindowHost") || !debugUiBackendType.Methods.Any(method => method.Name == "Run" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Application" && method.ReturnType == TypeSymbol.Integer))
+{
+    failures.Add("Binder should surface System.Ui.Hosting.DebugUiBackend as the first managed backend adapter.");
+}
+
+if (qtQuickRenderModeType is null || qtQuickRenderModeType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickRenderMode as a value enum.");
+}
+
+if (qtQuickBackendType is null || !qtQuickBackendType.IsReferenceType || !qtQuickBackendType.Properties.Any(property => property.Name == "BackendName" && property.Type == TypeSymbol.String) || !qtQuickBackendType.Properties.Any(property => property.Name == "RenderMode" && property.Type.Name == "QtQuickRenderMode") || !qtQuickBackendType.Properties.Any(property => property.Name == "IsAvailable" && property.Type == TypeSymbol.Boolean) || !qtQuickBackendType.Properties.Any(property => property.Name == "LastHostedWindowTitle" && property.Type == TypeSymbol.String) || !qtQuickBackendType.Properties.Any(property => property.Name == "LastHostedRootDescription" && property.Type == TypeSymbol.String) || !qtQuickBackendType.Methods.Any(method => method.Name == "InitializeEngine" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean) || !qtQuickBackendType.Methods.Any(method => method.Name == "CreateWindowHost" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Window" && method.ReturnType.Name == "IWindowHost") || !qtQuickBackendType.Methods.Any(method => method.Name == "Run" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Application" && method.ReturnType == TypeSymbol.Integer))
+{
+    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickBackend as the first Qt hosting adapter.");
 }
 
 var runnableType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IRunnable");
@@ -4255,6 +4299,12 @@ begin
   StdCall
 end;
 
+public enum StringReturn
+begin
+  None,
+  Utf8Owned
+end;
+
 public class Native
 begin
   [DllImport('libc.so.6', EntryPoint := 'puts', CallingConvention := CallingConvention.Cdecl)]
@@ -4404,6 +4454,343 @@ var invalidDllImportStaticBinding = new Binder().Bind(invalidDllImportStaticTree
 if (!invalidDllImportStaticBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2213"))
 {
     failures.Add("Binder should reject instance DllImport methods.");
+}
+
+var validDllImportAbiTree = SyntaxTree.Parse("""
+public enum CallingConvention
+begin
+  Cdecl,
+  StdCall
+end;
+
+public enum StringReturn
+begin
+  None,
+  Utf8Owned
+end;
+
+public enum NativeHandle
+begin
+  Null = 0;
+end;
+
+public enum ErrorCode
+begin
+  Ok = 0;
+  Failed = 1;
+end;
+
+public delegate function CompletionCallback(code: Integer): Integer;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so', EntryPoint := 'open_point', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function OpenPoint(handle: NativeHandle; code: ErrorCode; callback: CompletionCallback): NativeHandle;
+end;
+""");
+
+var validDllImportAbiBinding = new Binder().Bind(validDllImportAbiTree);
+if (validDllImportAbiBinding.Diagnostics.Count > 0)
+{
+    failures.Add($"Binder should accept FFI v1 ABI-safe DllImport signatures. Actual: {string.Join(", ", validDllImportAbiBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+else if (debugEnabled)
+{
+    var openPoint = validDllImportAbiBinding.Compilation.Types
+        .OfType<NamedTypeSymbol>()
+        .First(type => type.Name == "Native")
+        .Methods
+        .First(method => method.Name == "OpenPoint");
+    var completionCallback = validDllImportAbiBinding.Compilation.Types
+        .OfType<NamedTypeSymbol>()
+        .First(type => type.Name == "CompletionCallback");
+    var completionInvoke = completionCallback.Methods.First(method => method.Name == "Invoke" && !method.IsStatic);
+    Console.Error.WriteLine(
+        "debug.dllimport.abi.valid=" +
+        $"{openPoint.Name}(" +
+        string.Join(", ", openPoint.Parameters.Select(parameter => $"{parameter.PassingKind}:{parameter.Type.Name}")) +
+        $"):{openPoint.ReturnType.Name}");
+    Console.Error.WriteLine(
+        "debug.dllimport.callback.valid=" +
+        $"{completionCallback.Name}(" +
+        string.Join(", ", completionInvoke.Parameters.Select(parameter => $"{parameter.PassingKind}:{parameter.Type.Name}")) +
+        $"):{completionInvoke.ReturnType.Name}");
+}
+
+var validDllImportVoidCallbackTree = SyntaxTree.Parse("""
+public enum CallingConvention
+begin
+  Cdecl
+end;
+
+public delegate procedure CompletionCallback(code: Integer);
+
+public class Native
+begin
+  [DllImport('libffi-demo.so', EntryPoint := 'consume_point', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function Consume(callback: CompletionCallback): Integer;
+end;
+""");
+
+var validDllImportVoidCallbackBinding = new Binder().Bind(validDllImportVoidCallbackTree);
+if (validDllImportVoidCallbackBinding.Diagnostics.Count > 0)
+{
+    failures.Add($"Binder should accept DllImport callbacks with the supported void(Integer) signature. Actual: {string.Join(", ", validDllImportVoidCallbackBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+
+var validDllImportBoolCallbackTree = SyntaxTree.Parse("""
+public enum CallingConvention
+begin
+  Cdecl
+end;
+
+public delegate function CompletionCallback(flag: Boolean): Integer;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so', EntryPoint := 'consume_bool', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function Consume(callback: CompletionCallback): Integer;
+end;
+""");
+
+var validDllImportBoolCallbackBinding = new Binder().Bind(validDllImportBoolCallbackTree);
+if (validDllImportBoolCallbackBinding.Diagnostics.Count > 0)
+{
+    failures.Add($"Binder should accept DllImport callbacks with the supported Integer(Boolean) signature. Actual: {string.Join(", ", validDllImportBoolCallbackBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+
+var invalidDllImportClassTree = SyntaxTree.Parse("""
+public class NativeWidget
+begin
+end;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Attach(widget: NativeWidget): Integer;
+end;
+""");
+
+var invalidDllImportClassBinding = new Binder().Bind(invalidDllImportClassTree);
+if (!invalidDllImportClassBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2235"))
+{
+    failures.Add("Binder should reject DllImport parameters that use complex reference types.");
+}
+
+var invalidDllImportRecordTree = SyntaxTree.Parse("""
+public record BadRecord
+begin
+  public var Name: String;
+end;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Send(value: BadRecord): Integer;
+end;
+""");
+
+var invalidDllImportRecordBinding = new Binder().Bind(invalidDllImportRecordTree);
+if (!invalidDllImportRecordBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2235"))
+{
+    failures.Add("Binder should reject DllImport records that are not POD-like.");
+}
+
+var invalidDllImportRefTree = SyntaxTree.Parse("""
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Fill(ref value: Integer): Integer;
+end;
+""");
+
+var invalidDllImportRefBinding = new Binder().Bind(invalidDllImportRefTree);
+if (!invalidDllImportRefBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2234"))
+{
+    failures.Add("Binder should reject non-value DllImport parameters in the current FFI v1 contract.");
+}
+
+var invalidDllImportStringReturnTree = SyntaxTree.Parse("""
+public enum StringReturn
+begin
+  None,
+  Utf8Owned
+end;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function ReadName(): String;
+end;
+""");
+
+var invalidDllImportStringReturnBinding = new Binder().Bind(invalidDllImportStringReturnTree);
+if (!invalidDllImportStringReturnBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2237"))
+{
+    failures.Add("Binder should reject DllImport string return types that do not declare explicit ownership and free metadata.");
+}
+
+var validDllImportStringReturnTree = SyntaxTree.Parse("""
+public enum CallingConvention
+begin
+  Cdecl
+end;
+
+public enum StringReturn
+begin
+  None,
+  Utf8Owned
+end;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so', EntryPoint := 'read_name', CallingConvention := CallingConvention.Cdecl, StringReturn := StringReturn.Utf8Owned, StringFreeEntryPoint := 'free_name')]
+  public static extern function ReadName(): String;
+end;
+""");
+
+var validDllImportStringReturnBinding = new Binder().Bind(validDllImportStringReturnTree);
+if (validDllImportStringReturnBinding.Diagnostics.Count > 0)
+{
+    failures.Add($"Binder should accept DllImport string returns with explicit Utf8Owned ownership. Actual: {string.Join(", ", validDllImportStringReturnBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+else
+{
+    var nativeType = validDllImportStringReturnBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Native");
+    var readNameMethod = nativeType.Methods.First(method => method.Name == "ReadName");
+    if (readNameMethod.DllImport is null ||
+        readNameMethod.DllImport.StringReturnMarshalling != NativeStringReturnMarshalling.Utf8Owned ||
+        readNameMethod.DllImport.StringFreeEntryPoint != "free_name")
+    {
+        failures.Add("Binder should preserve DllImport string return ownership metadata.");
+    }
+
+    var methods = validDllImportStringReturnBinding.Compilation.GetAllMethods().ToArray();
+    var fields = validDllImportStringReturnBinding.Compilation.GetAllFields();
+    var stringReturnModule = new BytecodeEmitter().EmitModule(
+        methods,
+        fields,
+        validDllImportStringReturnBinding.Compilation.Types,
+        new Lowerer(
+            methods,
+            fields,
+            validDllImportStringReturnBinding.Compilation.Types,
+            validDllImportStringReturnBinding.Compilation.GetAllProperties(),
+            validDllImportStringReturnBinding.Compilation.GetAllConstants()));
+    var emittedReadName = stringReturnModule.Functions.FirstOrDefault(function => function.Name == "ReadName");
+    if (emittedReadName?.DllImport is null ||
+        emittedReadName.DllImport.StringReturnMarshalling != NativeStringReturnMarshalling.Utf8Owned ||
+        emittedReadName.DllImport.StringFreeEntryPoint != "free_name")
+    {
+        failures.Add("Bytecode emission should preserve DllImport string return ownership metadata.");
+    }
+
+    var ilb = new IlbSerializer().Serialize(
+        stringReturnModule,
+        methods,
+        fields,
+        validDllImportStringReturnBinding.Compilation.Types,
+        null);
+    static uint ReadDllImportU32(byte[] bytes, int offset) =>
+        (uint)(bytes[offset] |
+            (bytes[offset + 1] << 8) |
+            (bytes[offset + 2] << 16) |
+            (bytes[offset + 3] << 24));
+    static List<string> ReadDllImportStringTable(byte[] bytes, int offset)
+    {
+        var count = (int)ReadDllImportU32(bytes, offset);
+        var cursor = offset + 4;
+        var values = new List<string> { string.Empty };
+        for (var index = 0; index < count; index++)
+        {
+            var length = (int)ReadDllImportU32(bytes, cursor);
+            cursor += 4;
+            values.Add(System.Text.Encoding.UTF8.GetString(bytes, cursor, length));
+            cursor += length;
+        }
+
+        return values;
+    }
+    var stringSection = ilb.Sections.First(section => section.Kind == IlbSectionKind.StringTable);
+    var methodSection = ilb.Sections.First(section => section.Kind == IlbSectionKind.MethodTable);
+    var strings = ReadDllImportStringTable(ilb.Bytes, (int)stringSection.Offset);
+    var rowOffset = (int)methodSection.Offset;
+    var stringReturnMarshalling = ReadDllImportU32(ilb.Bytes, rowOffset + 58);
+    var freeEntryPointStringId = ReadDllImportU32(ilb.Bytes, rowOffset + 62);
+    if (stringReturnMarshalling != (uint)NativeStringReturnMarshalling.Utf8Owned ||
+        freeEntryPointStringId == 0 ||
+        strings[(int)freeEntryPointStringId] != "free_name")
+    {
+        failures.Add("ILB serialization should persist DllImport string return ownership metadata.");
+    }
+}
+
+var invalidDllImportCallbackClassTree = SyntaxTree.Parse("""
+public class NativeWidget
+begin
+end;
+
+public delegate function BadCallback(widget: NativeWidget): Integer;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Register(callback: BadCallback): Integer;
+end;
+""");
+
+var invalidDllImportCallbackClassBinding = new Binder().Bind(invalidDllImportCallbackClassTree);
+if (!invalidDllImportCallbackClassBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2235"))
+{
+    failures.Add("Binder should reject DllImport callbacks whose delegate signature uses complex reference types.");
+}
+
+var invalidDllImportCallbackRefTree = SyntaxTree.Parse("""
+public delegate function BadCallback(ref value: Integer): Integer;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Register(callback: BadCallback): Integer;
+end;
+""");
+
+var invalidDllImportCallbackRefBinding = new Binder().Bind(invalidDllImportCallbackRefTree);
+if (!invalidDllImportCallbackRefBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2235"))
+{
+    failures.Add("Binder should reject DllImport callbacks whose delegate signature uses non-value parameters.");
+}
+
+var invalidDllImportCallbackStringTree = SyntaxTree.Parse("""
+public delegate function BadCallback(value: String): Integer;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Register(callback: BadCallback): Integer;
+end;
+""");
+
+var invalidDllImportCallbackStringBinding = new Binder().Bind(invalidDllImportCallbackStringTree);
+if (!invalidDllImportCallbackStringBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2235"))
+{
+    failures.Add("Binder should reject DllImport callbacks whose delegate signature uses string marshalling before callback ownership rules exist.");
+}
+
+var invalidDllImportCallbackArityTree = SyntaxTree.Parse("""
+public delegate function BadCallback(left: Integer; right: Integer): Integer;
+
+public class Native
+begin
+  [DllImport('libffi-demo.so')]
+  public static extern function Register(callback: BadCallback): Integer;
+end;
+""");
+
+var invalidDllImportCallbackArityBinding = new Binder().Bind(invalidDllImportCallbackArityTree);
+if (!invalidDllImportCallbackArityBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2235"))
+{
+    failures.Add("Binder should reject DllImport callbacks whose delegate signature exceeds the current runtime callback slice.");
 }
 
 var ambiguousImportPrimaryTree = SyntaxTree.Parse("""

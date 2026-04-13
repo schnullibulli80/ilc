@@ -21,6 +21,8 @@ net_fixture="$repo_root/libs/shipped/net.ilc"
 threading_fixture="$repo_root/libs/shipped/threading.ilc"
 collections_fixture="$repo_root/libs/shipped/collections.ilc"
 ui_fixture="$repo_root/libs/shipped/ui.ilc"
+ui_hosting_fixture="$repo_root/libs/shipped/ui-hosting.ilc"
+ui_qtquick_fixture="$repo_root/libs/shipped/ui-backends-qtquick.ilc"
 demo_core_fixture="$repo_root/tests/fixtures/demo-core.ilc"
 
 cd "$repo_root"
@@ -162,7 +164,7 @@ run_step \
 run_step \
     "Compile runtime smoke" \
     "$tmp_dir/compiler-runtime-cli-local.log" \
-    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" -- --debug "$bootstrap_runtime_source" "$system_fixture" "$diagnostics_fixture" "$text_fixture" "$json_fixture" "$net_fixture" "$threading_fixture" "$collections_fixture" "$ui_fixture" "$demo_core_fixture"
+    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" -- --debug "$bootstrap_runtime_source" "$system_fixture" "$diagnostics_fixture" "$text_fixture" "$json_fixture" "$net_fixture" "$threading_fixture" "$collections_fixture" "$ui_fixture" "$ui_hosting_fixture" "$ui_qtquick_fixture" "$demo_core_fixture"
 
 run_step \
     "Build runtime" \

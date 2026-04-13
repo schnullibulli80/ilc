@@ -5,11 +5,162 @@
 #include "ilcvm/virtual_machine.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
+namespace
+{
+bool is_native_callback_debug_enabled() noexcept
+{
+    const auto* value = std::getenv("ILC_VM_DEBUG_CALLBACKS");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+bool is_native_ffi_debug_enabled() noexcept
+{
+    const auto* value = std::getenv("ILC_VM_DEBUG_FFI");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+}
+
+extern "C" __attribute__((visibility("default"))) std::int32_t ilcvm_test_invoke_i32_callback(std::int32_t (*callback)(std::int32_t))
+{
+    if (is_native_callback_debug_enabled())
+    {
+        std::cerr << "DEBUG native_callback: enter callback=" << reinterpret_cast<const void*>(callback) << '\n';
+    }
+    if (callback == nullptr)
+    {
+        if (is_native_callback_debug_enabled())
+        {
+            std::cerr << "DEBUG native_callback: callback was null\n";
+        }
+        return -1000;
+    }
+
+    const auto result = callback(7);
+    if (is_native_callback_debug_enabled())
+    {
+        std::cerr << "DEBUG native_callback: result=" << result << '\n';
+    }
+    return result;
+}
+
+extern "C" __attribute__((visibility("default"))) std::int32_t ilcvm_test_invoke_void_i32_callback(void (*callback)(std::int32_t))
+{
+    if (callback == nullptr)
+    {
+        return -1000;
+    }
+
+    callback(9);
+    return 1;
+}
+
+extern "C" __attribute__((visibility("default"))) std::int32_t ilcvm_test_invoke_bool_i32_callback(std::int32_t (*callback)(std::int32_t))
+{
+    if (callback == nullptr)
+    {
+        return -1000;
+    }
+
+    return callback(1);
+}
+
+extern "C" __attribute__((visibility("default"))) std::int32_t ilcvm_test_borrowed_utf8_length(const char* text)
+{
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: borrowed utf8 text=" << (text == nullptr ? "<null>" : text) << '\n';
+    }
+    if (text == nullptr)
+    {
+        return -1000;
+    }
+
+    return static_cast<std::int32_t>(std::strlen(text));
+}
+
+struct HandleBox
+{
+    std::int32_t value {};
+};
+
+int g_owned_utf8_free_count = 0;
+
+extern "C" __attribute__((visibility("default"))) void* ilcvm_test_open_handle(std::int32_t value)
+{
+    auto* handle = new HandleBox { value + 100 };
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: open handle value=" << value << " pointer=" << handle << '\n';
+    }
+    return handle;
+}
+
+extern "C" __attribute__((visibility("default"))) std::int32_t ilcvm_test_read_handle(void* handle)
+{
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: read handle pointer=" << handle << '\n';
+    }
+    if (handle == nullptr)
+    {
+        return -1000;
+    }
+
+    return static_cast<HandleBox*>(handle)->value;
+}
+
+extern "C" __attribute__((visibility("default"))) void ilcvm_test_close_handle(void* handle)
+{
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: close handle pointer=" << handle << '\n';
+    }
+    delete static_cast<HandleBox*>(handle);
+}
+
+extern "C" __attribute__((visibility("default"))) char* ilcvm_test_get_owned_utf8()
+{
+    constexpr const char* text = "ffi-owned";
+    constexpr std::size_t text_length = 9;
+    auto* buffer = static_cast<char*>(std::malloc(text_length + 1));
+    if (buffer == nullptr)
+    {
+        return nullptr;
+    }
+
+    std::memcpy(buffer, text, text_length + 1);
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: get owned utf8 pointer=" << static_cast<void*>(buffer) << " text=" << buffer << '\n';
+    }
+    return buffer;
+}
+
+extern "C" __attribute__((visibility("default"))) void ilcvm_test_free_owned_utf8(void* value)
+{
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: free owned utf8 pointer=" << value << '\n';
+    }
+    ++g_owned_utf8_free_count;
+    std::free(value);
+}
+
+extern "C" __attribute__((visibility("default"))) std::int32_t ilcvm_test_get_owned_utf8_free_count()
+{
+    if (is_native_ffi_debug_enabled())
+    {
+        std::cerr << "DEBUG native_ffi_test: owned utf8 free count=" << g_owned_utf8_free_count << '\n';
+    }
+    return g_owned_utf8_free_count;
+}
 
 namespace
 {
@@ -340,6 +491,7 @@ void emit_method_row(
     write_u32(bytes, return_type_id);
     write_u32(bytes, code_offset);
     write_u32(bytes, code_size);
+    write_u32(bytes, 0);
     write_u32(bytes, 0);
     write_u32(bytes, 0);
     write_u32(bytes, 0);
@@ -2564,6 +2716,580 @@ int main()
             std::cerr << "FAIL: worker thread failure did not preserve exception context: '" << text << "'\n";
             return EXIT_FAILURE;
         }
+    }
+
+    ilcvm::Module native_callback_module {
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "Integer",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "CompletionCallback",
+                .first_method_id = 2,
+                .method_count = 2,
+                .is_reference_type = true,
+                .instance_field_count = 2
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "Bind",
+                .register_count = 3,
+                .argument_count = 3,
+                .returns_value = false,
+                .is_static = true,
+                .host_import_kind = ilcvm::HostImportKind::delegate_bind
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .owner_type_id = 2,
+                .name = ".ctor",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = false,
+                .instructions = {
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .owner_type_id = 2,
+                .return_type_id = 1,
+                .name = "Invoke",
+                .register_count = 3,
+                .argument_count = 2,
+                .returns_value = true,
+                .parameter_type_ids = { 1 },
+                .instructions = {
+                    { ilcvm::OpCode::ld_i32, 2, 0, 0, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .return_type_id = 1,
+                .name = "AddFive",
+                .register_count = 2,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .parameter_type_ids = { 1 },
+                .instructions = {
+                    { ilcvm::OpCode::ld_i32, 1, 0, 0, 5 },
+                    { ilcvm::OpCode::add_i32, 1, 0, 1, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .return_type_id = 1,
+                .name = "InvokeNative",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_invoke_i32_callback",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 2 }
+            },
+            ilcvm::Function {
+                .function_id = 6,
+                .return_type_id = 1,
+                .name = "Main",
+                .register_count = 4,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .instructions = {
+                    { ilcvm::OpCode::new_obj, 1, 0, 0, 2 },
+                    { ilcvm::OpCode::ld_i32, 2, 0, 0, 0 },
+                    { ilcvm::OpCode::ld_i32, 3, 0, 0, 4 },
+                    { ilcvm::OpCode::call, 0, 1, 3, 1 },
+                    { ilcvm::OpCode::call, 0, 1, 1, 5 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .entry_function_id = 6
+    };
+
+    if (is_native_callback_debug_enabled())
+    {
+        std::cerr << "DEBUG native_callback_test: execute module\n";
+    }
+    const auto native_callback_result = vm.execute(native_callback_module);
+    if (is_native_callback_debug_enabled())
+    {
+        std::cerr << "DEBUG native_callback_test: vm result=" << native_callback_result << '\n';
+    }
+    if (native_callback_result != 12)
+    {
+        std::cerr << "FAIL: native callback bridge returned " << native_callback_result << ", expected 12\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module native_void_callback_module {
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "Integer",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "VoidCallback",
+                .first_method_id = 2,
+                .method_count = 2,
+                .is_reference_type = true,
+                .instance_field_count = 2
+            }
+        },
+        .fields = {
+            ilcvm::Field {
+                .field_id = 1,
+                .name = "CapturedValue",
+                .owner_type_id = 0,
+                .is_static = true
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "Bind",
+                .register_count = 3,
+                .argument_count = 3,
+                .returns_value = false,
+                .is_static = true,
+                .host_import_kind = ilcvm::HostImportKind::delegate_bind
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .owner_type_id = 2,
+                .name = ".ctor",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = false,
+                .instructions = {
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .owner_type_id = 2,
+                .name = "Invoke",
+                .register_count = 2,
+                .argument_count = 2,
+                .returns_value = false,
+                .parameter_type_ids = { 1 },
+                .instructions = {
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .name = "StoreValue",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = false,
+                .is_static = true,
+                .parameter_type_ids = { 1 },
+                .instructions = {
+                    { ilcvm::OpCode::st_sfield, 0, 0, 0, 1 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .return_type_id = 1,
+                .name = "InvokeNative",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_invoke_void_i32_callback",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 2 }
+            },
+            ilcvm::Function {
+                .function_id = 6,
+                .return_type_id = 1,
+                .name = "Main",
+                .register_count = 4,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .instructions = {
+                    { ilcvm::OpCode::new_obj, 1, 0, 0, 2 },
+                    { ilcvm::OpCode::ld_i32, 2, 0, 0, 0 },
+                    { ilcvm::OpCode::ld_i32, 3, 0, 0, 4 },
+                    { ilcvm::OpCode::call, 0, 1, 3, 1 },
+                    { ilcvm::OpCode::call, 2, 1, 1, 5 },
+                    { ilcvm::OpCode::ld_sfield, 3, 0, 0, 1 },
+                    { ilcvm::OpCode::add_i32, 0, 2, 3, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .entry_function_id = 6
+    };
+
+    const auto native_void_callback_result = vm.execute(native_void_callback_module);
+    if (native_void_callback_result != 10)
+    {
+        std::cerr << "FAIL: native void callback bridge returned " << native_void_callback_result << ", expected 10\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module native_bool_callback_module {
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "Integer",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "Boolean",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 3,
+                .name = "BoolCallback",
+                .first_method_id = 2,
+                .method_count = 2,
+                .is_reference_type = true,
+                .instance_field_count = 2
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .name = "Bind",
+                .register_count = 3,
+                .argument_count = 3,
+                .returns_value = false,
+                .is_static = true,
+                .host_import_kind = ilcvm::HostImportKind::delegate_bind
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .owner_type_id = 3,
+                .name = ".ctor",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = false,
+                .instructions = {
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .owner_type_id = 3,
+                .return_type_id = 1,
+                .name = "Invoke",
+                .register_count = 2,
+                .argument_count = 2,
+                .returns_value = true,
+                .parameter_type_ids = { 2 },
+                .instructions = {
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .return_type_id = 1,
+                .name = "MapFlag",
+                .register_count = 3,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .parameter_type_ids = { 2 },
+                .instructions = {
+                    { ilcvm::OpCode::ld_i32, 1, 0, 0, 10 },
+                    { ilcvm::OpCode::add_i32, 1, 0, 1, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            },
+            ilcvm::Function {
+                .function_id = 5,
+                .return_type_id = 1,
+                .name = "InvokeNative",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_invoke_bool_i32_callback",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 3 }
+            },
+            ilcvm::Function {
+                .function_id = 6,
+                .return_type_id = 1,
+                .name = "Main",
+                .register_count = 4,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .instructions = {
+                    { ilcvm::OpCode::new_obj, 1, 0, 0, 3 },
+                    { ilcvm::OpCode::ld_i32, 2, 0, 0, 0 },
+                    { ilcvm::OpCode::ld_i32, 3, 0, 0, 4 },
+                    { ilcvm::OpCode::call, 0, 1, 3, 1 },
+                    { ilcvm::OpCode::call, 0, 1, 1, 5 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .entry_function_id = 6
+    };
+
+    const auto native_bool_callback_result = vm.execute(native_bool_callback_module);
+    if (native_bool_callback_result != 11)
+    {
+        std::cerr << "FAIL: native bool callback bridge returned " << native_bool_callback_result << ", expected 11\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module native_borrowed_string_module {
+        .strings = { "", "ffi-bridge" },
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "Integer",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "String",
+                .is_reference_type = true
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .return_type_id = 1,
+                .name = "ReadLength",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_borrowed_utf8_length",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 2 }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .return_type_id = 1,
+                .name = "Main",
+                .register_count = 2,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .instructions = {
+                    { ilcvm::OpCode::ld_str, 0, 0, 0, 1 },
+                    { ilcvm::OpCode::call, 0, 0, 1, 1 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .entry_function_id = 2
+    };
+
+    const auto native_borrowed_string_result = vm.execute(native_borrowed_string_module);
+    if (native_borrowed_string_result != 10)
+    {
+        std::cerr << "FAIL: native borrowed string bridge returned " << native_borrowed_string_result << ", expected 10\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module native_owned_string_module {
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "Integer",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "String",
+                .is_reference_type = true
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .return_type_id = 2,
+                .name = "ReadOwned",
+                .register_count = 0,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_get_owned_utf8",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .string_return_marshalling = ilcvm::NativeStringReturnMarshalling::utf8_owned,
+                    .string_free_entry_point = "ilcvm_test_free_owned_utf8",
+                    .is_present = true
+                }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .return_type_id = 1,
+                .name = "ReadFreeCount",
+                .register_count = 0,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_get_owned_utf8_free_count",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                }
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .return_type_id = 1,
+                .name = "Main",
+                .register_count = 3,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .instructions = {
+                    { ilcvm::OpCode::call, 0, 0, 0, 1 },
+                    { ilcvm::OpCode::ld_len, 1, 0, 0, 0 },
+                    { ilcvm::OpCode::call, 2, 0, 0, 2 },
+                    { ilcvm::OpCode::add_i32, 0, 1, 2, 0 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .entry_function_id = 3
+    };
+
+    const auto native_owned_string_result = vm.execute(native_owned_string_module);
+    if (native_owned_string_result != 10)
+    {
+        std::cerr << "FAIL: native owned string bridge returned " << native_owned_string_result << ", expected 10\n";
+        return EXIT_FAILURE;
+    }
+
+    ilcvm::Module native_handle_module {
+        .types = {
+            ilcvm::Type {
+                .type_id = 1,
+                .name = "Integer",
+                .is_reference_type = false
+            },
+            ilcvm::Type {
+                .type_id = 2,
+                .name = "NativeHandle",
+                .is_reference_type = false
+            }
+        },
+        .functions = {
+            ilcvm::Function {
+                .function_id = 1,
+                .return_type_id = 2,
+                .name = "OpenHandle",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_open_handle",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 1 }
+            },
+            ilcvm::Function {
+                .function_id = 2,
+                .return_type_id = 1,
+                .name = "ReadHandle",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = true,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_read_handle",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 2 }
+            },
+            ilcvm::Function {
+                .function_id = 3,
+                .name = "CloseHandle",
+                .register_count = 1,
+                .argument_count = 1,
+                .returns_value = false,
+                .is_static = true,
+                .is_extern = true,
+                .dll_import = ilcvm::Function::DllImport {
+                    .library_name = "__self__",
+                    .entry_point = "ilcvm_test_close_handle",
+                    .calling_convention = ilcvm::NativeCallingConvention::cdecl_,
+                    .is_present = true
+                },
+                .parameter_type_ids = { 2 }
+            },
+            ilcvm::Function {
+                .function_id = 4,
+                .return_type_id = 1,
+                .name = "Main",
+                .register_count = 3,
+                .argument_count = 0,
+                .returns_value = true,
+                .is_static = true,
+                .instructions = {
+                    { ilcvm::OpCode::ld_i32, 0, 0, 0, 23 },
+                    { ilcvm::OpCode::call, 1, 0, 1, 1 },
+                    { ilcvm::OpCode::call, 0, 1, 1, 2 },
+                    { ilcvm::OpCode::call, 2, 1, 1, 3 },
+                    { ilcvm::OpCode::ret, 0, 0, 0, 0 }
+                }
+            }
+        },
+        .entry_function_id = 4
+    };
+
+    const auto native_handle_result = vm.execute(native_handle_module);
+    if (native_handle_result != 123)
+    {
+        std::cerr << "FAIL: native handle bridge returned " << native_handle_result << ", expected 123\n";
+        return EXIT_FAILURE;
     }
 
     ilcvm::StandardHostServices standard_host_services;

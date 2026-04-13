@@ -229,6 +229,19 @@ Recommended scope:
 - build a minimal `System.Ui` object model
 - target one backend first
 - prefer a backend strategy over hard-coded runtime UI hooks
+- keep the UI backend outside the VM and bridge it through `DllImport`
+- use a small C ABI shim in front of Qt / C++
+
+For this stage, the FFI baseline should be:
+
+- primitive types: transparent
+- enums: transparent with fixed `Int32` representation
+- strings: transparent with explicit encoding + ownership rules
+- records: transparent only when blittable / POD-like
+- callbacks: transparent via VM trampolines with explicit registration / lifetime rules
+- complex foreign types: opaque handles / pointers
+
+This keeps the UI boundary stable while avoiding UI-specific runtime contracts.
 
 Good demo outcomes:
 

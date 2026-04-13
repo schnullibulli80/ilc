@@ -61,6 +61,12 @@ enum class NativeCallingConvention : std::uint32_t
     stdcall_ = 1
 };
 
+enum class NativeStringReturnMarshalling : std::uint32_t
+{
+    none = 0,
+    utf8_owned = 1
+};
+
 enum class OpCode : std::uint8_t
 {
     nop = 0x00,
@@ -165,6 +171,8 @@ struct Function
         std::string library_name;
         std::string entry_point;
         NativeCallingConvention calling_convention { NativeCallingConvention::cdecl_ };
+        NativeStringReturnMarshalling string_return_marshalling { NativeStringReturnMarshalling::none };
+        std::string string_free_entry_point;
         bool is_present {};
     };
 
