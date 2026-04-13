@@ -14,6 +14,7 @@ var jsonFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".
 var netFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "net.ilc"));
 var threadingFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "threading.ilc"));
 var collectionsFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "collections.ilc"));
+var uiFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "libs", "shipped", "ui.ilc"));
 var demoCoreFixturePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tests", "fixtures", "demo-core.ilc"));
 var bootstrapSource = File.ReadAllText(bootstrapFixturePath);
 var systemSource = File.ReadAllText(systemFixturePath);
@@ -23,6 +24,7 @@ var jsonSource = File.ReadAllText(jsonFixturePath);
 var netSource = File.ReadAllText(netFixturePath);
 var threadingSource = File.ReadAllText(threadingFixturePath);
 var collectionsSource = File.ReadAllText(collectionsFixturePath);
+var uiSource = File.ReadAllText(uiFixturePath);
 var demoCoreSource = File.ReadAllText(demoCoreFixturePath);
 
 var tree = SyntaxTree.Parse(bootstrapSource);
@@ -33,8 +35,9 @@ var jsonTree = SyntaxTree.Parse(jsonSource);
 var netTree = SyntaxTree.Parse(netSource);
 var threadingTree = SyntaxTree.Parse(threadingSource);
 var collectionsTree = SyntaxTree.Parse(collectionsSource);
+var uiTree = SyntaxTree.Parse(uiSource);
 var demoCoreTree = SyntaxTree.Parse(demoCoreSource);
-var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, jsonTree, netTree, threadingTree, collectionsTree, demoCoreTree]);
+var mergedTree = SyntaxTree.Merge(tree, [systemTree, diagnosticsTree, textTree, jsonTree, netTree, threadingTree, collectionsTree, uiTree, demoCoreTree]);
 
 if (tree.Root.Tokens.Count == 0)
 {
@@ -58,7 +61,7 @@ if (tree.Root.Namespace?.Name.ToDisplayString() != "Demo.App")
     failures.Add("Parser should capture the namespace declaration.");
 }
 
-if (tree.Root.Uses?.Imports.Count != 8)
+if (tree.Root.Uses?.Imports.Count != 9)
 {
     failures.Add("Parser should capture the uses clause.");
 }
@@ -69,7 +72,8 @@ else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" |
          tree.Root.Uses.Imports[4].NamespaceName.ToDisplayString() != "System.Net" ||
          tree.Root.Uses.Imports[5].NamespaceName.ToDisplayString() != "System.Threading" ||
          tree.Root.Uses.Imports[6].NamespaceName.ToDisplayString() != "System.Collections" ||
-         tree.Root.Uses.Imports[7].NamespaceName.ToDisplayString() != "Demo.Core")
+         tree.Root.Uses.Imports[7].NamespaceName.ToDisplayString() != "System.Ui" ||
+         tree.Root.Uses.Imports[8].NamespaceName.ToDisplayString() != "Demo.Core")
 {
     failures.Add("Parser should capture imported namespaces.");
 }
@@ -450,6 +454,206 @@ else if (!threadType.Properties.Any(property => property.Name == "CurrentManaged
          !threadType.Methods.Any(method => method.Name == "IsAliveCore" && method.IsStatic && method.IsExtern && method.HostImportKind == HostImportKind.ThreadIsAlive))
 {
     failures.Add("Binder should expose the expected System.Threading.Thread surface.");
+}
+
+var applicationType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Application");
+var windowType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Window");
+var dialogType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Dialog");
+var colorType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "Color");
+var thicknessType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Thickness");
+var styleType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Style");
+var buttonType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Button");
+var checkBoxType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "CheckBox");
+var sliderType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Slider");
+var textBoxType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TextBox");
+var contentControlType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ContentControl");
+var itemsControlType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ItemsControl");
+var listViewType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ListView");
+var gridType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Grid");
+var borderType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Border");
+var scrollViewerType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ScrollViewer");
+var menuItemType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "MenuItem");
+var menuBarType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "MenuBar");
+var panelType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Panel");
+var stackPanelType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "StackPanel");
+var pageType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Page");
+var navigationHostType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "NavigationHost");
+var commandSurfaceType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "Command");
+var observableObjectType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ObservableObject");
+var observableTextType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "ObservableText");
+var textBindingType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TextBinding");
+var dialogResultType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "DialogResult");
+var textBlockType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TextBlock");
+var viewType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "View");
+
+if (applicationType is null || !applicationType.Methods.Any(method => method.Name == "Run" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Integer))
+{
+    failures.Add("Binder should surface System.Ui.Application with a minimal Run() entry point.");
+}
+
+if (colorType is null || colorType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Ui.Color as a value enum.");
+}
+
+if (thicknessType is null || !thicknessType.IsReferenceType || !thicknessType.Properties.Any(property => property.Name == "Left" && property.Type == TypeSymbol.Integer) || !thicknessType.Properties.Any(property => property.Name == "Top" && property.Type == TypeSymbol.Integer) || !thicknessType.Properties.Any(property => property.Name == "Right" && property.Type == TypeSymbol.Integer) || !thicknessType.Properties.Any(property => property.Name == "Bottom" && property.Type == TypeSymbol.Integer) || !thicknessType.Properties.Any(property => property.Name == "Horizontal" && property.Type == TypeSymbol.Integer) || !thicknessType.Properties.Any(property => property.Name == "Vertical" && property.Type == TypeSymbol.Integer))
+{
+    failures.Add("Binder should surface System.Ui.Thickness with edge and aggregate members.");
+}
+
+if (styleType is null || !styleType.IsReferenceType || !styleType.Properties.Any(property => property.Name == "Foreground" && property.Type.Name == "Color") || !styleType.Properties.Any(property => property.Name == "Background" && property.Type.Name == "Color") || !styleType.Properties.Any(property => property.Name == "Margin" && property.Type.Name == "Thickness") || !styleType.Properties.Any(property => property.Name == "Padding" && property.Type.Name == "Thickness") || !styleType.Methods.Any(method => method.Name == "ApplyToTextBlock" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TextBlock" && method.ReturnType == TypeSymbol.Void) || !styleType.Methods.Any(method => method.Name == "ApplyToTextBox" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TextBox" && method.ReturnType == TypeSymbol.Void) || !styleType.Methods.Any(method => method.Name == "ApplyToBorder" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Border" && method.ReturnType == TypeSymbol.Void) || !styleType.Methods.Any(method => method.Name == "ApplyToWindow" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Window" && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.Style with shared visual properties and apply helpers.");
+}
+
+if (viewType is null || !viewType.Properties.Any(property => property.Name == "Margin" && property.Type.Name == "Thickness"))
+{
+    failures.Add("Binder should surface System.Ui.View.Margin for the spacing slice.");
+}
+
+if (viewType is null || !viewType.Properties.Any(property => property.Name == "DataContext" && property.Type == TypeSymbol.Object) || !viewType.Properties.Any(property => property.Name == "HasDataContext" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.View.DataContext and HasDataContext for the data-context slice.");
+}
+
+if (contentControlType is null || contentControlType.BaseType?.Name != "View" || !contentControlType.Properties.Any(property => property.Name == "Content" && property.Type.Name == "View") || !contentControlType.Properties.Any(property => property.Name == "HasContent" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.ContentControl as the shared single-content base type.");
+}
+
+if (panelType is null || panelType.BaseType?.Name != "Container")
+{
+    failures.Add("Binder should surface System.Ui.Panel as the shared multi-child base type.");
+}
+
+if (windowType is null || !windowType.Properties.Any(property => property.Name == "Title" && property.Type == TypeSymbol.String) || !windowType.Properties.Any(property => property.Name == "Content" && property.Type.Name == "View") || !windowType.Properties.Any(property => property.Name == "Width" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "Height" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "MinWidth" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "MinHeight" && property.Type == TypeSymbol.Integer) || !windowType.Methods.Any(method => method.Name == "Resize" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.Window with Title, Content and minimal sizing members.");
+}
+
+if (windowType is null || !windowType.Properties.Any(property => property.Name == "Background" && property.Type.Name == "Color"))
+{
+    failures.Add("Binder should surface System.Ui.Window.Background for the styling slice.");
+}
+
+if (dialogResultType is null || dialogResultType.IsReferenceType)
+{
+    failures.Add("Binder should surface System.Ui.DialogResult as a value enum.");
+}
+
+if (dialogType is null || dialogType.BaseType?.Name != "Window" || !dialogType.Properties.Any(property => property.Name == "Message" && property.Type == TypeSymbol.String) || !dialogType.Properties.Any(property => property.Name == "Result" && property.Type.Name == "DialogResult") || !dialogType.Properties.Any(property => property.Name == "IsModal" && property.Type.Name == "Boolean") || !dialogType.Methods.Any(method => method.Name == "ShowDialog" && method.Parameters.Count == 0 && method.ReturnType.Name == "DialogResult") || !dialogType.Methods.Any(method => method.Name == "Accept" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) || !dialogType.Methods.Any(method => method.Name == "Cancel" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.Dialog with result and modal control members.");
+}
+
+if (textBlockType is null || !textBlockType.Properties.Any(property => property.Name == "Foreground" && property.Type.Name == "Color"))
+{
+    failures.Add("Binder should surface System.Ui.TextBlock.Foreground for the styling slice.");
+}
+
+if (buttonType is null || !buttonType.Properties.Any(property => property.Name == "Command" && property.Type.Name == "ICommand") || !buttonType.Methods.Any(method => method.Name == "Click" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.Button with Command and Click().");
+}
+
+if (checkBoxType is null || !checkBoxType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String) || !checkBoxType.Properties.Any(property => property.Name == "IsChecked" && property.Type == TypeSymbol.Boolean) || !checkBoxType.Methods.Any(method => method.Name == "Toggle" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.CheckBox with Text, IsChecked and Toggle().");
+}
+
+if (sliderType is null || !sliderType.Properties.Any(property => property.Name == "Minimum" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "Maximum" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "Value" && property.Type == TypeSymbol.Integer) || !sliderType.Methods.Any(method => method.Name == "SetRange" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.Slider with range and value members.");
+}
+
+if (textBoxType is null || !textBoxType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String) || !textBoxType.Properties.Any(property => property.Name == "PlaceholderText" && property.Type == TypeSymbol.String) || !textBoxType.Properties.Any(property => property.Name == "IsReadOnly" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.TextBox with the expected text editing properties.");
+}
+
+if (textBoxType is null || !textBoxType.Properties.Any(property => property.Name == "Padding" && property.Type.Name == "Thickness"))
+{
+    failures.Add("Binder should surface System.Ui.TextBox.Padding for the spacing slice.");
+}
+
+if (itemsControlType is null || itemsControlType.GenericArity != 1 || itemsControlType.BaseType?.Name != "View" || !itemsControlType.Properties.Any(property => property.Name == "ItemsSource" && property.Type.Name == "IEnumerable<T>") || !itemsControlType.Properties.Any(property => property.Name == "ItemTemplate" && property.Type.Name == "Selector<T, View>") || !itemsControlType.Properties.Any(property => property.Name == "ItemCount" && property.Type == TypeSymbol.Integer) || !itemsControlType.Properties.Any(property => property.Name == "HasItems" && property.Type == TypeSymbol.Boolean) || !itemsControlType.Properties.Any(property => property.Name == "HasItemTemplate" && property.Type == TypeSymbol.Boolean) || !itemsControlType.Methods.Any(method => method.Name == "BuildItems" && method.Parameters.Count == 0 && method.ReturnType.Name == "List<View>"))
+{
+    failures.Add("Binder should surface System.Ui.ItemsControl<T> as the common items and template base type.");
+}
+
+if (listViewType is null || listViewType.GenericArity != 1 || !listViewType.Properties.Any(property => property.Name == "SelectedIndex" && property.Type == TypeSymbol.Integer) || !listViewType.Properties.Any(property => property.Name == "HasSelection" && property.Type == TypeSymbol.Boolean) || !listViewType.Properties.Any(property => property.Name == "SelectedItem" && property.Type.Name == "T") || !listViewType.Methods.Any(method => method.Name == "SelectIndex" && method.Parameters.Count == 1 && method.Parameters[0].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Boolean) || !listViewType.Methods.Any(method => method.Name == "ClearSelection" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.ListView<T> with the expected selection members on top of ItemsControl<T>.");
+}
+
+if (gridType is null || gridType.BaseType?.Name != "Panel" || !gridType.Properties.Any(property => property.Name == "Rows" && property.Type == TypeSymbol.Integer) || !gridType.Properties.Any(property => property.Name == "Columns" && property.Type == TypeSymbol.Integer) || !gridType.Properties.Any(property => property.Name == "CellCount" && property.Type == TypeSymbol.Integer) || !gridType.Properties.Any(property => property.Name == "ShowGridLines" && property.Type == TypeSymbol.Boolean) || !gridType.Methods.Any(method => method.Name == "SetDimensions" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.Grid with basic dimension and cell-count members.");
+}
+
+if (borderType is null || borderType.BaseType?.Name != "ContentControl" || !borderType.Properties.Any(property => property.Name == "Child" && property.Type.Name == "View") || !borderType.Properties.Any(property => property.Name == "BorderThickness" && property.Type == TypeSymbol.Integer) || !borderType.Properties.Any(property => property.Name == "HasChild" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.Border with child and thickness members.");
+}
+
+if (borderType is null || !borderType.Properties.Any(property => property.Name == "Background" && property.Type.Name == "Color"))
+{
+    failures.Add("Binder should surface System.Ui.Border.Background for the styling slice.");
+}
+
+if (borderType is null || !borderType.Properties.Any(property => property.Name == "Padding" && property.Type.Name == "Thickness"))
+{
+    failures.Add("Binder should surface System.Ui.Border.Padding for the spacing slice.");
+}
+
+if (scrollViewerType is null || scrollViewerType.BaseType?.Name != "ContentControl" || !scrollViewerType.Properties.Any(property => property.Name == "HorizontalOffset" && property.Type == TypeSymbol.Integer) || !scrollViewerType.Properties.Any(property => property.Name == "VerticalOffset" && property.Type == TypeSymbol.Integer) || !scrollViewerType.Properties.Any(property => property.Name == "ViewportWidth" && property.Type == TypeSymbol.Integer) || !scrollViewerType.Properties.Any(property => property.Name == "ViewportHeight" && property.Type == TypeSymbol.Integer) || !scrollViewerType.Properties.Any(property => property.Name == "CanScroll" && property.Type == TypeSymbol.Boolean) || !scrollViewerType.Methods.Any(method => method.Name == "ScrollTo" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.ScrollViewer with viewport and offset members.");
+}
+
+if (menuItemType is null || menuItemType.BaseType?.Name != "View" || !menuItemType.Properties.Any(property => property.Name == "Header" && property.Type == TypeSymbol.String) || !menuItemType.Properties.Any(property => property.Name == "Command" && property.Type.Name == "ICommand") || !menuItemType.Properties.Any(property => property.Name == "Items" && property.Type.Name == "List<MenuItem>") || !menuItemType.Properties.Any(property => property.Name == "ItemCount" && property.Type == TypeSymbol.Integer) || !menuItemType.Properties.Any(property => property.Name == "CanExecute" && property.Type == TypeSymbol.Boolean) || !menuItemType.Methods.Any(method => method.Name == "AddItem" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "MenuItem" && method.ReturnType == TypeSymbol.Void) || !menuItemType.Methods.Any(method => method.Name == "Invoke" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.MenuItem with header, child items and invoke support.");
+}
+
+if (menuBarType is null || menuBarType.BaseType?.Name != "View" || !menuBarType.Properties.Any(property => property.Name == "Items" && property.Type.Name == "List<MenuItem>") || !menuBarType.Properties.Any(property => property.Name == "ItemCount" && property.Type == TypeSymbol.Integer) || !menuBarType.Methods.Any(method => method.Name == "AddItem" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "MenuItem" && method.ReturnType == TypeSymbol.Void))
+{
+    failures.Add("Binder should surface System.Ui.MenuBar with top-level menu item support.");
+}
+
+if (stackPanelType is null || stackPanelType.BaseType?.Name != "Panel")
+{
+    failures.Add("Binder should surface System.Ui.StackPanel as a Container subtype.");
+}
+
+if (pageType is null || pageType.BaseType?.Name != "ContentControl" || !pageType.Properties.Any(property => property.Name == "Title" && property.Type == TypeSymbol.String))
+{
+    failures.Add("Binder should surface System.Ui.Page as a container with Title and Content.");
+}
+
+if (navigationHostType is null || navigationHostType.BaseType?.Name != "View" || !navigationHostType.Properties.Any(property => property.Name == "CurrentPage" && property.Type.Name == "Page") || !navigationHostType.Properties.Any(property => property.Name == "HasPage" && property.Type == TypeSymbol.Boolean) || !navigationHostType.Properties.Any(property => property.Name == "CanGoBack" && property.Type == TypeSymbol.Boolean) || !navigationHostType.Methods.Any(method => method.Name == "Navigate" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Page" && method.ReturnType == TypeSymbol.Boolean) || !navigationHostType.Methods.Any(method => method.Name == "GoBack" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.NavigationHost with a minimal navigation history API.");
+}
+
+if (commandSurfaceType is null || !commandSurfaceType.Methods.Any(method => method.Name == "Execute" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) || !commandSurfaceType.Methods.Any(method => method.Name == "CanExecute" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.Command with Execute and CanExecute.");
+}
+
+if (observableObjectType is null || !observableObjectType.Properties.Any(property => property.Name == "ChangeVersion" && property.Type == TypeSymbol.Integer) || !observableObjectType.Properties.Any(property => property.Name == "HasChanges" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.ObservableObject with minimal change tracking.");
+}
+
+if (observableTextType is null || observableTextType.BaseType?.Name != "ObservableObject" || !observableTextType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String))
+{
+    failures.Add("Binder should surface System.Ui.ObservableText as a simple observable text model.");
+}
+
+if (textBindingType is null || !textBindingType.Properties.Any(property => property.Name == "IsDirty" && property.Type == TypeSymbol.Boolean) || !textBindingType.Methods.Any(method => method.Name == "Apply" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TextBlock") || !textBindingType.Methods.Any(method => method.Name == "ApplyToTextBox" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "TextBox"))
+{
+    failures.Add("Binder should surface System.Ui.TextBinding with the expected first binding operations.");
 }
 
 var runnableType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IRunnable");
@@ -876,7 +1080,7 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 14)
+else if (programType.Methods.Count != 15)
 {
     failures.Add(
         "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +

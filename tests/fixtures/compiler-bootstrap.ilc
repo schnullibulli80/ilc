@@ -17,7 +17,7 @@
 namespace Demo.App;
 
 // Loading shipped libraries to ensure they are included in the bootstrap process
-uses System, System.Diagnostics, System.Text, System.Text.Json, System.Net, System.Threading, System.Collections, Demo.Core;
+uses System, System.Diagnostics, System.Text, System.Text.Json, System.Net, System.Threading, System.Collections, System.Ui, Demo.Core;
 
 // Testing constant declaration
 const TopBonus: Integer = 2;
@@ -224,6 +224,15 @@ begin
   public static function ProjectDouble(value: Integer): Integer;
   begin
     return value * 2;
+  end;
+
+  public static function CreateUiListItem(value: String): View;
+  begin
+    var item := new TextBlock();
+    item.Name := value;
+    item.Text := value;
+    item.DataContext := value;
+    return item;
   end;
 
   public static procedure ReadOnly(in value: Integer);
@@ -1390,6 +1399,205 @@ begin
     wordLengths.Clear();
 
     Program.Trace('CHECKPOINT collections=', current);
+
+    Program.TraceText('SECTION ui');
+    var uiApp := new Application();
+    var uiWindow := new Window();
+    uiWindow.Title := 'Hello UI';
+    uiWindow.MinWidth := 320;
+    uiWindow.MinHeight := 200;
+    uiWindow.Resize(200, 150);
+    var uiLayout := new StackPanel();
+    uiLayout.Orientation := Orientation.Vertical;
+    var uiTitle := new TextBlock();
+    uiTitle.Name := 'title';
+    uiTitle.Text := 'Welcome';
+    uiTitle.Foreground := Color.Blue;
+    uiTitle.Margin := new Thickness(1, 2, 3, 4);
+    var uiInput := new TextBox();
+    uiInput.PlaceholderText := 'Type here';
+    uiInput.Text := 'Hello UI';
+    uiInput.Padding := new Thickness(2);
+    var uiState := new ObservableText('Bound UI');
+    var uiBinding := new TextBinding(uiState);
+    var uiBoundTitle := new TextBlock();
+    uiBinding.Apply(uiBoundTitle);
+    uiState.Text := 'Updated UI';
+    var uiBindingDirty := uiBinding.IsDirty;
+    uiBinding.Apply(uiBoundTitle);
+    uiLayout.DataContext := uiState;
+    var uiItems := new List<String>();
+    uiItems.Add('alpha');
+    uiItems.Add('beta');
+    uiItems.Add('gamma');
+    var uiItemsControl := new ItemsControl<String>();
+    uiItemsControl.EmptyText := 'No entries';
+    uiItemsControl.ItemsSource := uiItems;
+    uiItemsControl.ItemTemplate := Program.CreateUiListItem;
+    var uiItemsControlViews := uiItemsControl.BuildItems();
+    var uiItemsControlScore := uiItemsControl.ItemCount + uiItemsControlViews.Count;
+    if uiItemsControl.HasItemTemplate then
+    begin
+      uiItemsControlScore := uiItemsControlScore + 1;
+    end;
+    var uiList := new ListView<String>();
+    uiList.EmptyText := 'Nothing to show';
+    uiList.ItemsSource := uiItems;
+    uiList.ItemTemplate := Program.CreateUiListItem;
+    var uiSelected := uiList.SelectIndex(1);
+    var uiSelectionLength := 0;
+    if uiSelected and uiList.HasSelection then
+    begin
+      uiSelectionLength := uiList.SelectedItem.Length;
+    end;
+    var uiTemplateItems := uiList.BuildItems();
+    var uiTemplateScore := uiTemplateItems.Count;
+    if uiList.HasItemTemplate and uiTemplateItems.Count > 0 then
+    begin
+      uiTemplateScore := uiTemplateScore + uiTemplateItems[0].Name.Length;
+    end;
+    var uiDataContextScore := 0;
+    if uiTitle.HasDataContext = false then
+    begin
+      uiLayout.AddChild(uiTitle);
+    end;
+    if uiTitle.HasDataContext and uiTitle.DataContext = uiState then
+    begin
+      uiDataContextScore := uiDataContextScore + 2;
+    end;
+    if uiTemplateItems.Count > 0 and uiTemplateItems[0].HasDataContext and uiTemplateItems[0].DataContext <> nil then
+    begin
+      uiDataContextScore := uiDataContextScore + 2;
+    end;
+    var uiPage := new Page();
+    uiPage.Title := 'Home';
+    uiPage.Content := uiLayout;
+    var uiSettingsPage := new Page();
+    uiSettingsPage.Title := 'Settings';
+    uiSettingsPage.Content := uiTitle;
+    var uiNavigation := new NavigationHost();
+    var uiNavigated := uiNavigation.Navigate(uiPage);
+    var uiNavigatedSecond := uiNavigation.Navigate(uiSettingsPage);
+    var uiWentBack := uiNavigation.GoBack();
+    var uiNavigationScore := 0;
+    if uiNavigated and uiNavigatedSecond and uiWentBack and uiNavigation.HasPage then
+    begin
+      uiNavigationScore := uiNavigation.CurrentPage.Title.Length + uiWentBack + uiNavigation.CanGoBack;
+    end;
+    var uiCheckBox := new CheckBox();
+    uiCheckBox.Text := 'Remember choice';
+    var uiChecked := uiCheckBox.Toggle();
+    var uiToggleScore := 0;
+    if uiChecked and uiCheckBox.IsChecked then
+    begin
+      uiToggleScore := uiCheckBox.Text.Length;
+    end;
+    var uiSlider := new Slider();
+    uiSlider.SetRange(10, 30);
+    uiSlider.Value := 99;
+    var uiSliderScore := uiSlider.Value;
+    var uiGrid := new Grid();
+    uiGrid.SetDimensions(2, 3);
+    uiGrid.ShowGridLines := true;
+    var uiGridScore := uiGrid.CellCount + uiGrid.ShowGridLines;
+    var uiBorder := new Border();
+    uiBorder.Child := uiTitle;
+    uiBorder.BorderThickness := 2;
+    uiBorder.Background := Color.Gray;
+    uiBorder.Padding := new Thickness(3, 1);
+    var uiBorderScore := uiBorder.BorderThickness;
+    if uiBorder.HasChild then
+    begin
+      uiBorderScore := uiBorderScore + 1;
+    end;
+    var uiScrollViewer := new ScrollViewer();
+    uiScrollViewer.Content := uiGrid;
+    uiScrollViewer.ViewportWidth := 120;
+    uiScrollViewer.ViewportHeight := 80;
+    uiScrollViewer.ScrollTo(-5, 14);
+    var uiScrollScore := uiScrollViewer.HorizontalOffset + uiScrollViewer.VerticalOffset;
+    if uiScrollViewer.CanScroll then
+    begin
+      uiScrollScore := uiScrollScore + 1;
+    end;
+    var uiMenuProbe := new ThreadProbe();
+    var uiMenuBar := new MenuBar();
+    var uiFileMenu := new MenuItem();
+    uiFileMenu.Header := 'File';
+    var uiOpenMenuItem := new MenuItem();
+    uiOpenMenuItem.Header := 'Open';
+    uiOpenMenuItem.Command := new Command(uiMenuProbe);
+    uiFileMenu.AddItem(uiOpenMenuItem);
+    uiMenuBar.AddItem(uiFileMenu);
+    var uiMenuInvoked := uiOpenMenuItem.Invoke();
+    var uiMenuScore := uiMenuBar.ItemCount + uiFileMenu.ItemCount + uiMenuInvoked + uiMenuProbe.Value;
+    var uiButton := new Button();
+    uiButton.Text := 'Increment';
+    var uiProbe := new ThreadProbe();
+    var uiCommand := new Command(uiProbe);
+    uiButton.Command := uiCommand;
+    uiLayout.AddChild(uiInput);
+    uiLayout.AddChild(uiBoundTitle);
+    uiLayout.AddChild(uiList);
+    uiLayout.AddChild(uiCheckBox);
+    uiLayout.AddChild(uiSlider);
+    uiLayout.AddChild(uiGrid);
+    uiLayout.AddChild(uiBorder);
+    uiLayout.AddChild(uiScrollViewer);
+    uiLayout.AddChild(uiMenuBar);
+    uiLayout.AddChild(uiButton);
+    var uiDialog := new Dialog();
+    uiDialog.Title := 'Confirm';
+    uiDialog.Message := 'Apply changes?';
+    var uiDialogInitialResult := uiDialog.ShowDialog();
+    uiDialog.Accept();
+    var uiDialogScore := uiDialog.Message.Length + uiDialogInitialResult + uiDialog.Result + uiDialog.IsOpen;
+    var uiStyle := new Style();
+    uiStyle.Foreground := Color.Green;
+    uiStyle.Background := Color.Red;
+    uiStyle.Margin := new Thickness(1);
+    uiStyle.Padding := new Thickness(2, 1);
+    uiStyle.ApplyToTextBlock(uiTitle);
+    uiStyle.ApplyToBorder(uiBorder);
+    uiStyle.ApplyToTextBox(uiInput);
+    uiWindow.Background := Color.White;
+    uiStyle.ApplyToWindow(uiWindow);
+    uiWindow.Content := uiNavigation;
+    uiApp.AddWindow(uiWindow);
+    var shownWindows := uiApp.Run();
+    var buttonClicked := uiButton.Click();
+    var uiStructureScore := uiBorder.HasContent + uiScrollViewer.HasContent + uiPage.HasContent + uiLayout.ChildCount / 10;
+    var uiWindowSizeScore := uiWindow.Width / 100 + uiWindow.Height / 100;
+    var uiStyleScore := uiTitle.Foreground + uiBorder.Background + uiWindow.Background;
+    var uiSpacingScore := uiTitle.Margin.Horizontal + uiTitle.Margin.Vertical + uiInput.Padding.Horizontal + uiBorder.Padding.Vertical;
+    var uiStyleApplyScore := uiTitle.Foreground + uiBorder.Background + uiInput.Padding.Horizontal + uiWindow.Background;
+    Program.Trace('CHECKPOINT ui-run=', shownWindows);
+    Program.Trace('CHECKPOINT ui-click=', buttonClicked);
+    Program.Trace('CHECKPOINT ui-probe=', uiProbe.Value);
+    Program.Trace('CHECKPOINT ui-input=', uiInput.Text.Length);
+    Program.Trace('CHECKPOINT ui-binding-dirty=', uiBindingDirty);
+    Program.Trace('CHECKPOINT ui-binding=', uiBoundTitle.Text.Length);
+    Program.Trace('CHECKPOINT ui-data-context=', uiDataContextScore);
+    Program.Trace('CHECKPOINT ui-items-control=', uiItemsControlScore);
+    Program.Trace('CHECKPOINT ui-list=', uiList.ItemCount);
+    Program.Trace('CHECKPOINT ui-template=', uiTemplateScore);
+    Program.Trace('CHECKPOINT ui-selection=', uiSelectionLength);
+    Program.Trace('CHECKPOINT ui-navigation=', uiNavigationScore);
+    Program.Trace('CHECKPOINT ui-toggle=', uiToggleScore);
+    Program.Trace('CHECKPOINT ui-slider=', uiSliderScore);
+    Program.Trace('CHECKPOINT ui-grid=', uiGridScore);
+    Program.Trace('CHECKPOINT ui-border=', uiBorderScore);
+    Program.Trace('CHECKPOINT ui-scroll=', uiScrollScore);
+    Program.Trace('CHECKPOINT ui-menu=', uiMenuScore);
+    Program.Trace('CHECKPOINT ui-dialog=', uiDialogScore);
+    Program.Trace('CHECKPOINT ui-structure=', uiStructureScore);
+    Program.Trace('CHECKPOINT ui-style=', uiStyleScore);
+    Program.Trace('CHECKPOINT ui-spacing=', uiSpacingScore);
+    Program.Trace('CHECKPOINT ui-style-apply=', uiStyleApplyScore);
+    Program.Trace('CHECKPOINT ui-window-size=', uiWindowSizeScore);
+    Program.Trace('CHECKPOINT ui-children=', uiLayout.ChildCount);
+    current := current + shownWindows + buttonClicked + uiProbe.Value + uiInput.Text.Length + uiBindingDirty + uiBoundTitle.Text.Length + uiDataContextScore + uiItemsControlScore + uiList.ItemCount + uiTemplateScore + uiSelectionLength + uiNavigationScore + uiToggleScore + uiSliderScore + uiGridScore + uiBorderScore + uiScrollScore + uiMenuScore + uiDialogScore + uiStructureScore + uiStyleScore + uiSpacingScore + uiStyleApplyScore + uiWindowSizeScore + uiLayout.ChildCount + uiWindow.IsOpen;
+    Program.Trace('CHECKPOINT ui=', current);
 
     Program.TraceText('SECTION ffi');
     var nativeAtoi := Native.Atoi('123');

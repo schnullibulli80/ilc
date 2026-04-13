@@ -1,0 +1,2021 @@
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//                                                                   I L C   U I
+//
+// Author   : Patrik Graf
+// GitHub   : https://github.com/schnullibulli80
+// Comment  : This file contains the first shipped, backend-neutral UI object model for ILC. It is intentionally small and purely managed:
+//            application/window/view structure, a minimal command abstraction, and a few basic controls. Rendering and native hosting stay out
+//            of scope for this slice.
+//
+// Type     : ILC source code fixture
+// Date     : 2026-04-10
+// History  :
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+namespace System.Ui;
+
+uses System, System.Collections, System.Threading;
+
+public enum Orientation
+begin
+  Horizontal = 0;
+  Vertical = 1;
+end;
+
+public enum Visibility
+begin
+  Visible = 0;
+  Hidden = 1;
+  Collapsed = 2;
+end;
+
+public enum DialogResult
+begin
+  None = 0;
+  Accepted = 1;
+  Cancelled = 2;
+end;
+
+public enum Color
+begin
+  Transparent = 0;
+  Black = 1;
+  White = 2;
+  Gray = 3;
+  Blue = 4;
+  Green = 5;
+  Red = 6;
+end;
+
+public class Thickness
+begin
+  private var LeftValue: Integer;
+  private var TopValue: Integer;
+  private var RightValue: Integer;
+  private var BottomValue: Integer;
+
+  public property Left: Integer
+  begin
+    get
+    begin
+      return LeftValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        LeftValue := 0;
+      end
+      else
+      begin
+        LeftValue := value;
+      end;
+    end;
+  end;
+
+  public property Top: Integer
+  begin
+    get
+    begin
+      return TopValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        TopValue := 0;
+      end
+      else
+      begin
+        TopValue := value;
+      end;
+    end;
+  end;
+
+  public property Right: Integer
+  begin
+    get
+    begin
+      return RightValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        RightValue := 0;
+      end
+      else
+      begin
+        RightValue := value;
+      end;
+    end;
+  end;
+
+  public property Bottom: Integer
+  begin
+    get
+    begin
+      return BottomValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        BottomValue := 0;
+      end
+      else
+      begin
+        BottomValue := value;
+      end;
+    end;
+  end;
+
+  public property Horizontal: Integer
+  begin
+    get
+    begin
+      return LeftValue + RightValue;
+    end;
+  end;
+
+  public property Vertical: Integer
+  begin
+    get
+    begin
+      return TopValue + BottomValue;
+    end;
+  end;
+
+  public constructor;
+  begin
+    LeftValue := 0;
+    TopValue := 0;
+    RightValue := 0;
+    BottomValue := 0;
+  end;
+
+  public constructor(all: Integer);
+  begin
+    Left := all;
+    Top := all;
+    Right := all;
+    Bottom := all;
+  end;
+
+  public constructor(horizontal: Integer; vertical: Integer);
+  begin
+    Left := horizontal;
+    Right := horizontal;
+    Top := vertical;
+    Bottom := vertical;
+  end;
+
+  public constructor(left: Integer; top: Integer; right: Integer; bottom: Integer);
+  begin
+    Left := left;
+    Top := top;
+    Right := right;
+    Bottom := bottom;
+  end;
+end;
+
+public class Style
+begin
+  private var ForegroundValue: Color;
+  private var BackgroundValue: Color;
+  private var MarginValue: Thickness;
+  private var PaddingValue: Thickness;
+
+  public property Foreground: Color
+  begin
+    get
+    begin
+      return ForegroundValue;
+    end;
+
+    set(value)
+    begin
+      ForegroundValue := value;
+    end;
+  end;
+
+  public property Background: Color
+  begin
+    get
+    begin
+      return BackgroundValue;
+    end;
+
+    set(value)
+    begin
+      BackgroundValue := value;
+    end;
+  end;
+
+  public property Margin: Thickness
+  begin
+    get
+    begin
+      return MarginValue;
+    end;
+
+    set(value)
+    begin
+      if value = nil then
+      begin
+        MarginValue := new Thickness();
+        return;
+      end;
+
+      MarginValue := value;
+    end;
+  end;
+
+  public property Padding: Thickness
+  begin
+    get
+    begin
+      return PaddingValue;
+    end;
+
+    set(value)
+    begin
+      if value = nil then
+      begin
+        PaddingValue := new Thickness();
+        return;
+      end;
+
+      PaddingValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    ForegroundValue := Color.Black;
+    BackgroundValue := Color.Transparent;
+    MarginValue := new Thickness();
+    PaddingValue := new Thickness();
+  end;
+
+  public method ApplyToTextBlock(target: TextBlock);
+  begin
+    if target = nil then
+    begin
+      return;
+    end;
+
+    target.Foreground := ForegroundValue;
+    target.Margin := MarginValue;
+  end;
+
+  public method ApplyToTextBox(target: TextBox);
+  begin
+    if target = nil then
+    begin
+      return;
+    end;
+
+    target.Margin := MarginValue;
+    target.Padding := PaddingValue;
+  end;
+
+  public method ApplyToBorder(target: Border);
+  begin
+    if target = nil then
+    begin
+      return;
+    end;
+
+    target.Background := BackgroundValue;
+    target.Margin := MarginValue;
+    target.Padding := PaddingValue;
+  end;
+
+  public method ApplyToWindow(target: Window);
+  begin
+    if target = nil then
+    begin
+      return;
+    end;
+
+    target.Background := BackgroundValue;
+  end;
+end;
+
+public interface ICommand
+begin
+  public method Execute;
+  public function CanExecute: Boolean;
+end;
+
+public class ObservableObject
+begin
+  private var ChangeVersionValue: Integer;
+
+  protected method MarkChanged;
+  begin
+    ChangeVersionValue := ChangeVersionValue + 1;
+  end;
+
+  public property ChangeVersion: Integer
+  begin
+    get
+    begin
+      return ChangeVersionValue;
+    end;
+  end;
+
+  public property HasChanges: Boolean
+  begin
+    get
+    begin
+      return ChangeVersionValue > 0;
+    end;
+  end;
+
+  public constructor;
+  begin
+    ChangeVersionValue := 0;
+  end;
+
+  public method Touch;
+  begin
+    MarkChanged();
+  end;
+
+  public method AcceptChanges;
+  begin
+    ChangeVersionValue := 0;
+  end;
+end;
+
+public class ObservableText: ObservableObject
+begin
+  private var TextValue: String;
+
+  public property Text: String
+  begin
+    get
+    begin
+      return TextValue;
+    end;
+
+    set(value)
+    begin
+      if TextValue = value then
+      begin
+        return;
+      end;
+
+      TextValue := value;
+      MarkChanged();
+    end;
+  end;
+
+  public constructor(initialText: String);
+  begin
+    TextValue := '';
+    Text := initialText;
+    AcceptChanges();
+  end;
+end;
+
+public class Command: ICommand
+begin
+  private var ActionValue: IRunnable;
+  private var EnabledValue: Boolean;
+
+  public property IsEnabled: Boolean
+  begin
+    get
+    begin
+      return EnabledValue;
+    end;
+
+    set(value)
+    begin
+      EnabledValue := value;
+    end;
+  end;
+
+  public constructor(action: IRunnable);
+  begin
+    ActionValue := action;
+    EnabledValue := action <> nil;
+  end;
+
+  public method Execute;
+  begin
+    if CanExecute() = false then
+    begin
+      return;
+    end;
+
+    ActionValue.Run();
+  end;
+
+  public function CanExecute: Boolean;
+  begin
+    return EnabledValue and ActionValue <> nil;
+  end;
+end;
+
+public class View
+begin
+  private var NameValue: String;
+  private var VisibilityValue: Visibility;
+  private var MarginValue: Thickness;
+  private var DataContextValue: Object;
+
+  protected method InitializeView;
+  begin
+    NameValue := '';
+    VisibilityValue := Visibility.Visible;
+    MarginValue := new Thickness();
+    DataContextValue := nil;
+  end;
+
+  protected method InheritDataContextTo(target: View);
+  begin
+    if target = nil or target.HasDataContext or DataContextValue = nil then
+    begin
+      return;
+    end;
+
+    target.DataContext := DataContextValue;
+  end;
+
+  public property Name: String
+  begin
+    get
+    begin
+      return NameValue;
+    end;
+
+    set(value)
+    begin
+      NameValue := value;
+    end;
+  end;
+
+  public property Visibility: Visibility
+  begin
+    get
+    begin
+      return VisibilityValue;
+    end;
+
+    set(value)
+    begin
+      VisibilityValue := value;
+    end;
+  end;
+
+  public property IsVisible: Boolean
+  begin
+    get
+    begin
+      return VisibilityValue = Visibility.Visible;
+    end;
+  end;
+
+  public property Margin: Thickness
+  begin
+    get
+    begin
+      return MarginValue;
+    end;
+
+    set(value)
+    begin
+      if value = nil then
+      begin
+        MarginValue := new Thickness();
+        return;
+      end;
+
+      MarginValue := value;
+    end;
+  end;
+
+  public property DataContext: Object
+  begin
+    get
+    begin
+      return DataContextValue;
+    end;
+
+    set(value)
+    begin
+      DataContextValue := value;
+    end;
+  end;
+
+  public property HasDataContext: Boolean
+  begin
+    get
+    begin
+      return DataContextValue <> nil;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+  end;
+end;
+
+public class Container: View
+begin
+  private var ChildrenValue: List<View>;
+
+  protected method InitializeContainer;
+  begin
+    InitializeView();
+    ChildrenValue := new List<View>();
+  end;
+
+  public property Children: List<View>
+  begin
+    get
+    begin
+      return ChildrenValue;
+    end;
+  end;
+
+  public property ChildCount: Integer
+  begin
+    get
+    begin
+      return ChildrenValue.Count;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContainer();
+  end;
+
+  public method AddChild(view: View);
+  begin
+    if view = nil then
+    begin
+      raise new Exception('UI child must not be nil.');
+    end;
+
+    InheritDataContextTo(view);
+    ChildrenValue.Add(view);
+  end;
+end;
+
+public class Panel: Container
+begin
+  public constructor;
+  begin
+    InitializeContainer();
+  end;
+end;
+
+public class ContentControl: View
+begin
+  private var ContentValue: View;
+
+  protected method InitializeContentControl;
+  begin
+    InitializeView();
+    ContentValue := nil;
+  end;
+
+  protected function GetContentCore: View;
+  begin
+    return ContentValue;
+  end;
+
+  protected method SetContentCore(value: View);
+  begin
+    ContentValue := value;
+    InheritDataContextTo(ContentValue);
+  end;
+
+  public property Content: View
+  begin
+    get
+    begin
+      return ContentValue;
+    end;
+
+    set(value)
+    begin
+      SetContentCore(value);
+    end;
+  end;
+
+  public property HasContent: Boolean
+  begin
+    get
+    begin
+      return ContentValue <> nil;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContentControl();
+  end;
+end;
+
+public class TextBlock: View
+begin
+  private var TextValue: String;
+  private var ForegroundValue: Color;
+
+  public property Text: String
+  begin
+    get
+    begin
+      return TextValue;
+    end;
+
+    set(value)
+    begin
+      TextValue := value;
+    end;
+  end;
+
+  public property Foreground: Color
+  begin
+    get
+    begin
+      return ForegroundValue;
+    end;
+
+    set(value)
+    begin
+      ForegroundValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    TextValue := '';
+    ForegroundValue := Color.Black;
+  end;
+end;
+
+public class Button: View
+begin
+  private var TextValue: String;
+  private var CommandValue: ICommand;
+
+  public property Text: String
+  begin
+    get
+    begin
+      return TextValue;
+    end;
+
+    set(value)
+    begin
+      TextValue := value;
+    end;
+  end;
+
+  public property Command: ICommand
+  begin
+    get
+    begin
+      return CommandValue;
+    end;
+
+    set(value)
+    begin
+      CommandValue := value;
+    end;
+  end;
+
+  public property CanClick: Boolean
+  begin
+    get
+    begin
+      return CommandValue <> nil and CommandValue.CanExecute();
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    TextValue := '';
+    CommandValue := nil;
+  end;
+
+  public function Click: Boolean;
+  begin
+    if CanClick = false then
+    begin
+      return false;
+    end;
+
+    CommandValue.Execute();
+    return true;
+  end;
+end;
+
+public class CheckBox: View
+begin
+  private var TextValue: String;
+  private var IsCheckedValue: Boolean;
+
+  public property Text: String
+  begin
+    get
+    begin
+      return TextValue;
+    end;
+
+    set(value)
+    begin
+      TextValue := value;
+    end;
+  end;
+
+  public property IsChecked: Boolean
+  begin
+    get
+    begin
+      return IsCheckedValue;
+    end;
+
+    set(value)
+    begin
+      IsCheckedValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    TextValue := '';
+    IsCheckedValue := false;
+  end;
+
+  public function Toggle: Boolean;
+  begin
+    if IsCheckedValue then
+    begin
+      IsCheckedValue := false;
+      return false;
+    end;
+
+    IsCheckedValue := true;
+    return true;
+  end;
+end;
+
+public class Slider: View
+begin
+  private var MinimumValue: Integer;
+  private var MaximumValue: Integer;
+  private var ValueValue: Integer;
+
+  public property Minimum: Integer
+  begin
+    get
+    begin
+      return MinimumValue;
+    end;
+
+    set(value)
+    begin
+      MinimumValue := value;
+      if MaximumValue < MinimumValue then
+      begin
+        MaximumValue := MinimumValue;
+      end;
+
+      if ValueValue < MinimumValue then
+      begin
+        ValueValue := MinimumValue;
+      end;
+    end;
+  end;
+
+  public property Maximum: Integer
+  begin
+    get
+    begin
+      return MaximumValue;
+    end;
+
+    set(value)
+    begin
+      MaximumValue := value;
+      if MaximumValue < MinimumValue then
+      begin
+        MinimumValue := MaximumValue;
+      end;
+
+      if ValueValue > MaximumValue then
+      begin
+        ValueValue := MaximumValue;
+      end;
+    end;
+  end;
+
+  public property Value: Integer
+  begin
+    get
+    begin
+      return ValueValue;
+    end;
+
+    set(value)
+    begin
+      if value < MinimumValue then
+      begin
+        ValueValue := MinimumValue;
+        return;
+      end;
+
+      if value > MaximumValue then
+      begin
+        ValueValue := MaximumValue;
+        return;
+      end;
+
+      ValueValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    MinimumValue := 0;
+    MaximumValue := 100;
+    ValueValue := 0;
+  end;
+
+  public method SetRange(minimum: Integer; maximum: Integer);
+  begin
+    MinimumValue := minimum;
+    MaximumValue := maximum;
+
+    if MaximumValue < MinimumValue then
+    begin
+      MaximumValue := MinimumValue;
+    end;
+
+    if ValueValue < MinimumValue then
+    begin
+      ValueValue := MinimumValue;
+      return;
+    end;
+
+    if ValueValue > MaximumValue then
+    begin
+      ValueValue := MaximumValue;
+    end;
+  end;
+end;
+
+public class TextBox: View
+begin
+  private var TextValue: String;
+  private var PlaceholderTextValue: String;
+  private var IsReadOnlyValue: Boolean;
+  private var PaddingValue: Thickness;
+
+  public property Text: String
+  begin
+    get
+    begin
+      return TextValue;
+    end;
+
+    set(value)
+    begin
+      if IsReadOnlyValue then
+      begin
+        return;
+      end;
+
+      TextValue := value;
+    end;
+  end;
+
+  public property PlaceholderText: String
+  begin
+    get
+    begin
+      return PlaceholderTextValue;
+    end;
+
+    set(value)
+    begin
+      PlaceholderTextValue := value;
+    end;
+  end;
+
+  public property IsReadOnly: Boolean
+  begin
+    get
+    begin
+      return IsReadOnlyValue;
+    end;
+
+    set(value)
+    begin
+      IsReadOnlyValue := value;
+    end;
+  end;
+
+  public property DisplayText: String
+  begin
+    get
+    begin
+      if TextValue.Length > 0 then
+      begin
+        return TextValue;
+      end;
+
+      return PlaceholderTextValue;
+    end;
+  end;
+
+  public property Padding: Thickness
+  begin
+    get
+    begin
+      return PaddingValue;
+    end;
+
+    set(value)
+    begin
+      if value = nil then
+      begin
+        PaddingValue := new Thickness();
+        return;
+      end;
+
+      PaddingValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    TextValue := '';
+    PlaceholderTextValue := '';
+    IsReadOnlyValue := false;
+    PaddingValue := new Thickness();
+  end;
+
+  public method Clear;
+  begin
+    if IsReadOnlyValue then
+    begin
+      return;
+    end;
+
+    TextValue := '';
+  end;
+end;
+
+public class TextBinding
+begin
+  private var SourceValue: ObservableText;
+  private var LastAppliedVersionValue: Integer;
+
+  public property IsDirty: Boolean
+  begin
+    get
+    begin
+      if SourceValue = nil then
+      begin
+        return false;
+      end;
+
+      return SourceValue.ChangeVersion <> LastAppliedVersionValue;
+    end;
+  end;
+
+  public constructor(source: ObservableText);
+  begin
+    SourceValue := source;
+    LastAppliedVersionValue := -1;
+  end;
+
+  public method Apply(target: TextBlock);
+  begin
+    if SourceValue = nil or target = nil then
+    begin
+      return;
+    end;
+
+    target.Text := SourceValue.Text;
+    LastAppliedVersionValue := SourceValue.ChangeVersion;
+  end;
+
+  public method ApplyToTextBox(target: TextBox);
+  begin
+    if SourceValue = nil or target = nil then
+    begin
+      return;
+    end;
+
+    target.Text := SourceValue.Text;
+    LastAppliedVersionValue := SourceValue.ChangeVersion;
+  end;
+end;
+
+public class ItemsControl<T>: View
+begin
+  private var ItemsSourceValue: IEnumerable<T>;
+  private var EmptyTextValue: String;
+  private var ItemTemplateValue: Selector<T, View>;
+
+  protected method InitializeItemsControl;
+  begin
+    InitializeView();
+    ItemsSourceValue := nil;
+    EmptyTextValue := '';
+    ItemTemplateValue := nil;
+  end;
+
+  protected function GetItemsSourceCore: IEnumerable<T>;
+  begin
+    return ItemsSourceValue;
+  end;
+
+  public property ItemsSource: IEnumerable<T>
+  begin
+    get
+    begin
+      return ItemsSourceValue;
+    end;
+
+    set(value)
+    begin
+      ItemsSourceValue := value;
+    end;
+  end;
+
+  public property EmptyText: String
+  begin
+    get
+    begin
+      return EmptyTextValue;
+    end;
+
+    set(value)
+    begin
+      EmptyTextValue := value;
+    end;
+  end;
+
+  public property ItemTemplate: Selector<T, View>
+  begin
+    get
+    begin
+      return ItemTemplateValue;
+    end;
+
+    set(value)
+    begin
+      ItemTemplateValue := value;
+    end;
+  end;
+
+  public property ItemCount: Integer
+  begin
+    get
+    begin
+      if ItemsSourceValue = nil then
+      begin
+        return 0;
+      end;
+
+      var enumerator := ItemsSourceValue.GetEnumerator();
+      var count := 0;
+      while enumerator.MoveNext() do
+      begin
+        count := count + 1;
+      end;
+
+      return count;
+    end;
+  end;
+
+  public property HasItems: Boolean
+  begin
+    get
+    begin
+      return ItemCount > 0;
+    end;
+  end;
+
+  public property HasItemTemplate: Boolean
+  begin
+    get
+    begin
+      return ItemTemplateValue <> nil;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeItemsControl();
+  end;
+
+  public function BuildItems: List<View>;
+  begin
+    var builtItems := new List<View>();
+    var itemsSource := GetItemsSourceCore();
+    if itemsSource = nil or ItemTemplateValue = nil then
+    begin
+      return builtItems;
+    end;
+
+    var enumerator := itemsSource.GetEnumerator();
+    while enumerator.MoveNext() do
+    begin
+      var itemView := ItemTemplateValue(enumerator.Current);
+      if itemView <> nil then
+      begin
+        builtItems.Add(itemView);
+      end;
+    end;
+
+    return builtItems;
+  end;
+end;
+
+public class ListView<T>: ItemsControl<T>
+begin
+  private var SelectedIndexValue: Integer;
+
+  public property SelectedIndex: Integer
+  begin
+    get
+    begin
+      return SelectedIndexValue;
+    end;
+  end;
+
+  public property HasSelection: Boolean
+  begin
+    get
+    begin
+      return SelectedIndexValue >= 0 and SelectedIndexValue < ItemCount;
+    end;
+  end;
+
+  public property SelectedItem: T
+  begin
+    get
+    begin
+      if HasSelection = false then
+      begin
+        return nil;
+      end;
+
+      var itemsSource := GetItemsSourceCore();
+      if itemsSource = nil then
+      begin
+        return nil;
+      end;
+
+      var enumerator := itemsSource.GetEnumerator();
+      var index := 0;
+      while enumerator.MoveNext() do
+      begin
+        if index = SelectedIndexValue then
+        begin
+          return enumerator.Current;
+        end;
+
+        index := index + 1;
+      end;
+
+      return nil;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeItemsControl();
+    SelectedIndexValue := -1;
+  end;
+
+  public function SelectIndex(index: Integer): Boolean;
+  begin
+    if index < 0 or index >= ItemCount then
+    begin
+      SelectedIndexValue := -1;
+      return false;
+    end;
+
+    SelectedIndexValue := index;
+    return true;
+  end;
+
+  public method ClearSelection;
+  begin
+    SelectedIndexValue := -1;
+  end;
+end;
+
+public class Grid: Panel
+begin
+  private var RowsValue: Integer;
+  private var ColumnsValue: Integer;
+  private var ShowGridLinesValue: Boolean;
+
+  public property Rows: Integer
+  begin
+    get
+    begin
+      return RowsValue;
+    end;
+  end;
+
+  public property Columns: Integer
+  begin
+    get
+    begin
+      return ColumnsValue;
+    end;
+  end;
+
+  public property CellCount: Integer
+  begin
+    get
+    begin
+      return RowsValue * ColumnsValue;
+    end;
+  end;
+
+  public property ShowGridLines: Boolean
+  begin
+    get
+    begin
+      return ShowGridLinesValue;
+    end;
+
+    set(value)
+    begin
+      ShowGridLinesValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContainer();
+    RowsValue := 1;
+    ColumnsValue := 1;
+    ShowGridLinesValue := false;
+  end;
+
+  public method SetDimensions(rows: Integer; columns: Integer);
+  begin
+    if rows <= 0 then
+    begin
+      RowsValue := 1;
+    end
+    else
+    begin
+      RowsValue := rows;
+    end;
+
+    if columns <= 0 then
+    begin
+      ColumnsValue := 1;
+    end
+    else
+    begin
+      ColumnsValue := columns;
+    end;
+  end;
+end;
+
+public class Border: ContentControl
+begin
+  private var BorderThicknessValue: Integer;
+  private var BackgroundValue: Color;
+  private var PaddingValue: Thickness;
+
+  public property Child: View
+  begin
+    get
+    begin
+      return GetContentCore();
+    end;
+
+    set(value)
+    begin
+      SetContentCore(value);
+    end;
+  end;
+
+  public property BorderThickness: Integer
+  begin
+    get
+    begin
+      return BorderThicknessValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        BorderThicknessValue := 0;
+      end
+      else
+      begin
+        BorderThicknessValue := value;
+      end;
+    end;
+  end;
+
+  public property HasChild: Boolean
+  begin
+    get
+    begin
+      return HasContent;
+    end;
+  end;
+
+  public property Background: Color
+  begin
+    get
+    begin
+      return BackgroundValue;
+    end;
+
+    set(value)
+    begin
+      BackgroundValue := value;
+    end;
+  end;
+
+  public property Padding: Thickness
+  begin
+    get
+    begin
+      return PaddingValue;
+    end;
+
+    set(value)
+    begin
+      if value = nil then
+      begin
+        PaddingValue := new Thickness();
+        return;
+      end;
+
+      PaddingValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContentControl();
+    BorderThicknessValue := 0;
+    BackgroundValue := Color.Transparent;
+    PaddingValue := new Thickness();
+  end;
+end;
+
+public class ScrollViewer: ContentControl
+begin
+  private var HorizontalOffsetValue: Integer;
+  private var VerticalOffsetValue: Integer;
+  private var ViewportWidthValue: Integer;
+  private var ViewportHeightValue: Integer;
+
+  public property HorizontalOffset: Integer
+  begin
+    get
+    begin
+      return HorizontalOffsetValue;
+    end;
+  end;
+
+  public property VerticalOffset: Integer
+  begin
+    get
+    begin
+      return VerticalOffsetValue;
+    end;
+  end;
+
+  public property ViewportWidth: Integer
+  begin
+    get
+    begin
+      return ViewportWidthValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        ViewportWidthValue := 0;
+      end
+      else
+      begin
+        ViewportWidthValue := value;
+      end;
+    end;
+  end;
+
+  public property ViewportHeight: Integer
+  begin
+    get
+    begin
+      return ViewportHeightValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        ViewportHeightValue := 0;
+      end
+      else
+      begin
+        ViewportHeightValue := value;
+      end;
+    end;
+  end;
+
+  public property CanScroll: Boolean
+  begin
+    get
+    begin
+      return HasContent and (ViewportWidthValue > 0 or ViewportHeightValue > 0);
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContentControl();
+    HorizontalOffsetValue := 0;
+    VerticalOffsetValue := 0;
+    ViewportWidthValue := 0;
+    ViewportHeightValue := 0;
+  end;
+
+  public method ScrollTo(horizontalOffset: Integer; verticalOffset: Integer);
+  begin
+    if horizontalOffset < 0 then
+    begin
+      HorizontalOffsetValue := 0;
+    end
+    else
+    begin
+      HorizontalOffsetValue := horizontalOffset;
+    end;
+
+    if verticalOffset < 0 then
+    begin
+      VerticalOffsetValue := 0;
+    end
+    else
+    begin
+      VerticalOffsetValue := verticalOffset;
+    end;
+  end;
+end;
+
+public class MenuItem: View
+begin
+  private var HeaderValue: String;
+  private var CommandValue: ICommand;
+  private var ItemsValue: List<MenuItem>;
+
+  public property Header: String
+  begin
+    get
+    begin
+      return HeaderValue;
+    end;
+
+    set(value)
+    begin
+      HeaderValue := value;
+    end;
+  end;
+
+  public property Command: ICommand
+  begin
+    get
+    begin
+      return CommandValue;
+    end;
+
+    set(value)
+    begin
+      CommandValue := value;
+    end;
+  end;
+
+  public property Items: List<MenuItem>
+  begin
+    get
+    begin
+      return ItemsValue;
+    end;
+  end;
+
+  public property ItemCount: Integer
+  begin
+    get
+    begin
+      return ItemsValue.Count;
+    end;
+  end;
+
+  public property CanExecute: Boolean
+  begin
+    get
+    begin
+      return CommandValue <> nil and CommandValue.CanExecute();
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    HeaderValue := '';
+    CommandValue := nil;
+    ItemsValue := new List<MenuItem>();
+  end;
+
+  public method AddItem(item: MenuItem);
+  begin
+    if item = nil then
+    begin
+      raise new Exception('Menu item must not be nil.');
+    end;
+
+    ItemsValue.Add(item);
+  end;
+
+  public function Invoke: Boolean;
+  begin
+    if CanExecute = false then
+    begin
+      return false;
+    end;
+
+    CommandValue.Execute();
+    return true;
+  end;
+end;
+
+public class MenuBar: View
+begin
+  private var ItemsValue: List<MenuItem>;
+
+  public property Items: List<MenuItem>
+  begin
+    get
+    begin
+      return ItemsValue;
+    end;
+  end;
+
+  public property ItemCount: Integer
+  begin
+    get
+    begin
+      return ItemsValue.Count;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    ItemsValue := new List<MenuItem>();
+  end;
+
+  public method AddItem(item: MenuItem);
+  begin
+    if item = nil then
+    begin
+      raise new Exception('Menu item must not be nil.');
+    end;
+
+    ItemsValue.Add(item);
+  end;
+end;
+
+public class StackPanel: Panel
+begin
+  private var OrientationValue: Orientation;
+
+  public property Orientation: Orientation
+  begin
+    get
+    begin
+      return OrientationValue;
+    end;
+
+    set(value)
+    begin
+      OrientationValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContainer();
+    OrientationValue := Orientation.Vertical;
+  end;
+end;
+
+public class Page: ContentControl
+begin
+  private var TitleValue: String;
+
+  public property Title: String
+  begin
+    get
+    begin
+      return TitleValue;
+    end;
+
+    set(value)
+    begin
+      TitleValue := value;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeContentControl();
+    TitleValue := '';
+  end;
+end;
+
+public class NavigationHost: View
+begin
+  private var CurrentPageValue: Page;
+  private var BackHistoryValue: List<Page>;
+  private var BackHistoryCountValue: Integer;
+
+  public property CurrentPage: Page
+  begin
+    get
+    begin
+      return CurrentPageValue;
+    end;
+
+    set(value)
+    begin
+      CurrentPageValue := value;
+    end;
+  end;
+
+  public property HasPage: Boolean
+  begin
+    get
+    begin
+      return CurrentPageValue <> nil;
+    end;
+  end;
+
+  public property CanGoBack: Boolean
+  begin
+    get
+    begin
+      return BackHistoryCountValue > 0;
+    end;
+  end;
+
+  public constructor;
+  begin
+    InitializeView();
+    CurrentPageValue := nil;
+    BackHistoryValue := new List<Page>();
+    BackHistoryCountValue := 0;
+  end;
+
+  public function Navigate(page: Page): Boolean;
+  begin
+    if page = nil then
+    begin
+      return false;
+    end;
+
+    if CurrentPageValue <> nil then
+    begin
+      if BackHistoryCountValue < BackHistoryValue.Count then
+      begin
+        BackHistoryValue[BackHistoryCountValue] := CurrentPageValue;
+      end
+      else
+      begin
+        BackHistoryValue.Add(CurrentPageValue);
+      end;
+
+      BackHistoryCountValue := BackHistoryCountValue + 1;
+    end;
+
+    CurrentPageValue := page;
+    InheritDataContextTo(CurrentPageValue);
+    return true;
+  end;
+
+  public function GoBack: Boolean;
+  begin
+    if CanGoBack = false then
+    begin
+      return false;
+    end;
+
+    BackHistoryCountValue := BackHistoryCountValue - 1;
+    CurrentPageValue := BackHistoryValue[BackHistoryCountValue];
+    return true;
+  end;
+end;
+
+public class Window
+begin
+  private var TitleValue: String;
+  private var ContentValue: View;
+  private var IsOpenValue: Boolean;
+  private var WidthValue: Integer;
+  private var HeightValue: Integer;
+  private var MinWidthValue: Integer;
+  private var MinHeightValue: Integer;
+  private var BackgroundValue: Color;
+
+  public property Title: String
+  begin
+    get
+    begin
+      return TitleValue;
+    end;
+
+    set(value)
+    begin
+      TitleValue := value;
+    end;
+  end;
+
+  public property Content: View
+  begin
+    get
+    begin
+      return ContentValue;
+    end;
+
+    set(value)
+    begin
+      ContentValue := value;
+    end;
+  end;
+
+  public property IsOpen: Boolean
+  begin
+    get
+    begin
+      return IsOpenValue;
+    end;
+  end;
+
+  public property Width: Integer
+  begin
+    get
+    begin
+      return WidthValue;
+    end;
+  end;
+
+  public property Height: Integer
+  begin
+    get
+    begin
+      return HeightValue;
+    end;
+  end;
+
+  public property Background: Color
+  begin
+    get
+    begin
+      return BackgroundValue;
+    end;
+
+    set(value)
+    begin
+      BackgroundValue := value;
+    end;
+  end;
+
+  public property MinWidth: Integer
+  begin
+    get
+    begin
+      return MinWidthValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        MinWidthValue := 0;
+      end
+      else
+      begin
+        MinWidthValue := value;
+      end;
+
+      if WidthValue < MinWidthValue then
+      begin
+        WidthValue := MinWidthValue;
+      end;
+    end;
+  end;
+
+  public property MinHeight: Integer
+  begin
+    get
+    begin
+      return MinHeightValue;
+    end;
+
+    set(value)
+    begin
+      if value < 0 then
+      begin
+        MinHeightValue := 0;
+      end
+      else
+      begin
+        MinHeightValue := value;
+      end;
+
+      if HeightValue < MinHeightValue then
+      begin
+        HeightValue := MinHeightValue;
+      end;
+    end;
+  end;
+
+  public constructor;
+  begin
+    TitleValue := '';
+    ContentValue := nil;
+    IsOpenValue := false;
+    WidthValue := 640;
+    HeightValue := 480;
+    MinWidthValue := 0;
+    MinHeightValue := 0;
+    BackgroundValue := Color.White;
+  end;
+
+  public method Show;
+  begin
+    IsOpenValue := true;
+  end;
+
+  public method Close;
+  begin
+    IsOpenValue := false;
+  end;
+
+  public method Resize(width: Integer; height: Integer);
+  begin
+    if width < MinWidthValue then
+    begin
+      WidthValue := MinWidthValue;
+    end
+    else
+    begin
+      WidthValue := width;
+    end;
+
+    if height < MinHeightValue then
+    begin
+      HeightValue := MinHeightValue;
+    end
+    else
+    begin
+      HeightValue := height;
+    end;
+  end;
+end;
+
+public class Dialog: Window
+begin
+  private var MessageValue: String;
+  private var ResultValue: DialogResult;
+  private var IsModalValue: Boolean;
+
+  public property Message: String
+  begin
+    get
+    begin
+      return MessageValue;
+    end;
+
+    set(value)
+    begin
+      MessageValue := value;
+    end;
+  end;
+
+  public property Result: DialogResult
+  begin
+    get
+    begin
+      return ResultValue;
+    end;
+  end;
+
+  public property IsModal: Boolean
+  begin
+    get
+    begin
+      return IsModalValue;
+    end;
+  end;
+
+  public constructor;
+  begin
+    MessageValue := '';
+    ResultValue := DialogResult.None;
+    IsModalValue := false;
+  end;
+
+  public function ShowDialog: DialogResult;
+  begin
+    Show();
+    IsModalValue := true;
+    ResultValue := DialogResult.None;
+    return ResultValue;
+  end;
+
+  public method Accept;
+  begin
+    ResultValue := DialogResult.Accepted;
+    IsModalValue := false;
+    Close();
+  end;
+
+  public method Cancel;
+  begin
+    ResultValue := DialogResult.Cancelled;
+    IsModalValue := false;
+    Close();
+  end;
+end;
+
+public class Application
+begin
+  private var WindowsValue: List<Window>;
+
+  public property Windows: List<Window>
+  begin
+    get
+    begin
+      return WindowsValue;
+    end;
+  end;
+
+  public constructor;
+  begin
+    WindowsValue := new List<Window>();
+  end;
+
+  public method AddWindow(window: Window);
+  begin
+    if window = nil then
+    begin
+      raise new Exception('UI window must not be nil.');
+    end;
+
+    WindowsValue.Add(window);
+  end;
+
+  public function Run: Integer;
+  begin
+    var shown := 0;
+    var index := 0;
+    while index < WindowsValue.Count do
+    begin
+      WindowsValue[index].Show();
+      shown := shown + 1;
+      index := index + 1;
+    end;
+
+    return shown;
+  end;
+end;
