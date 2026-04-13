@@ -1570,8 +1570,20 @@ begin
     var hostedWindows := uiBackend.Run(uiApp);
     var uiHostingScore := hostedWindows + uiBackend.LastRootDescription.Length;
     var uiQtQuickBackend := new QtQuickBackend();
+    var qtQuickPrepared := uiQtQuickBackend.PrepareNativeBridge();
     var qtQuickHostedWindows := uiQtQuickBackend.Run(uiApp);
-    var uiQtQuickScore := qtQuickHostedWindows + uiQtQuickBackend.IsAvailable + uiQtQuickBackend.LastHostedRootDescription.Length;
+    var uiQtQuickNativeHost := uiQtQuickBackend.CreateWindowHost(uiWindow) as QtQuickNativeWindowHost;
+    var uiQtQuickScore := qtQuickHostedWindows +
+      uiQtQuickBackend.IsAvailable +
+      uiQtQuickBackend.LastHostedRootDescription.Length +
+      qtQuickPrepared +
+      uiQtQuickBackend.NativeBridgeEnabled +
+      uiQtQuickBackend.BridgeLibraryName.Length / 17 +
+      uiQtQuickBackend.LastBridgeStatus.Length / 27;
+    if uiQtQuickNativeHost <> nil and uiQtQuickNativeHost.HasNativeWindowHandle = false then
+    begin
+      uiQtQuickScore := uiQtQuickScore + 1;
+    end;
     var buttonClicked := uiButton.Click();
     var uiStructureScore := uiBorder.HasContent + uiScrollViewer.HasContent + uiPage.HasContent + uiLayout.ChildCount / 10;
     var uiWindowSizeScore := uiWindow.Width / 100 + uiWindow.Height / 100;

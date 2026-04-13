@@ -496,6 +496,9 @@ var viewHostType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDe
 var debugUiBackendType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "DebugUiBackend");
 var qtQuickBackendType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QtQuickBackend");
 var qtQuickRenderModeType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "QtQuickRenderMode");
+var qtQuickNativeType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QtQuickNative");
+var qtQuickNativeViewHostType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QtQuickNativeViewHost");
+var qtQuickNativeWindowHostType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "QtQuickNativeWindowHost");
 var dialogResultType = binding.Compilation.Types.FirstOrDefault(type => type.Name == "DialogResult");
 var textBlockType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "TextBlock");
 var viewType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "View");
@@ -698,6 +701,29 @@ if (qtQuickRenderModeType is null || qtQuickRenderModeType.IsReferenceType)
 if (qtQuickBackendType is null || !qtQuickBackendType.IsReferenceType || !qtQuickBackendType.Properties.Any(property => property.Name == "BackendName" && property.Type == TypeSymbol.String) || !qtQuickBackendType.Properties.Any(property => property.Name == "RenderMode" && property.Type.Name == "QtQuickRenderMode") || !qtQuickBackendType.Properties.Any(property => property.Name == "IsAvailable" && property.Type == TypeSymbol.Boolean) || !qtQuickBackendType.Properties.Any(property => property.Name == "LastHostedWindowTitle" && property.Type == TypeSymbol.String) || !qtQuickBackendType.Properties.Any(property => property.Name == "LastHostedRootDescription" && property.Type == TypeSymbol.String) || !qtQuickBackendType.Methods.Any(method => method.Name == "InitializeEngine" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean) || !qtQuickBackendType.Methods.Any(method => method.Name == "CreateWindowHost" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Window" && method.ReturnType.Name == "IWindowHost") || !qtQuickBackendType.Methods.Any(method => method.Name == "Run" && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "Application" && method.ReturnType == TypeSymbol.Integer))
 {
     failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickBackend as the first Qt hosting adapter.");
+}
+
+if (qtQuickNativeType is null || !qtQuickNativeType.IsReferenceType || !qtQuickNativeType.Methods.Any(method => method.Name == "CreateBackend" && method.IsStatic && method.Parameters.Count == 0 && method.ReturnType.Name == "NativeHandle") || !qtQuickNativeType.Methods.Any(method => method.Name == "CreateWindow" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.String && method.ReturnType.Name == "NativeHandle") || !qtQuickNativeType.Methods.Any(method => method.Name == "RunBackend" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "NativeHandle" && method.ReturnType == TypeSymbol.Integer))
+{
+    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickNative as the native DllImport shim contract.");
+}
+else
+{
+    var createBackendMethod = qtQuickNativeType.Methods.First(method => method.Name == "CreateBackend");
+    if (createBackendMethod.DllImport is null || createBackendMethod.DllImport.LibraryName != "libilc_qtbridge.so" || createBackendMethod.DllImport.EntryPoint != "ilc_qtquick_backend_create")
+    {
+        failures.Add("Binder should preserve the QtQuick native shim DllImport metadata.");
+    }
+}
+
+if (qtQuickNativeViewHostType is null || !qtQuickNativeViewHostType.IsReferenceType || !qtQuickNativeViewHostType.Properties.Any(property => property.Name == "NativeViewHandle" && property.Type.Name == "NativeHandle") || !qtQuickNativeViewHostType.Properties.Any(property => property.Name == "HasNativeViewHandle" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickNativeViewHost with native handle metadata.");
+}
+
+if (qtQuickNativeWindowHostType is null || !qtQuickNativeWindowHostType.IsReferenceType || !qtQuickNativeWindowHostType.Properties.Any(property => property.Name == "NativeWindowHandle" && property.Type.Name == "NativeHandle") || !qtQuickNativeWindowHostType.Properties.Any(property => property.Name == "HasNativeWindowHandle" && property.Type == TypeSymbol.Boolean))
+{
+    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickNativeWindowHost with native handle metadata.");
 }
 
 var runnableType = binding.Compilation.Types.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == "IRunnable");

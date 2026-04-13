@@ -2308,7 +2308,19 @@ public sealed class BytecodeEmitter
         var methodList = methods.ToArray();
         var fieldList = fields.ToArray();
         var loweredMethods = methodList
-            .Select(method => (Method: method, Ir: lowerer.Lower(method)))
+            .Select(method =>
+            {
+                try
+                {
+                    return (Method: method, Ir: lowerer.Lower(method));
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to lower method '{method.DeclaringTypeName ?? "<global>"}.{method.Name}' with {method.Parameters.Count} parameter(s). {ex.Message}",
+                        ex);
+                }
+            })
             .ToArray();
         var typeList = CollectReferencedTypesFromIr(loweredMethods, fieldList, types).ToArray();
         var functionEntries = methodList

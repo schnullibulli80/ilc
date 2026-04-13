@@ -21,12 +21,154 @@ begin
   NativeBridge = 1;
 end;
 
+public class QtQuickNative
+begin
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_create', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function CreateBackend(): NativeHandle;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_destroy', CallingConvention := CallingConvention.Cdecl)]
+  public static extern procedure DestroyBackend(handle: NativeHandle);
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_create', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function CreateWindow(backendHandle: NativeHandle; title: String): NativeHandle;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_show', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function ShowWindow(windowHandle: NativeHandle): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_destroy', CallingConvention := CallingConvention.Cdecl)]
+  public static extern procedure DestroyWindow(windowHandle: NativeHandle);
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_root_name', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetRootName(windowHandle: NativeHandle; rootName: String): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function RunBackend(backendHandle: NativeHandle): Integer;
+end;
+
+public class QtQuickNativeViewHost: IViewHost
+begin
+  private var ViewValue: View;
+  private var NativeViewHandleValue: NativeHandle;
+
+  public property View: View
+  begin
+    get
+    begin
+      return ViewValue;
+    end;
+  end;
+
+  public property NativeViewHandle: NativeHandle
+  begin
+    get
+    begin
+      return NativeViewHandleValue;
+    end;
+  end;
+
+  public property HasNativeViewHandle: Boolean
+  begin
+    get
+    begin
+      return NativeViewHandleValue <> NativeHandle.Null;
+    end;
+  end;
+
+  public constructor(view: View; nativeViewHandle: NativeHandle);
+  begin
+    ViewValue := view;
+    NativeViewHandleValue := nativeViewHandle;
+  end;
+
+  public function Describe: String;
+  begin
+    if ViewValue = nil then
+    begin
+      return 'nil';
+    end;
+
+    if ViewValue.Name <> '' then
+    begin
+      return ViewValue.Name;
+    end;
+
+    return 'view';
+  end;
+end;
+
+public class QtQuickNativeWindowHost: IWindowHost
+begin
+  private var WindowValue: Window;
+  private var RootViewHostValue: IViewHost;
+  private var NativeWindowHandleValue: NativeHandle;
+
+  public property Window: Window
+  begin
+    get
+    begin
+      return WindowValue;
+    end;
+  end;
+
+  public property RootViewHost: IViewHost
+  begin
+    get
+    begin
+      return RootViewHostValue;
+    end;
+  end;
+
+  public property NativeWindowHandle: NativeHandle
+  begin
+    get
+    begin
+      return NativeWindowHandleValue;
+    end;
+  end;
+
+  public property HasNativeWindowHandle: Boolean
+  begin
+    get
+    begin
+      return NativeWindowHandleValue <> NativeHandle.Null;
+    end;
+  end;
+
+  public constructor(window: Window; nativeWindowHandle: NativeHandle);
+  begin
+    WindowValue := window;
+    NativeWindowHandleValue := nativeWindowHandle;
+    if window = nil or window.Content = nil then
+    begin
+      RootViewHostValue := nil;
+    end
+    else
+    begin
+      var contentView := window.Content;
+      RootViewHostValue := new QtQuickNativeViewHost(contentView, NativeHandle.Null);
+    end;
+  end;
+
+  public function Show: Boolean;
+  begin
+    if WindowValue = nil then
+    begin
+      return false;
+    end;
+
+    return true;
+  end;
+end;
+
 public class QtQuickBackend: IUiBackend
 begin
   private var FallbackBackendValue: IUiBackend;
   private var EngineInitializedValue: Boolean;
+  private var NativeBridgeEnabledValue: Boolean;
+  private var NativeBackendHandleValue: NativeHandle;
   private var LastHostedWindowTitleValue: String;
   private var LastHostedRootDescriptionValue: String;
+  private var LastBridgeStatusValue: String;
 
   public property BackendName: String
   begin
@@ -40,6 +182,11 @@ begin
   begin
     get
     begin
+      if NativeBridgeEnabledValue then
+      begin
+        return QtQuickRenderMode.NativeBridge;
+      end;
+
       return QtQuickRenderMode.ManagedPreview;
     end;
   end;
@@ -68,17 +215,74 @@ begin
     end;
   end;
 
+  public property NativeBackendHandle: NativeHandle
+  begin
+    get
+    begin
+      return NativeBackendHandleValue;
+    end;
+  end;
+
+  public property HasNativeBackendHandle: Boolean
+  begin
+    get
+    begin
+      return NativeBackendHandleValue <> NativeHandle.Null;
+    end;
+  end;
+
+  public property NativeBridgeEnabled: Boolean
+  begin
+    get
+    begin
+      return NativeBridgeEnabledValue;
+    end;
+
+    set(value)
+    begin
+      NativeBridgeEnabledValue := value;
+    end;
+  end;
+
+  public property BridgeLibraryName: String
+  begin
+    get
+    begin
+      return 'libilc_qtbridge.so';
+    end;
+  end;
+
+  public property LastBridgeStatus: String
+  begin
+    get
+    begin
+      return LastBridgeStatusValue;
+    end;
+  end;
+
   public constructor;
   begin
     FallbackBackendValue := new DebugUiBackend();
     EngineInitializedValue := false;
+    NativeBridgeEnabledValue := false;
+    NativeBackendHandleValue := NativeHandle.Null;
     LastHostedWindowTitleValue := '';
     LastHostedRootDescriptionValue := '';
+    LastBridgeStatusValue := 'managed-fallback';
   end;
 
   public function InitializeEngine: Boolean;
   begin
     EngineInitializedValue := true;
+    if NativeBridgeEnabledValue then
+    begin
+      LastBridgeStatusValue := 'native-bridge-configured';
+    end
+    else
+    begin
+      LastBridgeStatusValue := 'managed-fallback';
+    end;
+
     return EngineInitializedValue;
   end;
 
@@ -90,14 +294,37 @@ begin
     end;
 
     LastHostedWindowTitleValue := window.Title;
+    if NativeBridgeEnabledValue then
+    begin
+      LastBridgeStatusValue := 'native-window-host-prepared';
+      return new QtQuickNativeWindowHost(window, NativeHandle.Null);
+    end;
+
     return FallbackBackendValue.CreateWindowHost(window);
+  end;
+
+  public function PrepareNativeBridge: Boolean;
+  begin
+    NativeBridgeEnabledValue := true;
+    NativeBackendHandleValue := NativeHandle.Null;
+    LastBridgeStatusValue := 'native-bridge-prepared';
+    return true;
   end;
 
   public function Run(application: Application): Integer;
   begin
-    InitializeEngine();
+    EngineInitializedValue := true;
     LastHostedWindowTitleValue := '';
     LastHostedRootDescriptionValue := '';
+
+    if NativeBridgeEnabledValue then
+    begin
+      LastBridgeStatusValue := 'native-bridge-pending-shim';
+    end
+    else
+    begin
+      LastBridgeStatusValue := 'managed-fallback';
+    end;
 
     var hosted := FallbackBackendValue.Run(application);
     var debugBackend := FallbackBackendValue as DebugUiBackend;
