@@ -13,7 +13,7 @@
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 namespace System.Ui.Backends.QtQuick;
 
-uses System, System.Ui, System.Ui.Hosting;
+uses System, System.Collections, System.Ui, System.Ui.Hosting;
 
 public enum QtQuickRenderMode
 begin
@@ -40,6 +40,9 @@ begin
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_root_name', CallingConvention := CallingConvention.Cdecl)]
   public static extern function SetRootName(windowHandle: NativeHandle; rootName: String): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_content_qml', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetContentQml(windowHandle: NativeHandle; qmlSource: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run', CallingConvention := CallingConvention.Cdecl)]
   public static extern function RunBackend(backendHandle: NativeHandle): Integer;
@@ -311,6 +314,211 @@ begin
     return true;
   end;
 
+  private function EscapeQmlString(value: String): String;
+  begin
+    if value = nil or value = '' then
+    begin
+      return '';
+    end;
+
+    var result := '';
+    var index := 0;
+    while index < value.Length do
+    begin
+      var current := value.Substring(index, 1);
+      if current = '"' then
+      begin
+        result := result + '\' + '"';
+      end
+      else if current = '\' then
+      begin
+        result := result + '\' + '\';
+      end
+      else if current = '
+' then
+      begin
+        result := result + '\' + 'n';
+      end
+      else if current = '' then
+      begin
+        result := result + '\' + 'r';
+      end
+      else
+      begin
+        result := result + current;
+      end;
+
+      index := index + 1;
+    end;
+
+    return result;
+  end;
+
+  private function ColorToQml(value: Color): String;
+  begin
+    if value = Color.Black then
+    begin
+      return '#111111';
+    end;
+
+    if value = Color.White then
+    begin
+      return '#f4f7fb';
+    end;
+
+    if value = Color.Gray then
+    begin
+      return '#8a94a6';
+    end;
+
+    if value = Color.Blue then
+    begin
+      return '#4c7cf0';
+    end;
+
+    if value = Color.Green then
+    begin
+      return '#38a169';
+    end;
+
+    if value = Color.Red then
+    begin
+      return '#e53e3e';
+    end;
+
+    return 'transparent';
+  end;
+
+  private function DescribeRootView(view: View): String;
+  begin
+    if view = nil then
+    begin
+      return 'ilcRoot';
+    end;
+
+    if view.Name <> '' then
+    begin
+      return view.Name;
+    end;
+
+    if view is StackPanel then
+    begin
+      return 'stackPanel';
+    end;
+
+    if view is TextBlock then
+    begin
+      return 'textBlock';
+    end;
+
+    return 'view';
+  end;
+
+  private function BuildViewQml(view: View; centerInParent: Boolean): String;
+  begin
+    if view = nil then
+    begin
+      return 'Item { width: 1; height: 1 }';
+    end;
+
+    if view is StackPanel then
+    begin
+      var panel := view as StackPanel;
+      var containerType := 'Column';
+      if panel.Orientation = Orientation.Horizontal then
+      begin
+        containerType := 'Row';
+      end;
+
+      var result := containerType + ' { spacing: 12; ';
+      if centerInParent then
+      begin
+        result := result + 'anchors.centerIn: parent; ';
+      end;
+
+      if panel.Name <> '' then
+      begin
+        result := result + 'objectName: "' + EscapeQmlString(panel.Name) + '"; ';
+      end;
+
+      var children := panel.Children;
+      if children <> nil then
+      begin
+        var index := 0;
+        while index < children.Count do
+        begin
+          result := result + BuildViewQml(children[index], false) + ' ';
+          index := index + 1;
+        end;
+      end;
+
+      result := result + '}';
+      return result;
+    end;
+
+    if view is TextBlock then
+    begin
+      var textBlock := view as TextBlock;
+      var textResult := 'Text { ';
+      if centerInParent then
+      begin
+        textResult := textResult + 'anchors.centerIn: parent; ';
+      end;
+
+      if textBlock.Name <> '' then
+      begin
+        textResult := textResult + 'objectName: "' + EscapeQmlString(textBlock.Name) + '"; ';
+      end;
+
+      textResult := textResult +
+        'text: "' + EscapeQmlString(textBlock.Text) + '"; ' +
+        'color: "' + ColorToQml(textBlock.Foreground) + '"; ' +
+        '}';
+      return textResult;
+    end;
+
+    var fallback := 'Rectangle { width: 180; height: 40; radius: 6; color: "#313844"; ';
+    if centerInParent then
+    begin
+      fallback := fallback + 'anchors.centerIn: parent; ';
+    end;
+
+    if view.Name <> '' then
+    begin
+      fallback := fallback + 'objectName: "' + EscapeQmlString(view.Name) + '"; ';
+    end;
+
+    fallback := fallback + 'Text { anchors.centerIn: parent; color: "#f4f7fb"; text: "' + EscapeQmlString(DescribeRootView(view)) + '" } }';
+    return fallback;
+  end;
+
+  private function BuildWindowContentQml(window: Window): String;
+  begin
+    var rootName := 'ilcRoot';
+    if window <> nil and window.Content <> nil then
+    begin
+      rootName := DescribeRootView(window.Content);
+    end;
+
+    var backgroundColor := '#20252b';
+    if window <> nil then
+    begin
+      backgroundColor := ColorToQml(window.Background);
+      if backgroundColor = 'transparent' then
+      begin
+        backgroundColor := '#20252b';
+      end;
+    end;
+
+    var contentQml := BuildViewQml(window.Content, true);
+    return
+      'import QtQuick' + '
+' +
+      'Rectangle { width: 960; height: 540; color: "' + backgroundColor + '"; objectName: "' + EscapeQmlString(rootName) + '"; ' +
+      contentQml +
+      ' }';
+  end;
+
   public function Run(application: Application): Integer;
   begin
     EngineInitializedValue := true;
@@ -319,7 +527,80 @@ begin
 
     if NativeBridgeEnabledValue then
     begin
-      LastBridgeStatusValue := 'native-bridge-pending-shim';
+      if NativeBackendHandleValue = NativeHandle.Null then
+      begin
+        NativeBackendHandleValue := QtQuickNative.CreateBackend();
+      end;
+
+      if NativeBackendHandleValue = NativeHandle.Null then
+      begin
+        LastBridgeStatusValue := 'native-backend-create-failed';
+        return 0;
+      end;
+
+      var nativeHosted := 0;
+      var nativeWindowHandles := new List<NativeHandle>();
+      if application <> nil and application.Windows <> nil then
+      begin
+        var windows := application.Windows;
+        var windowEnumerator := windows.GetEnumerator();
+        while windowEnumerator.MoveNext() do
+        begin
+          var currentWindow := windowEnumerator.Current;
+          if currentWindow <> nil then
+          begin
+            LastHostedWindowTitleValue := currentWindow.Title;
+            LastHostedRootDescriptionValue := DescribeRootView(currentWindow.Content);
+
+            var nativeWindowHandle := QtQuickNative.CreateWindow(NativeBackendHandleValue, currentWindow.Title);
+            if nativeWindowHandle = NativeHandle.Null then
+            begin
+              LastBridgeStatusValue := 'native-window-create-failed';
+            end
+            else
+            begin
+              nativeWindowHandles.Add(nativeWindowHandle);
+              var rootNameResult := QtQuickNative.SetRootName(nativeWindowHandle, LastHostedRootDescriptionValue);
+              var qmlResult := QtQuickNative.SetContentQml(nativeWindowHandle, BuildWindowContentQml(currentWindow));
+              var showResult := 0;
+              if rootNameResult <> 0 and qmlResult <> 0 then
+              begin
+                showResult := QtQuickNative.ShowWindow(nativeWindowHandle);
+              end
+              else
+              begin
+                LastBridgeStatusValue := 'native-window-qml-failed';
+              end;
+
+              if showResult <> 0 then
+              begin
+                nativeHosted := nativeHosted + 1;
+              end;
+            end;
+          end;
+        end;
+      end;
+
+      var runResult := QtQuickNative.RunBackend(NativeBackendHandleValue);
+      var destroyIndex := 0;
+      while destroyIndex < nativeWindowHandles.Count do
+      begin
+        QtQuickNative.DestroyWindow(nativeWindowHandles[destroyIndex]);
+        destroyIndex := destroyIndex + 1;
+      end;
+
+      QtQuickNative.DestroyBackend(NativeBackendHandleValue);
+      NativeBackendHandleValue := NativeHandle.Null;
+      if runResult <> 0 then
+      begin
+        LastBridgeStatusValue := 'native-bridge-rendered-qml';
+      end
+      else
+      begin
+        LastBridgeStatusValue := 'native-bridge-run-failed';
+      end;
+
+      return nativeHosted;
     end
     else
     begin

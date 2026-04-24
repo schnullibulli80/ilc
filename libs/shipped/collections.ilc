@@ -186,11 +186,22 @@ public delegate function GroupResultSelector<TSource, TCollection, TResult>(sour
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • CLASS • Grouping<TKey, TElement>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a collection of elements that share a common key.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Grouping<TKey, TElement>: IEnumerable<TElement>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The key shared by all elements in the grouping.</summary>
   private var KeyValue: TKey;
+  /// <summary>The elements in the grouping.</summary>
   private var ElementsValue: List<TElement>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the key shared by all elements in the grouping.</summary>
   public property Key: TKey
   begin
     get
@@ -199,17 +210,35 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the Grouping class.</summary>
+  /// <param name="key">The key shared by all elements in the grouping.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(key: TKey);
   begin
     KeyValue := key;
     ElementsValue := new List<TElement>();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Add
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds an element to the grouping.</summary>
+  /// <param name="value">The element to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Add(value: TElement);
   begin
     ElementsValue.Add(value);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the elements in the grouping.</summary>
+  /// <returns>An enumerator that can be used to iterate through the elements in the grouping.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<TElement>;
   begin
     return ElementsValue.GetEnumerator();
@@ -224,9 +253,18 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class WhereEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator of the source being filtered.</summary>
   private var SourceEnumerator: IEnumerator<T>;
+  /// <summary>The predicate used to filter the source.</summary>
   private var PredicateValue: Predicate<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current element in the iteration.</summary>
   public property Current: T
   begin
     get
@@ -235,12 +273,28 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="WhereEnumerator{T}"/> class.</summary>
+  /// <param name="sourceEnumerator">The enumerator of the source being filtered.</param>
+  /// <param name="predicate">The predicate used to filter the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; predicate: Predicate<T>);
   begin
     SourceEnumerator := sourceEnumerator;
     PredicateValue := predicate;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the filtered view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the filtered view; false if the enumerator has passed the end of
+  ///   the source.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     while SourceEnumerator.MoveNext() do
@@ -254,6 +308,11 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -268,15 +327,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class WhereEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source being filtered.</summary>
   private var SourceValue: IEnumerable<T>;
+  /// <summary>The predicate used to filter the source.</summary>
   private var PredicateValue: Predicate<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="WhereEnumerable{T}"/> class.</summary>
+  /// <param name="source">The enumerable source being filtered.</param>
+  /// <param name="predicate">The predicate used to filter the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>; predicate: Predicate<T>);
   begin
     SourceValue := source;
     PredicateValue := predicate;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the filtered view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the filtered view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new WhereEnumerator<T>(SourceValue.GetEnumerator(), PredicateValue);
@@ -291,9 +368,18 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class SelectEnumerator<TSource, TResult>: IEnumerator<TResult>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator of the source being projected.</summary>
   private var SourceEnumerator: IEnumerator<TSource>;
+  /// <summary>The selector used to project the source.</summary>
   private var SelectorValue: Selector<TSource, TResult>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: TResult
   begin
     get
@@ -302,17 +388,38 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="SelectEnumerator{TSource, TResult}"/> class.</summary>
+  /// <param name="sourceEnumerator">The enumerator of the source being projected.</param>
+  /// <param name="selector">The selector used to project the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<TSource>; selector: Selector<TSource, TResult>);
   begin
     SourceEnumerator := sourceEnumerator;
     SelectorValue := selector;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the projected view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the projected view; false if the enumerator has passed the end of
+  ///   the source.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     return SourceEnumerator.MoveNext();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -327,15 +434,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class SelectEnumerable<TSource, TResult>: IEnumerable<TResult>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source being projected.</summary>
   private var SourceValue: IEnumerable<TSource>;
+  /// <summary>The selector used to project the source.</summary>
   private var SelectorValue: Selector<TSource, TResult>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="SelectEnumerable{TSource, TResult}"/> class.</summary>
+  /// <param name="source">The enumerable source being projected.</param>
+  /// <param name="selector">The selector used to project the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<TSource>; selector: Selector<TSource, TResult>);
   begin
     SourceValue := source;
     SelectorValue := selector;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the projected view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the projected view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<TResult>;
   begin
     return new SelectEnumerator<TSource, TResult>(SourceValue.GetEnumerator(), SelectorValue);
@@ -350,9 +475,18 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TakeEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator of the source being taken from.</summary>
   private var SourceEnumerator: IEnumerator<T>;
+  /// <summary>The number of elements remaining to be taken from the source.</summary>
   private var RemainingCount: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -361,12 +495,28 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="TakeEnumerator{T}"/> class.</summary>
+  /// <param name="sourceEnumerator">The enumerator of the source being taken from.</param>
+  /// <param name="count">The number of elements to take from the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; count: Integer);
   begin
     SourceEnumerator := sourceEnumerator;
     RemainingCount := count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the taken view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the taken view; false if the enumerator has passed the end of
+  ///   the source or the specified number of elements has been taken.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     if RemainingCount <= 0 then
@@ -383,6 +533,11 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -397,15 +552,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TakeEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source being taken from.</summary>
   private var SourceValue: IEnumerable<T>;
+  /// <summary>The number of elements to take from the source.</summary>
   private var CountValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="TakeEnumerable{T}"/> class.</summary>
+  /// <param name="source">The enumerable source being taken from.</param>
+  /// <param name="count">The number of elements to take from the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>; count: Integer);
   begin
     SourceValue := source;
     CountValue := count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the taken view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the taken view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new TakeEnumerator<T>(SourceValue.GetEnumerator(), CountValue);
@@ -420,9 +593,18 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class SkipEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator of the source being skipped.</summary>
   private var SourceEnumerator: IEnumerator<T>;
+  /// <summary>The number of elements remaining to be skipped from the source.</summary>
   private var RemainingSkipCount: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -431,12 +613,28 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the SkipEnumerator class.</summary>
+  /// <param name="sourceEnumerator">The enumerator of the source being skipped.</param>
+  /// <param name="count">The number of elements to skip.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; count: Integer);
   begin
     SourceEnumerator := sourceEnumerator;
     RemainingSkipCount := count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the skipped view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the skipped view; false if the enumerator has passed the end of
+  ///   the source or the specified number of elements has been skipped.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     while RemainingSkipCount > 0 do
@@ -453,6 +651,11 @@ begin
     return SourceEnumerator.MoveNext();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -467,15 +670,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class SkipEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source being skipped.</summary>
   private var SourceValue: IEnumerable<T>;
+  /// <summary>The number of elements to skip from the source.</summary>
   private var CountValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the SkipEnumerable class.</summary>
+  /// <param name="source">The enumerable source being skipped.</param>
+  /// <param name="count">The number of elements to skip from the source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>; count: Integer);
   begin
     SourceValue := source;
     CountValue := count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the skipped view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the skipped view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new SkipEnumerator<T>(SourceValue.GetEnumerator(), CountValue);
@@ -490,10 +711,20 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ConcatEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator of the first source.</summary>
   private var FirstEnumerator: IEnumerator<T>;
+  /// <summary>The enumerator of the second source.</summary>
   private var SecondEnumerator: IEnumerator<T>;
+  /// <summary>Whether the first enumerator is currently being used to yield values.</summary>
   private var UsingFirst: Boolean;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -507,6 +738,13 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ConcatEnumerator{T}"/> class.</summary>
+  /// <param name="firstEnumerator">The enumerator of the first source.</param>
+  /// <param name="secondEnumerator">The enumerator of the second source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(firstEnumerator: IEnumerator<T>; secondEnumerator: IEnumerator<T>);
   begin
     FirstEnumerator := firstEnumerator;
@@ -514,6 +752,15 @@ begin
     UsingFirst := true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the concatenated view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the concatenated view; false if the enumerator has passed the 
+  ///   end of both sources.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     if UsingFirst then
@@ -529,6 +776,11 @@ begin
     return SecondEnumerator.MoveNext();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     FirstEnumerator.Reset();
@@ -545,15 +797,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ConcatEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The first enumerable source.</summary>
   private var FirstSourceValue: IEnumerable<T>;
+  /// <summary>The second enumerable source.</summary>
   private var SecondSourceValue: IEnumerable<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ConcatEnumerable{T}"/> class.</summary>
+  /// <param name="first">The first enumerable source.</param>
+  /// <param name="second">The second enumerable source.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(first: IEnumerable<T>; second: IEnumerable<T>);
   begin
     FirstSourceValue := first;
     SecondSourceValue := second;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the concatenated view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the concatenated view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new ConcatEnumerator<T>(FirstSourceValue.GetEnumerator(), SecondSourceValue.GetEnumerator());
@@ -568,9 +838,18 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class DistinctEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The underlying enumerator for the source.</summary>
   private var SourceEnumerator: IEnumerator<T>;
+  /// <summary>The list of values that have already been seen.</summary>
   private var SeenValues: List<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -579,12 +858,27 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="DistinctEnumerator{T}"/> class.</summary>
+  /// <param name="sourceEnumerator">The enumerator of the source to enumerate distinct values from.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>);
   begin
     SourceEnumerator := sourceEnumerator;
     SeenValues := new List<T>();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next distinct element in the source.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next distinct element in the source; false if the enumerator has passed the end of
+  ///   the source.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     while SourceEnumerator.MoveNext() do
@@ -599,6 +893,11 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -614,13 +913,29 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class DistinctEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source to enumerate distinct values from.</summary>
   private var SourceValue: IEnumerable<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="DistinctEnumerable{T}"/> class.</summary>
+  /// <param name="source">The enumerable source to enumerate distinct values from.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>);
   begin
     SourceValue := source;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the enumerator for the distinct values in the source.</summary>
+  /// <returns>The enumerator for the distinct values in the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new DistinctEnumerator<T>(SourceValue.GetEnumerator());
@@ -635,11 +950,22 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class AppendEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator for the source.</summary>
   private var SourceEnumerator: IEnumerator<T>;
+  /// <summary>The additional value to yield at the end.</summary>
   private var TailValue: T;
+  /// <summary>Indicates whether the tail value is available.</summary>
   private var TailAvailable: Boolean;
+  /// <summary>Indicates whether the tail value is currently being emitted.</summary>
   private var EmittingTail: Boolean;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -653,6 +979,13 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="AppendEnumerator{T}"/> class.</summary>
+  /// <param name="sourceEnumerator">The enumerator for the source.</param>
+  /// <param name="value">The additional value to yield at the end.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; value: T);
   begin
     SourceEnumerator := sourceEnumerator;
@@ -661,6 +994,15 @@ begin
     EmittingTail := false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the appended view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the appended view; false if the enumerator has passed the end of
+  ///   the source and the tail value has already been emitted.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     EmittingTail := false;
@@ -679,6 +1021,11 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -695,15 +1042,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class AppendEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source.</summary>
   private var SourceValue: IEnumerable<T>;
+  /// <summary>The additional value to yield at the end.</summary>
   private var TailValue: T;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="AppendEnumerable{T}"/> class.</summary>
+  /// <param name="source">The enumerable source.</param>
+  /// <param name="value">The additional value to yield at the end.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>; value: T);
   begin
     SourceValue := source;
     TailValue := value;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the appended view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the appended view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new AppendEnumerator<T>(SourceValue.GetEnumerator(), TailValue);
@@ -718,11 +1083,22 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class PrependEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerator for the source.</summary>
   private var SourceEnumerator: IEnumerator<T>;
+  /// <summary>The additional value to yield at the beginning.</summary>
   private var HeadValue: T;
+  /// <summary>Indicates whether the head value is available.</summary>
   private var HeadAvailable: Boolean;
+  /// <summary>Indicates whether the head value is currently being emitted.</summary>
   private var EmittingHead: Boolean;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -736,6 +1112,13 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="PrependEnumerator{T}"/> class.</summary>
+  /// <param name="sourceEnumerator">The enumerator for the source.</param>
+  /// <param name="value">The additional value to yield at the beginning.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; value: T);
   begin
     SourceEnumerator := sourceEnumerator;
@@ -744,6 +1127,15 @@ begin
     EmittingHead := false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the prepended view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the prepended view; false if the enumerator has passed the end of
+  ///   the source and the head value has already been emitted.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     if HeadAvailable then
@@ -757,6 +1149,11 @@ begin
     return SourceEnumerator.MoveNext();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     SourceEnumerator.Reset();
@@ -773,15 +1170,33 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class PrependEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source.</summary>
   private var SourceValue: IEnumerable<T>;
+  /// <summary>The additional value to yield at the beginning.</summary>
   private var HeadValue: T;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="PrependEnumerable{T}"/> class.</summary>
+  /// <param name="source">The enumerable source.</param>
+  /// <param name="value">The additional value to yield at the beginning.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>; value: T);
   begin
     SourceValue := source;
     HeadValue := value;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns an enumerator that iterates through the prepended view.</summary>
+  /// <returns>An enumerator that can be used to iterate through the prepended view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new PrependEnumerator<T>(SourceValue.GetEnumerator(), HeadValue);
@@ -796,10 +1211,20 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ReverseEnumerator<T>: IEnumerator<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The buffer to store the elements.</summary>
   private var Buffer: List<T>;
+  /// <summary>The current index in the buffer.</summary>
   private var Index: Integer;
+  /// <summary>The current value.</summary>
   private var CurrentValue: T;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -808,6 +1233,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ReverseEnumerator{T}"/> class.</summary>
+  /// <param name="source">The enumerable source to buffer and enumerate in reverse order.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>);
   begin
     Buffer := new List<T>();
@@ -819,6 +1250,15 @@ begin
     Index := Buffer.Count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MoveNext
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Advances the enumerator to the next element in the reversed view.</summary>
+  /// <returns>
+  ///   true if the enumerator was successfully advanced to the next element in the reversed view; false if the enumerator has passed the end of the
+  ///   reversed view.
+  /// </returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function MoveNext(): Boolean;
   begin
     if Index <= 0 then
@@ -831,6 +1271,11 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reset
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the enumerator to its initial position.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Reset;
   begin
     Index := Buffer.Count;
@@ -845,13 +1290,29 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ReverseEnumerable<T>: IEnumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The enumerable source to enumerate in reverse order.</summary>
   private var SourceValue: IEnumerable<T>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ReverseEnumerable{T}"/> class.</summary>
+  /// <param name="source">The enumerable source to enumerate in reverse order.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: IEnumerable<T>);
   begin
     SourceValue := source;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetEnumerator
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the enumerator for the values in the source in reverse order.</summary>
+  /// <returns>The enumerator for the values in the source in reverse order.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetEnumerator(): IEnumerator<T>;
   begin
     return new ReverseEnumerator<T>(SourceValue);
@@ -866,6 +1327,14 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Enumerable<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Where
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Filters a source based on a predicate.</summary>
+  /// <param name="source">The enumerable source to filter.</param>
+  /// <param name="predicate">The predicate to filter the source with.</param>
+  /// <returns>An enumerable that contains the elements from the source that satisfy the condition specified by the predicate.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Where(source: IEnumerable<T>; predicate: Predicate<T>): IEnumerable<T>;
   begin
     if source = nil then
@@ -881,6 +1350,14 @@ begin
     return new WhereEnumerable<T>(source, predicate);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Take
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Yields a specified number of contiguous elements from the start of a source.</summary>
+  /// <param name="source">The enumerable source to take elements from.</param>
+  /// <param name="count">The number of elements to take from the start of the source.</param>
+  /// <returns>An enumerable that contains the specified number of elements from the start of the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Take(source: IEnumerable<T>; count: Integer): IEnumerable<T>;
   begin
     if source = nil then
@@ -896,6 +1373,14 @@ begin
     return new TakeEnumerable<T>(source, count);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Skip
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Bypasses a specified number of contiguous elements from the start of a source and yields the remaining elements.</summary>
+  /// <param name="source">The enumerable source to skip elements from.</param>
+  /// <param name="count">The number of elements to skip from the start of the source.</param>
+  /// <returns>An enumerable that contains the elements from the source that occur after the specified number of elements is skipped.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Skip(source: IEnumerable<T>; count: Integer): IEnumerable<T>;
   begin
     if source = nil then
@@ -911,6 +1396,14 @@ begin
     return new SkipEnumerable<T>(source, count);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Concat
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Concatenates two sequences.</summary>
+  /// <param name="first">The first sequence to concatenate.</param>
+  /// <param name="second">The second sequence to concatenate.</param>
+  /// <returns>An enumerable that contains the concatenated elements of the two input sequences.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Concat(first: IEnumerable<T>; second: IEnumerable<T>): IEnumerable<T>;
   begin
     if first = nil then
@@ -926,6 +1419,13 @@ begin
     return new ConcatEnumerable<T>(first, second);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Distinct
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns distinct elements from a sequence.</summary>
+  /// <param name="source">The enumerable source to get distinct elements from.</param>
+  /// <returns>An enumerable that contains distinct elements from the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Distinct(source: IEnumerable<T>): IEnumerable<T>;
   begin
     if source = nil then
@@ -936,6 +1436,14 @@ begin
     return new DistinctEnumerable<T>(source);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Append
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Appends a value to the end of a sequence.</summary>
+  /// <param name="source">The enumerable source to append the value to.</param>
+  /// <param name="value">The value to append to the sequence.</param>
+  /// <returns>An enumerable that contains the elements of the source followed by the appended value.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Append(source: IEnumerable<T>; value: T): IEnumerable<T>;
   begin
     if source = nil then
@@ -946,6 +1454,14 @@ begin
     return new AppendEnumerable<T>(source, value);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Prepend
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Prepends a value to the start of a sequence.</summary>
+  /// <param name="source">The enumerable source to prepend the value to.</param>
+  /// <param name="value">The value to prepend to the sequence.</param>
+  /// <returns>An enumerable that contains the prepended value followed by the elements of the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Prepend(source: IEnumerable<T>; value: T): IEnumerable<T>;
   begin
     if source = nil then
@@ -956,6 +1472,13 @@ begin
     return new PrependEnumerable<T>(source, value);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Reverse
+  //———————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reverses the order of the elements in a sequence.</summary>
+  /// <param name="source">The enumerable source to reverse.</param>
+  /// <returns>An enumerable that contains the elements of the source in reverse order.</returns>
+  //———————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Reverse(source: IEnumerable<T>): IEnumerable<T>;
   begin
     if source = nil then
@@ -966,6 +1489,14 @@ begin
     return new ReverseEnumerable<T>(source);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • OrderBy
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sorts the elements of a sequence in ascending order according to a key.</summary>
+  /// <param name="source">The enumerable source to sort.</param>
+  /// <param name="selector">A function to extract a key from an element.</param>
+  /// <returns>An enumerable that contains the elements from the source sorted in ascending order.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function OrderBy(source: IEnumerable<T>; selector: Selector<T, Integer>): IEnumerable<T>;
   begin
     if source = nil then
@@ -1003,6 +1534,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • OrderByDescending
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sorts the elements of a sequence in descending order according to a key.</summary>
+  /// <param name="source">The enumerable source to sort.</param>
+  /// <param name="selector">A function to extract a key from an element.</param>
+  /// <returns>An enumerable that contains the elements from the source sorted in descending order.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function OrderByDescending(source: IEnumerable<T>; selector: Selector<T, Integer>): IEnumerable<T>;
   begin
     if source = nil then
@@ -1040,6 +1579,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Contains
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether a sequence contains a specified element.</summary>
+  /// <param name="source">The enumerable source to check for the element.</param>
+  /// <param name="value">The value to locate in the sequence.</param>
+  /// <returns>true if the source contains the specified element; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Contains(source: IEnumerable<T>; value: T): Boolean;
   begin
     if source = nil then
@@ -1059,6 +1606,13 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Any
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether any element of a sequence exists.</summary>
+  /// <param name="source">The enumerable source to check for elements.</param>
+  /// <returns>true if the source contains any elements; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Any(source: IEnumerable<T>): Boolean;
   begin
     if source = nil then
@@ -1070,6 +1624,14 @@ begin
     return enumerator.MoveNext();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Any
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether any element of a sequence satisfies a condition.</summary>
+  /// <param name="source">The enumerable source to check for elements.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>true if any elements in the source satisfy the condition; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Any(source: IEnumerable<T>; predicate: Predicate<T>): Boolean;
   begin
     if source = nil then
@@ -1094,6 +1656,13 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Count
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Counts the number of elements in a sequence.</summary>
+  /// <param name="source">The enumerable source to count.</param>
+  /// <returns>The number of elements in the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Count(source: IEnumerable<T>): Integer;
   begin
     if source = nil then
@@ -1111,6 +1680,14 @@ begin
     return count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Count
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Counts the number of elements in a sequence that satisfy a condition.</summary>
+  /// <param name="source">The enumerable source to count.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The number of elements in the source that satisfy the condition.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Count(source: IEnumerable<T>; predicate: Predicate<T>): Integer;
   begin
     if source = nil then
@@ -1136,6 +1713,13 @@ begin
     return count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FirstOrDefault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the first element of a sequence, or a default value if no element is found.</summary>
+  /// <param name="source">The enumerable source to return the first element from.</param>
+  /// <returns>The first element of the sequence, or a default value if no element is found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function FirstOrDefault(source: IEnumerable<T>): T;
   begin
     if source = nil then
@@ -1153,6 +1737,13 @@ begin
     return fallback;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • First
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the first element of a sequence.</summary>
+  /// <param name="source">The enumerable source to return the first element from.</param>
+  /// <returns>The first element of the sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function First(source: IEnumerable<T>): T;
   begin
     if source = nil then
@@ -1169,6 +1760,14 @@ begin
     raise new Exception('Enumerable sequence contains no elements.');
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FirstOrDefault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the first element of a sequence that satisfies a condition, or a default value if no such element is found.</summary>
+  /// <param name="source">The enumerable source to return the first element from.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The first element of the sequence that satisfies the condition, or a default value if no such element is found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function FirstOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T;
   begin
     if source = nil then
@@ -1194,6 +1793,14 @@ begin
     return fallback;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • First
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the first element of a sequence that satisfies a condition.</summary>
+  /// <param name="source">The enumerable source to return the first element from.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The first element of the sequence that satisfies the condition.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function First(source: IEnumerable<T>; predicate: Predicate<T>): T;
   begin
     if source = nil then
@@ -1218,6 +1825,13 @@ begin
     raise new Exception('Enumerable sequence contains no matching element.');
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SingleOrDefault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the only element of a sequence, or a default value if the sequence is empty.</summary>
+  /// <param name="source">The enumerable source to return the single element from.</param>
+  /// <returns>The only element of the sequence, or a default value if the sequence is empty.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function SingleOrDefault(source: IEnumerable<T>): T;
   begin
     if source = nil then
@@ -1241,6 +1855,13 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Single
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the only element of a sequence.</summary>
+  /// <param name="source">The enumerable source to return the single element from.</param>
+  /// <returns>The only element of the sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Single(source: IEnumerable<T>): T;
   begin
     if source = nil then
@@ -1263,6 +1884,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SingleOrDefault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the only element of a sequence that satisfies a condition, or a default value if no such element is found.</summary>
+  /// <param name="source">The enumerable source to return the single element from.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The only element of the sequence that satisfies the condition, or a default value if no such element is found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function SingleOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T;
   begin
     if source = nil then
@@ -1296,6 +1925,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Single
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the only element of a sequence that satisfies a condition.</summary>
+  /// <param name="source">The enumerable source to return the single element from.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The only element of the sequence that satisfies the condition.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Single(source: IEnumerable<T>; predicate: Predicate<T>): T;
   begin
     if source = nil then
@@ -1334,6 +1971,13 @@ begin
     raise new Exception('Enumerable sequence contains no matching element.');
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • LastOrDefault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the last element of a sequence, or a default value if the sequence is empty.</summary>
+  /// <param name="source">The enumerable source to return the last element from.</param>
+  /// <returns>The last element of the sequence, or a default value if the sequence is empty.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function LastOrDefault(source: IEnumerable<T>): T;
   begin
     if source = nil then
@@ -1354,6 +1998,13 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Last
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the last element of a sequence.</summary>
+  /// <param name="source">The enumerable source to return the last element from.</param>
+  /// <returns>The last element of the sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Last(source: IEnumerable<T>): T;
   begin
     if source = nil then
@@ -1376,6 +2027,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • LastOrDefault
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the last element of a sequence that satisfies a condition, or a default value if no such element is found.</summary>
+  /// <param name="source">The enumerable source to return the last element from.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The last element of the sequence that satisfies the condition, or a default value if no such element is found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function LastOrDefault(source: IEnumerable<T>; predicate: Predicate<T>): T;
   begin
     if source = nil then
@@ -1404,6 +2063,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Last
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Returns the last element of a sequence that satisfies a condition.</summary>
+  /// <param name="source">The enumerable source to return the last element from.</param>
+  /// <param name="predicate">A function to test each element for a condition.</param>
+  /// <returns>The last element of the sequence that satisfies the condition.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Last(source: IEnumerable<T>; predicate: Predicate<T>): T;
   begin
     if source = nil then
@@ -1437,6 +2104,13 @@ begin
     raise new Exception('Enumerable sequence contains no matching element.');
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToList
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts an enumerable sequence to a list.</summary>
+  /// <param name="source">The enumerable source to convert to a list.</param>
+  /// <returns>A list containing the elements of the source sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ToList(source: IEnumerable<T>): List<T>;
   begin
     if source = nil then
@@ -1454,6 +2128,13 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ToArray
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts an enumerable sequence to an array.</summary>
+  /// <param name="source">The enumerable source to convert to an array.</param>
+  /// <returns>An array containing the elements of the source sequence.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function ToArray(source: IEnumerable<T>): array of T;
   begin
     if source = nil then
@@ -1473,6 +2154,14 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Enumerable<TSource, TResult>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Select
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Projects each element of a sequence into a new form.</summary>
+  /// <param name="source">The enumerable source to project.</param>
+  /// <param name="selector">A transform function to apply to each element.</param>
+  /// <returns>An enumerable whose elements are the result of invoking the transform function on each element of the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Select(source: IEnumerable<TSource>; selector: Selector<TSource, TResult>): IEnumerable<TResult>;
   begin
     if source = nil then
@@ -1495,6 +2184,15 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Enumerable<TFirst, TSecond, TThird>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SelectMany
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Projects each element of a sequence to an enumerable and flattens the resulting sequences into one sequence.</summary>
+  /// <param name="source">The enumerable source to project.</param>
+  /// <param name="collectionSelector">A transform function to apply to each element that returns an enumerable.</param>
+  /// <param name="resultSelector">A transform function to apply to each element of the intermediate sequence.</param>
+  /// <returns>An enumerable whose elements are the result of invoking the transform functions on each element of the source.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function SelectMany(source: IEnumerable<TFirst>; collectionSelector: CollectionSelector<TFirst, TSecond>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
   begin
     if source = nil then
@@ -1533,6 +2231,14 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GroupBy
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Groups the elements of a sequence according to a specified key selector function.</summary>
+  /// <param name="source">The enumerable source to group.</param>
+  /// <param name="keySelector">A function to extract the key for each element.</param>
+  /// <param name="elementSelector">A function to map each source element to an element in the group.</param>
+  /// <returns>An enumerable of groupings, where each grouping contains elements that share a common key.</returns>
   public static function GroupBy(source: IEnumerable<TFirst>; keySelector: Selector<TFirst, Integer>; elementSelector: Selector<TFirst, TThird>): IEnumerable<Grouping<Integer, TThird>>;
   begin
     if source = nil then
@@ -1581,6 +2287,15 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GroupBy
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Groups the elements of a sequence according to a specified key selector function.</summary>
+  /// <param name="source">The enumerable source to group.</param>
+  /// <param name="keySelector">A function to extract the key for each element.</param>
+  /// <param name="elementSelector">A function to map each source element to an element in the group.</param>
+  /// <returns>An enumerable of groupings, where each grouping contains elements that share a common key.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GroupBy(source: IEnumerable<TFirst>; keySelector: Selector<TFirst, String>; elementSelector: Selector<TFirst, TThird>): IEnumerable<Grouping<String, TThird>>;
   begin
     if source = nil then
@@ -1629,6 +2344,17 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GroupJoin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Correlates the elements of two sequences based on matching keys and groups the results.</summary>
+  /// <param name="source">The enumerable source to join.</param>
+  /// <param name="inner">The enumerable source to join to the first source.</param>
+  /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
+  /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
+  /// <param name="resultSelector">A function to create a result element from an element of the first source and an enumerable of matching elements from the second source.</param>
+  /// <returns>An enumerable of results from the join operation.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GroupJoin(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, Integer>; innerKeySelector: Selector<TSecond, Integer>; resultSelector: GroupResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
   begin
     if source = nil then
@@ -1679,6 +2405,17 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GroupJoin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Correlates the elements of two sequences based on matching keys and groups the results.</summary>
+  /// <param name="source">The enumerable source to join.</param>
+  /// <param name="inner">The enumerable source to join to the first source.</param>
+  /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
+  /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
+  /// <param name="resultSelector">A function to create a result element from an element of the first source and an enumerable of matching elements from the second source.</param>
+  /// <returns>An enumerable of results from the join operation.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GroupJoin(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, String>; innerKeySelector: Selector<TSecond, String>; resultSelector: GroupResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
   begin
     if source = nil then
@@ -1729,6 +2466,17 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Join
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Correlates the elements of two sequences based on matching keys.</summary>
+  /// <param name="source">The enumerable source to join.</param>
+  /// <param name="inner">The enumerable source to join to the first source.</param>
+  /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
+  /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
+  /// <param name="resultSelector">A function to create a result element from an element of the first source and an element of the second source.</param>
+  /// <returns>An enumerable of results from the join operation.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Join(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, Integer>; innerKeySelector: Selector<TSecond, Integer>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
   begin
     if source = nil then
@@ -1776,6 +2524,19 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Join
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Correlates the elements of two sequences based on matching keys.</summary>
+  /// <param name="source">The enumerable source to join.</param>
+  /// <param name="inner">The enumerable source to join to the first source.</param>
+  /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
+  /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
+  /// <param name="resultSelector">
+  ///   A function to create a result element from an element of the first source and an element of the second source.
+  /// </param>
+  /// <returns>An enumerable of results from the join operation.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Join(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, String>; innerKeySelector: Selector<TSecond, String>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
   begin
     if source = nil then
@@ -1854,6 +2615,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • PROPERTIES •
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the element in the collection at the current position of the enumerator.</summary>
   public property Current: T
   begin
     get
@@ -2157,7 +2919,6 @@ begin
 
   /// <summary>Gets or sets the value associated with the specified key.</summary>
   /// <param name="key">The key of the value to get or set.</param>
-  /// <returns>The value associated with the specified key.</returns>
   public default property Item[key: TKey]: TValue
   begin
     get

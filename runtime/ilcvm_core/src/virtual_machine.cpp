@@ -1293,6 +1293,72 @@ std::int32_t VirtualMachine::execute(
                         break;
                 }
             }
+            else if (parameter_kinds[0] == NativeFfiValueKind::native_handle &&
+                     parameter_kinds[1] == NativeFfiValueKind::utf8_string)
+            {
+                auto* arg0 = get_native_handle_argument(0);
+                const auto* arg1 = get_string_argument(1);
+                if (native_ffi_debug_enabled)
+                {
+                    std::fprintf(
+                        stderr,
+                        "DEBUG vm_ffi: dispatch signature function=%s shape=(native_handle, utf8_string)->%u arg0=%p arg1=%s\n",
+                        function.name.c_str(),
+                        static_cast<unsigned>(return_kind),
+                        arg0,
+                        arg1);
+                }
+
+                switch (return_kind)
+                {
+                    case NativeFfiValueKind::void_:
+                        reinterpret_cast<void(*)(void*, const char*)>(symbol)(arg0, arg1);
+                        return 0;
+                    case NativeFfiValueKind::i32:
+                        return reinterpret_cast<std::int32_t(*)(void*, const char*)>(symbol)(arg0, arg1);
+                    case NativeFfiValueKind::bool32:
+                        return reinterpret_cast<std::int32_t(*)(void*, const char*)>(symbol)(arg0, arg1) != 0 ? 1 : 0;
+                    case NativeFfiValueKind::utf8_string:
+                        return store_owned_utf8_result(reinterpret_cast<char*(*)(void*, const char*)>(symbol)(arg0, arg1));
+                    case NativeFfiValueKind::native_handle:
+                        return store_native_handle(reinterpret_cast<void*(*)(void*, const char*)>(symbol)(arg0, arg1));
+                    default:
+                        break;
+                }
+            }
+            else if (parameter_kinds[0] == NativeFfiValueKind::native_handle &&
+                     (parameter_kinds[1] == NativeFfiValueKind::i32 || parameter_kinds[1] == NativeFfiValueKind::bool32))
+            {
+                auto* arg0 = get_native_handle_argument(0);
+                const auto arg1 = get_i32_argument(1);
+                if (native_ffi_debug_enabled)
+                {
+                    std::fprintf(
+                        stderr,
+                        "DEBUG vm_ffi: dispatch signature function=%s shape=(native_handle, i32)->%u arg0=%p arg1=%d\n",
+                        function.name.c_str(),
+                        static_cast<unsigned>(return_kind),
+                        arg0,
+                        arg1);
+                }
+
+                switch (return_kind)
+                {
+                    case NativeFfiValueKind::void_:
+                        reinterpret_cast<void(*)(void*, std::int32_t)>(symbol)(arg0, arg1);
+                        return 0;
+                    case NativeFfiValueKind::i32:
+                        return reinterpret_cast<std::int32_t(*)(void*, std::int32_t)>(symbol)(arg0, arg1);
+                    case NativeFfiValueKind::bool32:
+                        return reinterpret_cast<std::int32_t(*)(void*, std::int32_t)>(symbol)(arg0, arg1) != 0 ? 1 : 0;
+                    case NativeFfiValueKind::utf8_string:
+                        return store_owned_utf8_result(reinterpret_cast<char*(*)(void*, std::int32_t)>(symbol)(arg0, arg1));
+                    case NativeFfiValueKind::native_handle:
+                        return store_native_handle(reinterpret_cast<void*(*)(void*, std::int32_t)>(symbol)(arg0, arg1));
+                    default:
+                        break;
+                }
+            }
         }
 
         throw std::runtime_error(

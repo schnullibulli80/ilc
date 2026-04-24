@@ -22,6 +22,7 @@ namespace
         bool shown = false;
         std::string title;
         std::string root_name;
+        std::string content_qml;
     };
 
     bool qtbridge_debug_enabled()
@@ -108,7 +109,8 @@ extern "C"
             .backend_handle = backend_handle,
             .shown = false,
             .title = title,
-            .root_name = ""});
+            .root_name = "",
+            .content_qml = ""});
         qtbridge_debug("window_create backend=" + std::to_string(backend_handle) + " handle=" + std::to_string(handle) + " title='" + title + "'");
         return handle;
     }
@@ -147,6 +149,21 @@ extern "C"
 
         it->second.root_name = safe_utf8(root_name_utf8);
         qtbridge_debug("window_set_root_name handle=" + std::to_string(window_handle) + " root='" + it->second.root_name + "'");
+        return 1;
+    }
+
+    std::int32_t ilc_qtquick_window_set_content_qml(std::int32_t window_handle, const char* qml_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_set_content_qml rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        it->second.content_qml = safe_utf8(qml_utf8);
+        qtbridge_debug("window_set_content_qml handle=" + std::to_string(window_handle) + " length=" + std::to_string(it->second.content_qml.length()));
         return 1;
     }
 

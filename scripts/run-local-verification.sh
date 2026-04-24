@@ -24,8 +24,17 @@ ui_fixture="$repo_root/libs/shipped/ui.ilc"
 ui_hosting_fixture="$repo_root/libs/shipped/ui-hosting.ilc"
 ui_qtquick_fixture="$repo_root/libs/shipped/ui-backends-qtquick.ilc"
 demo_core_fixture="$repo_root/tests/fixtures/demo-core.ilc"
+qtbridge_build_dir="$repo_root/build/runtime/ilcvm_qtbridge"
 
 cd "$repo_root"
+
+if [[ -d "$qtbridge_build_dir" ]]; then
+    if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+        export LD_LIBRARY_PATH="$qtbridge_build_dir:$LD_LIBRARY_PATH"
+    else
+        export LD_LIBRARY_PATH="$qtbridge_build_dir"
+    fi
+fi
 
 mkdir -p "$tmp_dir"
 printf 'smoke-file-ok' >"$tmp_dir/runtime-smoke-input.txt"

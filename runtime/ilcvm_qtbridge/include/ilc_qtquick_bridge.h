@@ -21,6 +21,7 @@ extern "C"
     ILC_QTBRIDGE_API std::int32_t ilc_qtquick_window_show(std::int32_t window_handle);
     ILC_QTBRIDGE_API void ilc_qtquick_window_destroy(std::int32_t window_handle);
     ILC_QTBRIDGE_API std::int32_t ilc_qtquick_window_set_root_name(std::int32_t window_handle, const char* root_name_utf8);
+    ILC_QTBRIDGE_API std::int32_t ilc_qtquick_window_set_content_qml(std::int32_t window_handle, const char* qml_utf8);
 
     ILC_QTBRIDGE_API std::int32_t ilc_qtquick_backend_run(std::int32_t backend_handle);
 }

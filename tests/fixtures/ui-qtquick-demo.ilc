@@ -1,0 +1,42 @@
+namespace UiQtQuickDemo;
+
+uses System, System.Collections, System.Threading, System.Ui, System.Ui.Hosting, System.Ui.Backends.QtQuick;
+
+public class Program
+begin
+  public static function Main: Integer;
+  begin
+    var app := new Application();
+
+    var title := new TextBlock();
+    title.Name := 'helloText';
+    title.Text := 'Hello World!';
+    title.Foreground := Color.White;
+
+    var subtitle := new TextBlock();
+    subtitle.Name := 'subtitleText';
+    subtitle.Text := 'ILC Qt6 UI Demo';
+    subtitle.Foreground := Color.Blue;
+
+    var layout := new StackPanel();
+    layout.Name := 'demoRoot';
+    layout.Orientation := Orientation.Vertical;
+    layout.AddChild(title);
+    layout.AddChild(subtitle);
+
+    var window := new Window();
+    window.Title := 'ILC Qt6 UI Demo';
+    window.Background := Color.Gray;
+    window.Content := layout;
+
+    app.AddWindow(window);
+
+    var backend := new QtQuickBackend();
+    if backend.PrepareNativeBridge() = false then
+    begin
+      return 10;
+    end;
+
+    return backend.Run(app);
+  end;
+end;

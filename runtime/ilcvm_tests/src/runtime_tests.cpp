@@ -3313,6 +3313,15 @@ int main()
         return EXIT_FAILURE;
     }
 
+    if (ilc_qtquick_window_set_content_qml(
+            qt_window_handle,
+            "import QtQuick\nRectangle { width: 320; height: 180; color: \"#20252b\"; Text { anchors.centerIn: parent; color: \"#f4f7fb\"; text: \"Hello World!\" } }\n")
+        != 1)
+    {
+        std::cerr << "FAIL: qt bridge window_set_content_qml should succeed\n";
+        return EXIT_FAILURE;
+    }
+
     if (ilc_qtquick_window_show(qt_window_handle) != 1)
     {
         std::cerr << "FAIL: qt bridge window_show should succeed\n";

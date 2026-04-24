@@ -15,26 +15,47 @@ namespace System.Ui;
 
 uses System, System.Collections, System.Threading;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • Orientation
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Specifies the orientation of a UI element.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum Orientation
 begin
   Horizontal = 0;
   Vertical = 1;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • Visibility
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Specifies the visibility of a UI element.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum Visibility
 begin
   Visible = 0;
   Hidden = 1;
   Collapsed = 2;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • DialogResult
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum DialogResult
 begin
   None = 0;
   Accepted = 1;
   Cancelled = 2;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • Color
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Specifies a color for UI elements. This is a placeholder for a more complete color abstraction in the future.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum Color
 begin
   Transparent = 0;
@@ -45,14 +66,58 @@ begin
   Green = 5;
   Red = 6;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • INTERFACE • ICommand
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Defines a command that can be executed and queried for its ability to execute.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public interface ICommand
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Execute
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Executes the command's action.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public method Execute;
+  
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CanExecute
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the command can execute in its current state.</summary>
+  /// <returns><c>true</c> if the command can execute; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function CanExecute: Boolean;
+end;
+//══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Thickness
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents the thickness of a UI element's border, margin, or padding. This is a placeholder for a more complete thickness abstraction in 
+///   the future.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Thickness
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The thickness on the left side.</summary>
   private var LeftValue: Integer;
+  /// <summary>The thickness on the top side.</summary>
   private var TopValue: Integer;
+  /// <summary>The thickness on the right side.</summary>
   private var RightValue: Integer;
+  /// <summary>The thickness on the bottom side.</summary>
   private var BottomValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The thickness on the left side.</summary>
   public property Left: Integer
   begin
     get
@@ -73,6 +138,7 @@ begin
     end;
   end;
 
+  /// <summary>The thickness on the top side.</summary>
   public property Top: Integer
   begin
     get
@@ -93,6 +159,7 @@ begin
     end;
   end;
 
+  /// <summary>The thickness on the right side.</summary>
   public property Right: Integer
   begin
     get
@@ -113,6 +180,7 @@ begin
     end;
   end;
 
+  /// <summary>The thickness on the bottom side.</summary>
   public property Bottom: Integer
   begin
     get
@@ -133,6 +201,7 @@ begin
     end;
   end;
 
+  /// <summary>The combined thickness of the left and right sides.</summary>
   public property Horizontal: Integer
   begin
     get
@@ -141,6 +210,7 @@ begin
     end;
   end;
 
+  /// <summary>The combined thickness of the top and bottom sides.</summary>
   public property Vertical: Integer
   begin
     get
@@ -149,6 +219,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Thickness"/> class with all sides set to zero.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     LeftValue := 0;
@@ -157,6 +232,12 @@ begin
     BottomValue := 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Thickness"/> class with all sides set to the specified value.</summary>
+  /// <param name="all">The value to set for all sides.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(all: Integer);
   begin
     Left := all;
@@ -165,6 +246,16 @@ begin
     Bottom := all;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Initializes a new instance of the <see cref="Thickness"/> class with the horizontal sides set to one value and the vertical sides set to 
+  ///   another value.
+  /// </summary>
+  /// <param name="horizontal">The value to set for the left and right sides.</param>
+  /// <param name="vertical">The value to set for the top and bottom sides.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(horizontal: Integer; vertical: Integer);
   begin
     Left := horizontal;
@@ -173,6 +264,15 @@ begin
     Bottom := vertical;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Thickness"/> class with the specified values for each side.</summary>
+  /// <param name="left">The value to set for the left side.</param>
+  /// <param name="top">The value to set for the top side.</param>
+  /// <param name="right">The value to set for the right side.</param>
+  /// <param name="bottom">The value to set for the bottom side.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(left: Integer; top: Integer; right: Integer; bottom: Integer);
   begin
     Left := left;
@@ -181,14 +281,34 @@ begin
     Bottom := bottom;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Style
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents the style of a UI element, including its foreground and background colors, margin, and padding. This is a placeholder for a 
+///   more complete style abstraction in the future.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Style
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The foreground color of the styled element.</summary>
   private var ForegroundValue: Color;
+  /// <summary>The background color of the styled element.</summary>
   private var BackgroundValue: Color;
+  /// <summary>The margin of the styled element.</summary>
   private var MarginValue: Thickness;
+  /// <summary>The padding of the styled element.</summary>
   private var PaddingValue: Thickness;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The foreground color of the styled element.</summary>
   public property Foreground: Color
   begin
     get
@@ -202,6 +322,7 @@ begin
     end;
   end;
 
+  /// <summary>The background color of the styled element.</summary>
   public property Background: Color
   begin
     get
@@ -215,6 +336,7 @@ begin
     end;
   end;
 
+  /// <summary>The margin of the styled element.</summary>
   public property Margin: Thickness
   begin
     get
@@ -234,6 +356,7 @@ begin
     end;
   end;
 
+  /// <summary>The padding of the styled element.</summary>
   public property Padding: Thickness
   begin
     get
@@ -253,6 +376,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Style"/> class with default values for all properties.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     ForegroundValue := Color.Black;
@@ -261,6 +389,12 @@ begin
     PaddingValue := new Thickness();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ApplyToTextBlock
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Applies the style to a <see cref="TextBlock"/> instance.</summary>
+  /// <param name="target">The <see cref="TextBlock"/> instance to apply the style to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ApplyToTextBlock(target: TextBlock);
   begin
     if target = nil then
@@ -272,6 +406,12 @@ begin
     target.Margin := MarginValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ApplyToTextBox
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Applies the style to a <see cref="TextBox"/> instance.</summary>
+  /// <param name="target">The <see cref="TextBox"/> instance to apply the style to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ApplyToTextBox(target: TextBox);
   begin
     if target = nil then
@@ -283,6 +423,12 @@ begin
     target.Padding := PaddingValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ApplyToBorder
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Applies the style to a <see cref="Border"/> instance.</summary>
+  /// <param name="target">The <see cref="Border"/> instance to apply the style to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ApplyToBorder(target: Border);
   begin
     if target = nil then
@@ -295,6 +441,12 @@ begin
     target.Padding := PaddingValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ApplyToWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Applies the style to a <see cref="Window"/> instance.</summary>
+  /// <param name="target">The <see cref="Window"/> instance to apply the style to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ApplyToWindow(target: Window);
   begin
     if target = nil then
@@ -305,22 +457,25 @@ begin
     target.Background := BackgroundValue;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-public interface ICommand
-begin
-  public method Execute;
-  public function CanExecute: Boolean;
-end;
-
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ObservableObject
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents an object that can notify observers of changes to its state.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ObservableObject
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>A version number that increments each time the object's state changes.</summary>
   private var ChangeVersionValue: Integer;
 
-  protected method MarkChanged;
-  begin
-    ChangeVersionValue := ChangeVersionValue + 1;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the current change version of the object.</summary>
   public property ChangeVersion: Integer
   begin
     get
@@ -329,6 +484,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the object has changes.</summary>
   public property HasChanges: Boolean
   begin
     get
@@ -337,26 +493,65 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ObservableObject"/> class with no changes.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     ChangeVersionValue := 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • MarkChanged
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Marks the object as changed, incrementing the change version.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method MarkChanged;
+  begin
+    ChangeVersionValue := ChangeVersionValue + 1;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Touch
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Marks the object as changed, incrementing the change version.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Touch;
   begin
     MarkChanged();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AcceptChanges
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the change version, marking the object as unchanged.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method AcceptChanges;
   begin
     ChangeVersionValue := 0;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ObservableText
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a text value that can notify observers of changes to its content.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ObservableText: ObservableObject
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The current text value.</summary>
   private var TextValue: String;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the text value.</summary>
   public property Text: String
   begin
     get
@@ -376,6 +571,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ObservableText"/> class with the specified initial text.</summary>
+  /// <param name="initialText">The initial text value.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(initialText: String);
   begin
     TextValue := '';
@@ -383,12 +584,27 @@ begin
     AcceptChanges();
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Command
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a command that can be executed.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Command: ICommand
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The action to execute when the command is invoked.</summary>
   private var ActionValue: IRunnable;
+  /// <summary>A value indicating whether the command is enabled.</summary>
   private var EnabledValue: Boolean;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets a value indicating whether the command is enabled.</summary>
   public property IsEnabled: Boolean
   begin
     get
@@ -402,12 +618,23 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Command"/> class with the specified action.</summary>
+  /// <param name="action">The action to execute when the command is invoked.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(action: IRunnable);
   begin
     ActionValue := action;
     EnabledValue := action <> nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Execute
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Executes the command's action if the command is enabled.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Execute;
   begin
     if CanExecute() = false then
@@ -418,37 +645,42 @@ begin
     ActionValue.Run();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CanExecute
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Determines whether the command can be executed.</summary>
+  /// <returns><c>true</c> if the command can be executed; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function CanExecute: Boolean;
   begin
     return EnabledValue and ActionValue <> nil;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • View
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a UI element that can be displayed on the screen. This is a base class for all UI elements in the ILC UI framework.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The name of the view, which can be used for identification purposes.</summary>
   private var NameValue: String;
+  /// <summary>The visibility of the view.</summary>
   private var VisibilityValue: Visibility;
+  /// <summary>The margin around the view.</summary>
   private var MarginValue: Thickness;
+  /// <summary>The data context associated with the view, which can be used for data binding.</summary>
   private var DataContextValue: Object;
 
-  protected method InitializeView;
-  begin
-    NameValue := '';
-    VisibilityValue := Visibility.Visible;
-    MarginValue := new Thickness();
-    DataContextValue := nil;
-  end;
-
-  protected method InheritDataContextTo(target: View);
-  begin
-    if target = nil or target.HasDataContext or DataContextValue = nil then
-    begin
-      return;
-    end;
-
-    target.DataContext := DataContextValue;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The name of the view, which can be used for identification purposes.</summary>
   public property Name: String
   begin
     get
@@ -462,6 +694,7 @@ begin
     end;
   end;
 
+  /// <summary>The visibility of the view.</summary>
   public property Visibility: Visibility
   begin
     get
@@ -475,6 +708,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the view is visible.</summary>
   public property IsVisible: Boolean
   begin
     get
@@ -483,6 +717,7 @@ begin
     end;
   end;
 
+  /// <summary>The margin around the view.</summary>
   public property Margin: Thickness
   begin
     get
@@ -502,6 +737,7 @@ begin
     end;
   end;
 
+  /// <summary>The data context associated with the view, which can be used for data binding.</summary>
   public property DataContext: Object
   begin
     get
@@ -515,6 +751,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the view has a data context.</summary>
   public property HasDataContext: Boolean
   begin
     get
@@ -523,22 +760,64 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="View"/> class with default values for all properties.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
   end;
-end;
 
-public class Container: View
-begin
-  private var ChildrenValue: List<View>;
-
-  protected method InitializeContainer;
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • InitializeView
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes the view with default values for all properties.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method InitializeView;
   begin
-    InitializeView();
-    ChildrenValue := new List<View>();
+    NameValue := '';
+    VisibilityValue := Visibility.Visible;
+    MarginValue := new Thickness();
+    DataContextValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • InheritDataContextTo
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Inherits the data context to the specified target view.</summary>
+  /// <param name="target">The target view to inherit the data context.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method InheritDataContextTo(target: View);
+  begin
+    if target = nil or target.HasDataContext or DataContextValue = nil then
+    begin
+      return;
+    end;
+
+    target.DataContext := DataContextValue;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Container
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that can contain child views. This is a base class for all container views in the ILC UI framework.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public class Container: View
+begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The list of child views contained within the container.</summary>
+  private var ChildrenValue: List<View>;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the list of child views contained within the container.</summary>
   public property Children: List<View>
   begin
     get
@@ -547,6 +826,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the number of child views contained within the container.</summary>
   public property ChildCount: Integer
   begin
     get
@@ -555,11 +835,33 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Container"/> class with an empty list of child views.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContainer();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • InitializeContainer
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes the container with an empty list of child views.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method InitializeContainer;
+  begin
+    InitializeView();
+    ChildrenValue := new List<View>();
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AddChild
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds a child view to the container.</summary>
+  /// <param name="view">The child view to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method AddChild(view: View);
   begin
     if view = nil then
@@ -571,36 +873,49 @@ begin
     ChildrenValue.Add(view);
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Panel
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents a simple container that can hold child views. This is a base class for more specific panel types in the ILC UI framework.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Panel: Container
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Panel"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContainer();
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ContentControl
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents a container that can hold a single child view as its content. This is a base class for more specific content control types in 
+///   the ILC UI framework.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ContentControl: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The child view that is set as the content of the control.</summary>
   private var ContentValue: View;
 
-  protected method InitializeContentControl;
-  begin
-    InitializeView();
-    ContentValue := nil;
-  end;
-
-  protected function GetContentCore: View;
-  begin
-    return ContentValue;
-  end;
-
-  protected method SetContentCore(value: View);
-  begin
-    ContentValue := value;
-    InheritDataContextTo(ContentValue);
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the child view that is set as the content of the control.</summary>
   public property Content: View
   begin
     get
@@ -614,6 +929,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the control has content.</summary>
   public property HasContent: Boolean
   begin
     get
@@ -622,17 +938,71 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ContentControl"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContentControl();
   end;
-end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • InitializeContentControl
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes the content control with default values for all properties.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method InitializeContentControl;
+  begin
+    InitializeView();
+    ContentValue := nil;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetContentCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the content of the control.</summary>
+  /// <returns>The content of the control.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected function GetContentCore: View;
+  begin
+    return ContentValue;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SetContentCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the content of the control.</summary>
+  /// <param name="value">The content to set.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method SetContentCore(value: View);
+  begin
+    ContentValue := value;
+    InheritDataContextTo(ContentValue);
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TextBlock
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a block of text.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TextBlock: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The text to display in the text block.</summary>
   private var TextValue: String;
+  /// <summary>The foreground color of the text.</summary>
   private var ForegroundValue: Color;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="TextBlock"/> class.</summary>
   public property Text: String
   begin
     get
@@ -646,6 +1016,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the foreground color of the text.</summary>
   public property Foreground: Color
   begin
     get
@@ -659,6 +1030,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="TextBlock"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
@@ -666,12 +1042,27 @@ begin
     ForegroundValue := Color.Black;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Button
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a button that can be clicked to perform an action.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Button: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The text displayed on the button.</summary>
   private var TextValue: String;
+  /// <summary>The command that is executed when the button is clicked.</summary>
   private var CommandValue: ICommand;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the text displayed on the button.</summary>
   public property Text: String
   begin
     get
@@ -685,6 +1076,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the command that is executed when the button is clicked.</summary>
   public property Command: ICommand
   begin
     get
@@ -698,6 +1090,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the button can be clicked, which is determined by whether the command is set and can be executed.</summary>
   public property CanClick: Boolean
   begin
     get
@@ -706,6 +1099,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Button"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
@@ -713,6 +1111,12 @@ begin
     CommandValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Click
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Clicks the button, executing its command if it can be clicked.</summary>
+  /// <returns><c>true</c> if the button was clicked; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Click: Boolean;
   begin
     if CanClick = false then
@@ -724,10 +1128,21 @@ begin
     return true;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • CheckBox
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a checkbox that can be checked or unchecked.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class CheckBox: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The text displayed next to the checkbox.</summary>
   private var TextValue: String;
+  /// <summary>A value indicating whether the checkbox is checked.</summary>
   private var IsCheckedValue: Boolean;
 
   public property Text: String
