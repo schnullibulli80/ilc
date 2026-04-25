@@ -4,28 +4,213 @@ uses System, System.Collections, System.Threading, System.Ui, System.Ui.Hosting,
 
 public class Program
 begin
+  public static var DemoWindow: Window;
+  public static var DemoEyebrow: TextBlock;
+  public static var DemoTitle: TextBlock;
+  public static var DemoSubtitle: TextBlock;
+  public static var DemoStatusLabel: TextBlock;
+  public static var DemoStatus: TextBlock;
+  public static var DemoHintLabel: TextBlock;
+  public static var DemoHint: TextBlock;
+  public static var DemoSummaryLabel: TextBlock;
+  public static var DemoSummary: TextBlock;
+  public static var DemoInputLabel: TextBlock;
+  public static var DemoInput: TextBox;
+  public static var DemoChaosMode: CheckBox;
+  public static var DemoControlsLabel: TextBlock;
+  public static var DemoIntensityLabel: TextBlock;
+  public static var DemoIntensityValue: TextBlock;
+  public static var DemoIntensity: Slider;
+  public static var DemoButton: Button;
+  public static var DemoResetButton: Button;
+  public static var DemoClickCount: Integer;
+
+  public static function DescribeIntensity(value: Integer): String;
+  begin
+    if value >= 75 then
+    begin
+      return 'volatile';
+    end;
+
+    if value >= 40 then
+    begin
+      return 'spicy';
+    end;
+
+    return 'measured';
+  end;
+
+  public static function BuildSummaryText: String;
+  begin
+    var codename := DemoInput.Text;
+    if codename = '' then
+    begin
+      codename := 'Anonymous Compiler';
+    end;
+
+    var chaosModeText := 'off';
+    if DemoChaosMode.IsChecked then
+    begin
+      chaosModeText := 'on';
+    end;
+
+    return
+      'Codename: ' + codename + '
+' +
+      'Chaos mode: ' + chaosModeText + '
+' +
+      'Intensity: ' + DemoIntensity.Value.ToString() + '% · ' + DescribeIntensity(DemoIntensity.Value) + '
+' +
+      'Last action: ' + DemoStatus.Text;
+  end;
+
+  public static method RefreshSummary;
+  begin
+    DemoSummary.Text := BuildSummaryText();
+  end;
+
+  public static method RefreshIntensityText;
+  begin
+    DemoIntensityValue.Text := DemoIntensity.Value.ToString() + '% · ' + DescribeIntensity(DemoIntensity.Value);
+  end;
+
   public static function Main: Integer;
   begin
     var app := new Application();
 
     var title := new TextBlock();
-    title.Name := 'helloText';
-    title.Text := 'Hello World!';
+    title.Name := 'demoTitle';
+    title.Text := 'ILC Qt6 Control Lab';
     title.Foreground := Color.White;
 
+    var eyebrow := new TextBlock();
+    eyebrow.Name := 'demoEyebrow';
+    eyebrow.Text := 'INTERACTIVE SHOWCASE';
+    eyebrow.Foreground := Color.Blue;
+
     var subtitle := new TextBlock();
-    subtitle.Name := 'subtitleText';
-    subtitle.Text := 'ILC Qt6 UI Demo';
-    subtitle.Foreground := Color.Blue;
+    subtitle.Name := 'demoSubtitle';
+    subtitle.Text := 'Drive a small end-to-end QtQuick scene from ILC state and callbacks.';
+    subtitle.Foreground := Color.Gray;
+
+    var input := new TextBox();
+    input.Name := 'demoInput';
+    input.PlaceholderText := 'Type your codename here...';
+    input.Text := 'QtQuick bridge active';
+    input.Padding := new Thickness(3, 2);
+    input.IsReadOnly := false;
+    input.TextChangedCommand := new Command(new DemoInputChangedAction());
+
+    var inputLabel := new TextBlock();
+    inputLabel.Name := 'demoInputLabel';
+    inputLabel.Text := 'Codename';
+    inputLabel.Foreground := Color.Gray;
+
+    var chaosMode := new CheckBox();
+    chaosMode.Name := 'demoChaosMode';
+    chaosMode.Text := 'Enable chaos mode';
+    chaosMode.IsChecked := false;
+    chaosMode.ToggledCommand := new Command(new DemoChaosModeChangedAction());
+
+    var controlsLabel := new TextBlock();
+    controlsLabel.Name := 'demoControlsLabel';
+    controlsLabel.Text := 'Chaos controls';
+    controlsLabel.Foreground := Color.Gray;
+
+    var intensityLabel := new TextBlock();
+    intensityLabel.Name := 'demoIntensityLabel';
+    intensityLabel.Text := 'Chaos intensity';
+    intensityLabel.Foreground := Color.Gray;
+
+    var intensityValue := new TextBlock();
+    intensityValue.Name := 'demoIntensityValue';
+    intensityValue.Text := '35% · measured';
+    intensityValue.Foreground := Color.White;
+
+    var intensity := new Slider();
+    intensity.Name := 'demoIntensity';
+    intensity.SetRange(0, 100);
+    intensity.Value := 35;
+    intensity.ValueChangedCommand := new Command(new DemoIntensityChangedAction());
+
+    var button := new Button();
+    button.Name := 'demoButton';
+    button.Text := 'Primary Action';
+    button.Background := Color.Blue;
+    button.Command := new Command(new DemoButtonAction());
+
+    var resetButton := new Button();
+    resetButton.Name := 'demoResetButton';
+    resetButton.Text := 'Reset demo';
+    resetButton.Background := Color.Gray;
+    resetButton.Command := new Command(new DemoResetAction());
+
+    var status := new TextBlock();
+    status.Name := 'demoStatus';
+    status.Text := 'Waiting for user input.';
+    status.Foreground := Color.White;
+
+    var statusLabel := new TextBlock();
+    statusLabel.Name := 'demoStatusLabel';
+    statusLabel.Text := 'Latest signal';
+    statusLabel.Foreground := Color.Gray;
+
+    var hint := new TextBlock();
+    hint.Name := 'demoHint';
+    hint.Text := 'The goal is simple: stay responsive, keep the joke, avoid the segfault.';
+    hint.Foreground := Color.Blue;
+
+    var hintLabel := new TextBlock();
+    hintLabel.Name := 'demoHintLabel';
+    hintLabel.Text := 'Operator notes';
+    hintLabel.Foreground := Color.Gray;
+
+    var summaryLabel := new TextBlock();
+    summaryLabel.Name := 'demoSummaryLabel';
+    summaryLabel.Text := 'Session snapshot';
+    summaryLabel.Foreground := Color.Gray;
+
+    var summary := new TextBlock();
+    summary.Name := 'demoSummary';
+    summary.Text := '';
+    summary.Foreground := Color.White;
+
+    var actions := new StackPanel();
+    actions.Name := 'demoActions';
+    actions.Orientation := Orientation.Horizontal;
+    actions.AddChild(button);
+    actions.AddChild(resetButton);
+
+    var intensityRow := new StackPanel();
+    intensityRow.Name := 'demoIntensityRow';
+    intensityRow.Orientation := Orientation.Horizontal;
+    intensityRow.AddChild(intensityLabel);
+    intensityRow.AddChild(intensityValue);
 
     var layout := new StackPanel();
     layout.Name := 'demoRoot';
     layout.Orientation := Orientation.Vertical;
+    layout.AddChild(eyebrow);
     layout.AddChild(title);
     layout.AddChild(subtitle);
+    layout.AddChild(inputLabel);
+    layout.AddChild(input);
+    layout.AddChild(controlsLabel);
+    layout.AddChild(chaosMode);
+    layout.AddChild(intensityRow);
+    layout.AddChild(intensity);
+    layout.AddChild(actions);
+    layout.AddChild(statusLabel);
+    layout.AddChild(status);
+    layout.AddChild(hintLabel);
+    layout.AddChild(hint);
+    layout.AddChild(summaryLabel);
+    layout.AddChild(summary);
 
     var window := new Window();
     window.Title := 'ILC Qt6 UI Demo';
+    window.SetMinimumSize(960, 900);
+    window.Resize(960, 900);
     window.Background := Color.Gray;
     window.Content := layout;
 
@@ -37,6 +222,203 @@ begin
       return 10;
     end;
 
+    Program.DemoWindow := window;
+    Program.DemoEyebrow := eyebrow;
+    Program.DemoTitle := title;
+    Program.DemoSubtitle := subtitle;
+    Program.DemoStatusLabel := statusLabel;
+    Program.DemoStatus := status;
+    Program.DemoHintLabel := hintLabel;
+    Program.DemoHint := hint;
+    Program.DemoSummaryLabel := summaryLabel;
+    Program.DemoSummary := summary;
+    Program.DemoInputLabel := inputLabel;
+    Program.DemoInput := input;
+    Program.DemoChaosMode := chaosMode;
+    Program.DemoControlsLabel := controlsLabel;
+    Program.DemoIntensityLabel := intensityLabel;
+    Program.DemoIntensityValue := intensityValue;
+    Program.DemoIntensity := intensity;
+    Program.DemoButton := button;
+    Program.DemoResetButton := resetButton;
+    Program.DemoClickCount := 0;
+    Program.RefreshIntensityText();
+    Program.RefreshSummary();
+
     return backend.Run(app);
+  end;
+end;
+
+public class DemoResetAction: IRunnable
+begin
+  public method Run;
+  begin
+    Program.DemoClickCount := 0;
+    Program.DemoEyebrow.Text := 'INTERACTIVE SHOWCASE';
+    Program.DemoTitle.Text := 'ILC Qt6 Control Lab';
+    Program.DemoSubtitle.Text := 'Drive a small end-to-end QtQuick scene from ILC state and callbacks.';
+    Program.DemoInput.Text := 'QtQuick bridge active';
+    Program.DemoChaosMode.IsChecked := false;
+    Program.DemoIntensity.Value := 35;
+    Program.RefreshIntensityText();
+    Program.DemoButton.Text := 'Primary Action';
+    Program.DemoButton.Background := Color.Blue;
+    Program.DemoResetButton.Text := 'Reset demo';
+    Program.DemoResetButton.Background := Color.Gray;
+    Program.DemoStatus.Text := 'Demo state restored.';
+    Program.DemoHint.Text := 'Everything is back in the responsible branch.';
+    Program.DemoWindow.Background := Color.Gray;
+    Program.RefreshSummary();
+    var backend := QtQuickBackend.CurrentInteractiveBackend;
+    if backend <> nil then
+    begin
+      backend.RequestTextBoxFocus(Program.DemoInput);
+    end;
+  end;
+end;
+
+public class DemoIntensityChangedAction: IRunnable
+begin
+  public method Run;
+  begin
+    var intensity := Program.DemoIntensity.Value;
+    Program.RefreshIntensityText();
+
+    if Program.DemoChaosMode.IsChecked then
+    begin
+      Program.DemoStatus.Text := 'Chaos mode enabled at ' + intensity.ToString() + '%.';
+      if intensity >= 75 then
+      begin
+        Program.DemoHint.Text := 'High-energy branch selected. The logs are bracing for impact.';
+      end
+      else if intensity >= 40 then
+      begin
+        Program.DemoHint.Text := 'Moderate chaos. Enough drama for a respectable demo.';
+      end
+      else
+      begin
+        Program.DemoHint.Text := 'Low chaos. Reckless in principle, conservative in practice.';
+      end;
+
+      Program.RefreshSummary();
+      return;
+    end;
+
+    Program.DemoStatus.Text := 'Stability budget adjusted to ' + intensity.ToString() + '%.';
+    Program.DemoHint.Text := 'Chaos mode is still off. The slider only sharpens the threat model.';
+    Program.RefreshSummary();
+  end;
+end;
+
+public class DemoInputChangedAction: IRunnable
+begin
+  public method Run;
+  begin
+    var currentText := Program.DemoInput.Text;
+    if currentText = '' then
+    begin
+      Program.DemoSubtitle.Text := 'Drive a small end-to-end QtQuick scene from ILC state and callbacks.';
+      Program.DemoStatus.Text := 'Input cleared. Placeholder is active again.';
+      Program.DemoHint.Text := 'No codename set. The system remains politely cautious.';
+      Program.RefreshSummary();
+      return;
+    end;
+
+    Program.DemoSubtitle.Text := 'Input length = ' + currentText.Length.ToString();
+    Program.DemoStatus.Text := 'Active codename: ' + currentText;
+    if Program.DemoChaosMode.IsChecked then
+    begin
+      Program.DemoHint.Text := 'Chaos mode is armed for "' + currentText + '" at ' + Program.DemoIntensity.Value.ToString() + '%.';
+    end
+    else
+    begin
+      Program.DemoHint.Text := 'Chaos mode is off. Stability remains suspiciously high.';
+    end;
+
+    Program.RefreshSummary();
+  end;
+end;
+
+public class DemoChaosModeChangedAction: IRunnable
+begin
+  public method Run;
+  begin
+    if Program.DemoChaosMode.IsChecked then
+    begin
+      Program.DemoStatus.Text := 'Chaos mode enabled.';
+      Program.DemoHint.Text := 'Still no segfault. Confidence increasing at ' + Program.DemoIntensity.Value.ToString() + '%.';
+      Program.DemoWindow.Background := Color.Blue;
+      Program.DemoButton.Background := Color.Red;
+    end
+    else
+    begin
+      Program.DemoStatus.Text := 'Chaos mode disabled.';
+      Program.DemoHint.Text := 'Systems nominal. The joke remains loaded.';
+      Program.DemoWindow.Background := Color.Gray;
+      Program.DemoButton.Background := Color.Blue;
+    end;
+
+    Program.RefreshSummary();
+  end;
+end;
+
+public class DemoButtonAction: IRunnable
+begin
+  public method Run;
+  begin
+    Program.DemoClickCount := Program.DemoClickCount + 1;
+    var clickCount := Program.DemoClickCount;
+    var codename := Program.DemoInput.Text;
+    if codename = '' then
+    begin
+      codename := 'Anonymous Compiler';
+    end;
+
+    if Program.DemoChaosMode.IsChecked then
+    begin
+      var intensity := Program.DemoIntensity.Value;
+      if clickCount = 1 then
+      begin
+        Program.DemoTitle.Text := 'Click #1: Still no segfault.';
+        Program.DemoSubtitle.Text := 'Chaos mode accepted for ' + codename + ' at ' + intensity.ToString() + '%.';
+        Program.DemoStatus.Text := 'Primary action executed with theatrical confidence.';
+        Program.DemoHint.Text := 'Ship it, but keep one eye on the logs.';
+        Program.DemoButton.Text := 'Increase chaos';
+        Program.DemoButton.Background := Color.Red;
+        Program.DemoWindow.Background := Color.Green;
+      end
+      else if clickCount = 2 then
+      begin
+        Program.DemoTitle.Text := 'Click #2: Ship it.';
+        Program.DemoSubtitle.Text := codename + ' now outranks the crash reporter at intensity ' + intensity.ToString() + '%.';
+        Program.DemoStatus.Text := 'Momentum maintained. Still responsive.';
+        Program.DemoHint.Text := 'Confidence increasing beyond specification.';
+        Program.DemoButton.Text := 'One more irresponsible click';
+        Program.DemoButton.Background := Color.Red;
+        Program.DemoWindow.Background := Color.Blue;
+      end
+      else
+      begin
+        Program.DemoTitle.Text := 'Click #' + clickCount.ToString() + ': Chaos sustained.';
+        Program.DemoSubtitle.Text := codename + ' keeps pressing the red button.';
+        Program.DemoStatus.Text := 'The UI remains alive and mildly sarcastic at ' + intensity.ToString() + '%.';
+        Program.DemoHint.Text := 'No segfault detected. The logs are disappointed by ' + intensity.ToString() + ' points.';
+        Program.DemoButton.Text := 'Again';
+        Program.DemoButton.Background := Color.Red;
+        Program.DemoWindow.Background := Color.Green;
+      end;
+
+      Program.RefreshSummary();
+      return;
+    end;
+
+    Program.DemoTitle.Text := 'Action executed for ' + codename + '.';
+    Program.DemoSubtitle.Text := 'Click count = ' + clickCount.ToString();
+    Program.DemoStatus.Text := 'System remains suspiciously stable.';
+    Program.DemoHint.Text := 'Enable chaos mode if you want the irresponsible branch.';
+    Program.DemoButton.Text := 'Primary Action';
+    Program.DemoButton.Background := Color.Blue;
+    Program.DemoWindow.Background := Color.Gray;
+    Program.RefreshSummary();
   end;
 end;

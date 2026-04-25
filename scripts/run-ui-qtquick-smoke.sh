@@ -67,6 +67,5 @@ dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" -
 
 printf 'Compile log: %s\n' "$compile_log"
 printf 'Running QtQuick UI demo with QT_QPA_PLATFORM=%s and ILC_QTBRIDGE_BLOCKING_RUN=%s\n' "$QT_QPA_PLATFORM" "$ILC_QTBRIDGE_BLOCKING_RUN"
-"$repo_root/build/runtime/ilcvm_cli/ilcvm_cli" "$demo_runtime_ilb" --run >"$run_log" 2>&1
 printf 'Run log: %s\n' "$run_log"
-cat "$run_log"
+"$repo_root/build/runtime/ilcvm_cli/ilcvm_cli" "$demo_runtime_ilb" --run 2>&1 | tee "$run_log"

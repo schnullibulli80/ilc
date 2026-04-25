@@ -543,7 +543,7 @@ if (panelType is null || panelType.BaseType?.Name != "Container")
     failures.Add("Binder should surface System.Ui.Panel as the shared multi-child base type.");
 }
 
-if (windowType is null || !windowType.Properties.Any(property => property.Name == "Title" && property.Type == TypeSymbol.String) || !windowType.Properties.Any(property => property.Name == "Content" && property.Type.Name == "View") || !windowType.Properties.Any(property => property.Name == "Width" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "Height" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "MinWidth" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "MinHeight" && property.Type == TypeSymbol.Integer) || !windowType.Methods.Any(method => method.Name == "Resize" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
+if (windowType is null || !windowType.Properties.Any(property => property.Name == "Title" && property.Type == TypeSymbol.String) || !windowType.Properties.Any(property => property.Name == "Content" && property.Type.Name == "View") || !windowType.Properties.Any(property => property.Name == "Width" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "Height" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "MinWidth" && property.Type == TypeSymbol.Integer) || !windowType.Properties.Any(property => property.Name == "MinHeight" && property.Type == TypeSymbol.Integer) || !windowType.Methods.Any(method => method.Name == "Resize" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void) || !windowType.Methods.Any(method => method.Name == "SetMinimumSize" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
 {
     failures.Add("Binder should surface System.Ui.Window with Title, Content and minimal sizing members.");
 }
@@ -568,24 +568,24 @@ if (textBlockType is null || !textBlockType.Properties.Any(property => property.
     failures.Add("Binder should surface System.Ui.TextBlock.Foreground for the styling slice.");
 }
 
-if (buttonType is null || !buttonType.Properties.Any(property => property.Name == "Command" && property.Type.Name == "ICommand") || !buttonType.Methods.Any(method => method.Name == "Click" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+if (buttonType is null || !buttonType.Properties.Any(property => property.Name == "Command" && property.Type.Name == "ICommand") || !buttonType.Properties.Any(property => property.Name == "Background" && property.Type.Name == "Color") || !buttonType.Methods.Any(method => method.Name == "Click" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
 {
-    failures.Add("Binder should surface System.Ui.Button with Command and Click().");
+    failures.Add("Binder should surface System.Ui.Button with Command, Background and Click().");
 }
 
-if (checkBoxType is null || !checkBoxType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String) || !checkBoxType.Properties.Any(property => property.Name == "IsChecked" && property.Type == TypeSymbol.Boolean) || !checkBoxType.Methods.Any(method => method.Name == "Toggle" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
+if (checkBoxType is null || !checkBoxType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String) || !checkBoxType.Properties.Any(property => property.Name == "IsChecked" && property.Type == TypeSymbol.Boolean) || !checkBoxType.Properties.Any(property => property.Name == "ToggledCommand" && property.Type.Name == "ICommand") || !checkBoxType.Properties.Any(property => property.Name == "CanNotifyToggled" && property.Type == TypeSymbol.Boolean) || !checkBoxType.Methods.Any(method => method.Name == "Toggle" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean) || !checkBoxType.Methods.Any(method => method.Name == "NotifyToggled" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
 {
-    failures.Add("Binder should surface System.Ui.CheckBox with Text, IsChecked and Toggle().");
+    failures.Add("Binder should surface System.Ui.CheckBox with toggle state, command hook and notification helpers.");
 }
 
-if (sliderType is null || !sliderType.Properties.Any(property => property.Name == "Minimum" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "Maximum" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "Value" && property.Type == TypeSymbol.Integer) || !sliderType.Methods.Any(method => method.Name == "SetRange" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void))
+if (sliderType is null || !sliderType.Properties.Any(property => property.Name == "Minimum" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "Maximum" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "Value" && property.Type == TypeSymbol.Integer) || !sliderType.Properties.Any(property => property.Name == "ValueChangedCommand" && property.Type.Name == "ICommand") || !sliderType.Properties.Any(property => property.Name == "CanNotifyValueChanged" && property.Type == TypeSymbol.Boolean) || !sliderType.Methods.Any(method => method.Name == "SetRange" && method.Parameters.Count == 2 && method.Parameters[0].Type == TypeSymbol.Integer && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Void) || !sliderType.Methods.Any(method => method.Name == "NotifyValueChanged" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
 {
-    failures.Add("Binder should surface System.Ui.Slider with range and value members.");
+    failures.Add("Binder should surface System.Ui.Slider with range, value and notification members.");
 }
 
-if (textBoxType is null || !textBoxType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String) || !textBoxType.Properties.Any(property => property.Name == "PlaceholderText" && property.Type == TypeSymbol.String) || !textBoxType.Properties.Any(property => property.Name == "IsReadOnly" && property.Type == TypeSymbol.Boolean))
+if (textBoxType is null || !textBoxType.Properties.Any(property => property.Name == "Text" && property.Type == TypeSymbol.String) || !textBoxType.Properties.Any(property => property.Name == "PlaceholderText" && property.Type == TypeSymbol.String) || !textBoxType.Properties.Any(property => property.Name == "IsReadOnly" && property.Type == TypeSymbol.Boolean) || !textBoxType.Properties.Any(property => property.Name == "TextChangedCommand" && property.Type.Name == "ICommand") || !textBoxType.Properties.Any(property => property.Name == "CanNotifyTextChanged" && property.Type == TypeSymbol.Boolean) || !textBoxType.Methods.Any(method => method.Name == "NotifyTextChanged" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Boolean))
 {
-    failures.Add("Binder should surface System.Ui.TextBox with the expected text editing properties.");
+    failures.Add("Binder should surface System.Ui.TextBox with the expected text editing and change notification properties.");
 }
 
 if (textBoxType is null || !textBoxType.Properties.Any(property => property.Name == "Padding" && property.Type.Name == "Thickness"))
@@ -703,9 +703,9 @@ if (qtQuickBackendType is null || !qtQuickBackendType.IsReferenceType || !qtQuic
     failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickBackend as the first Qt hosting adapter.");
 }
 
-if (qtQuickNativeType is null || !qtQuickNativeType.IsReferenceType || !qtQuickNativeType.Methods.Any(method => method.Name == "CreateBackend" && method.IsStatic && method.Parameters.Count == 0 && method.ReturnType.Name == "NativeHandle") || !qtQuickNativeType.Methods.Any(method => method.Name == "CreateWindow" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.String && method.ReturnType.Name == "NativeHandle") || !qtQuickNativeType.Methods.Any(method => method.Name == "RunBackend" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "NativeHandle" && method.ReturnType == TypeSymbol.Integer))
+if (qtQuickNativeType is null || !qtQuickNativeType.IsReferenceType || !qtQuickNativeType.Methods.Any(method => method.Name == "CreateBackend" && method.IsStatic && method.Parameters.Count == 0 && method.ReturnType.Name == "NativeHandle") || !qtQuickNativeType.Methods.Any(method => method.Name == "CreateWindow" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.String && method.ReturnType.Name == "NativeHandle") || !qtQuickNativeType.Methods.Any(method => method.Name == "SetWindowSize" && method.IsStatic && method.Parameters.Count == 3 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.Integer && method.Parameters[2].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Integer) || !qtQuickNativeType.Methods.Any(method => method.Name == "SetWindowMinimumSize" && method.IsStatic && method.Parameters.Count == 3 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.Integer && method.Parameters[2].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Integer) || !qtQuickNativeType.Methods.Any(method => method.Name == "RunBackend" && method.IsStatic && method.Parameters.Count == 1 && method.Parameters[0].Type.Name == "NativeHandle" && method.ReturnType == TypeSymbol.Integer) || !qtQuickNativeType.Methods.Any(method => method.Name == "ReadTextInputValue" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.String) || !qtQuickNativeType.Methods.Any(method => method.Name == "ReadSliderValue" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Integer) || !qtQuickNativeType.Methods.Any(method => method.Name == "FocusTextInput" && method.IsStatic && method.Parameters.Count == 2 && method.Parameters[0].Type.Name == "NativeHandle" && method.Parameters[1].Type == TypeSymbol.Integer && method.ReturnType == TypeSymbol.Integer))
 {
-    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickNative as the native DllImport shim contract.");
+    failures.Add("Binder should surface System.Ui.Backends.QtQuick.QtQuickNative as the native DllImport shim contract, including window sizing, minimum window sizing, text-input, slider readback and text-focus restore.");
 }
 else
 {
@@ -713,6 +713,15 @@ else
     if (createBackendMethod.DllImport is null || createBackendMethod.DllImport.LibraryName != "libilc_qtbridge.so" || createBackendMethod.DllImport.EntryPoint != "ilc_qtquick_backend_create")
     {
         failures.Add("Binder should preserve the QtQuick native shim DllImport metadata.");
+    }
+
+    var readTextInputValueMethod = qtQuickNativeType.Methods.FirstOrDefault(method => method.Name == "ReadTextInputValue");
+    if (readTextInputValueMethod?.DllImport is null ||
+        readTextInputValueMethod.DllImport.EntryPoint != "ilc_qtquick_backend_read_text_input_value" ||
+        readTextInputValueMethod.DllImport.StringReturnMarshalling != NativeStringReturnMarshalling.Utf8Owned ||
+        readTextInputValueMethod.DllImport.StringFreeEntryPoint != "ilc_qtquick_string_free")
+    {
+        failures.Add("Binder should preserve owned UTF-8 DllImport metadata for QtQuick text-input readback.");
     }
 }
 

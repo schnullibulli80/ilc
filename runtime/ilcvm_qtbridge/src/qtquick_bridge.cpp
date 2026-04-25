@@ -130,6 +130,46 @@ extern "C"
         return 1;
     }
 
+    std::int32_t ilc_qtquick_window_set_size(std::int32_t window_handle, std::int32_t width, std::int32_t height)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_set_size rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "window_set_size handle=" +
+            std::to_string(window_handle) +
+            " width=" +
+            std::to_string(width) +
+            " height=" +
+            std::to_string(height));
+        return 1;
+    }
+
+    std::int32_t ilc_qtquick_window_set_minimum_size(std::int32_t window_handle, std::int32_t min_width, std::int32_t min_height)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_set_minimum_size rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "window_set_minimum_size handle=" +
+            std::to_string(window_handle) +
+            " minWidth=" +
+            std::to_string(min_width) +
+            " minHeight=" +
+            std::to_string(min_height));
+        return 1;
+    }
+
     void ilc_qtquick_window_destroy(std::int32_t window_handle)
     {
         std::lock_guard<std::mutex> lock(bridge_mutex);
@@ -167,6 +207,74 @@ extern "C"
         return 1;
     }
 
+    std::int32_t ilc_qtquick_window_focus_text_input(std::int32_t window_handle, std::int32_t text_box_id)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_focus_text_input rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "window_focus_text_input handle=" +
+            std::to_string(window_handle) +
+            " textBoxId=" +
+            std::to_string(text_box_id));
+        return 1;
+    }
+
+    char* ilc_qtquick_backend_read_text_input_value(std::int32_t backend_handle, std::int32_t text_box_id)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        if (!backends.contains(backend_handle))
+        {
+            qtbridge_debug("backend_read_text_input_value rejected missing_backend=" + std::to_string(backend_handle));
+            return nullptr;
+        }
+
+        auto* buffer = static_cast<char*>(std::malloc(1));
+        if (buffer == nullptr)
+        {
+            qtbridge_debug("backend_read_text_input_value allocation_failed textBoxId=" + std::to_string(text_box_id));
+            return nullptr;
+        }
+
+        buffer[0] = '\0';
+        qtbridge_debug(
+            "backend_read_text_input_value backend=" +
+            std::to_string(backend_handle) +
+            " textBoxId=" +
+            std::to_string(text_box_id) +
+            " value=''");
+        return buffer;
+    }
+
+    std::int32_t ilc_qtquick_backend_read_slider_value(std::int32_t backend_handle, std::int32_t slider_id)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        if (!backends.contains(backend_handle))
+        {
+            qtbridge_debug("backend_read_slider_value rejected missing_backend=" + std::to_string(backend_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "backend_read_slider_value backend=" +
+            std::to_string(backend_handle) +
+            " sliderId=" +
+            std::to_string(slider_id) +
+            " value=0");
+        return 0;
+    }
+
+    void ilc_qtquick_string_free(char* value)
+    {
+        qtbridge_debug("string_free hasValue=" + std::to_string(value != nullptr ? 1 : 0));
+        std::free(value);
+    }
+
     std::int32_t ilc_qtquick_backend_run(std::int32_t backend_handle)
     {
         std::lock_guard<std::mutex> lock(bridge_mutex);
@@ -179,6 +287,21 @@ extern "C"
 
         it->second.ran = true;
         qtbridge_debug("backend_run handle=" + std::to_string(backend_handle));
+        return 1;
+    }
+
+    std::int32_t ilc_qtquick_backend_run_with_click_callback(std::int32_t backend_handle, ilc_qtquick_i32_callback callback)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = backends.find(backend_handle);
+        if (it == backends.end())
+        {
+            qtbridge_debug("backend_run_with_click_callback rejected missing_backend=" + std::to_string(backend_handle));
+            return 0;
+        }
+
+        it->second.ran = true;
+        qtbridge_debug("backend_run_with_click_callback handle=" + std::to_string(backend_handle) + " callback=" + std::to_string(callback != nullptr ? 1 : 0));
         return 1;
     }
 }

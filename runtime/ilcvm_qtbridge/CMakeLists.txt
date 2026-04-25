@@ -1,5 +1,7 @@
 find_package(Qt6 COMPONENTS Core Gui Qml Quick QUIET)
 
+set(CMAKE_AUTOMOC ON)
+
 set(ilc_qtbridge_sources)
 if (Qt6_FOUND)
     list(APPEND ilc_qtbridge_sources
@@ -32,4 +34,5 @@ if (Qt6_FOUND)
 endif()
 
 set_target_properties(ilc_qtbridge PROPERTIES
-    OUTPUT_NAME ilc_qtbridge)
+    OUTPUT_NAME ilc_qtbridge
+    AUTOMOC ON)

@@ -15,6 +15,14 @@ namespace System.Ui.Backends.QtQuick;
 
 uses System, System.Collections, System.Ui, System.Ui.Hosting;
 
+public enum StringReturn
+begin
+  None = 0;
+  Utf8Owned = 1;
+end;
+
+public delegate function QtQuickInteractionCallback(interactionToken: Integer): Integer;
+
 public enum QtQuickRenderMode
 begin
   ManagedPreview = 0;
@@ -35,6 +43,12 @@ begin
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_show', CallingConvention := CallingConvention.Cdecl)]
   public static extern function ShowWindow(windowHandle: NativeHandle): Integer;
 
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_size', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetWindowSize(windowHandle: NativeHandle; width: Integer; height: Integer): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_minimum_size', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetWindowMinimumSize(windowHandle: NativeHandle; minWidth: Integer; minHeight: Integer): Integer;
+
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_destroy', CallingConvention := CallingConvention.Cdecl)]
   public static extern procedure DestroyWindow(windowHandle: NativeHandle);
 
@@ -46,6 +60,18 @@ begin
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run', CallingConvention := CallingConvention.Cdecl)]
   public static extern function RunBackend(backendHandle: NativeHandle): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run_with_click_callback', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function RunBackendWithClickCallback(backendHandle: NativeHandle; callback: QtQuickInteractionCallback): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_read_text_input_value', CallingConvention := CallingConvention.Cdecl, StringReturn := StringReturn.Utf8Owned, StringFreeEntryPoint := 'ilc_qtquick_string_free')]
+  public static extern function ReadTextInputValue(backendHandle: NativeHandle; textBoxId: Integer): String;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_read_slider_value', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function ReadSliderValue(backendHandle: NativeHandle; sliderId: Integer): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_focus_text_input', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function FocusTextInput(windowHandle: NativeHandle; textBoxId: Integer): Integer;
 end;
 
 public class QtQuickNativeViewHost: IViewHost
@@ -165,13 +191,23 @@ end;
 
 public class QtQuickBackend: IUiBackend
 begin
+  public static var CurrentInteractiveBackend: QtQuickBackend;
+
   private var FallbackBackendValue: IUiBackend;
   private var EngineInitializedValue: Boolean;
   private var NativeBridgeEnabledValue: Boolean;
   private var NativeBackendHandleValue: NativeHandle;
+  private var LastInteractiveWindowHandleValue: NativeHandle;
   private var LastHostedWindowTitleValue: String;
   private var LastHostedRootDescriptionValue: String;
   private var LastBridgeStatusValue: String;
+  private var ActiveButtonsValue: List<Button>;
+  private var ActiveCheckBoxesValue: List<CheckBox>;
+  private var ActiveTextBoxesValue: List<TextBox>;
+  private var ActiveSlidersValue: List<Slider>;
+  private var ActiveInteractiveWindowsValue: List<Window>;
+  private var ActiveInteractiveWindowHandlesValue: List<NativeHandle>;
+  private var PendingFocusTextBoxValue: TextBox;
 
   public property BackendName: String
   begin
@@ -247,6 +283,14 @@ begin
     end;
   end;
 
+  public property LastInteractiveWindowHandle: NativeHandle
+  begin
+    get
+    begin
+      return LastInteractiveWindowHandleValue;
+    end;
+  end;
+
   public property BridgeLibraryName: String
   begin
     get
@@ -269,9 +313,17 @@ begin
     EngineInitializedValue := false;
     NativeBridgeEnabledValue := false;
     NativeBackendHandleValue := NativeHandle.Null;
+    LastInteractiveWindowHandleValue := NativeHandle.Null;
     LastHostedWindowTitleValue := '';
     LastHostedRootDescriptionValue := '';
     LastBridgeStatusValue := 'managed-fallback';
+    ActiveButtonsValue := new List<Button>();
+    ActiveCheckBoxesValue := new List<CheckBox>();
+    ActiveTextBoxesValue := new List<TextBox>();
+    ActiveSlidersValue := new List<Slider>();
+    ActiveInteractiveWindowsValue := new List<Window>();
+    ActiveInteractiveWindowHandlesValue := new List<NativeHandle>();
+    PendingFocusTextBoxValue := nil;
   end;
 
   public function InitializeEngine: Boolean;
@@ -310,8 +362,466 @@ begin
   begin
     NativeBridgeEnabledValue := true;
     NativeBackendHandleValue := NativeHandle.Null;
+    LastInteractiveWindowHandleValue := NativeHandle.Null;
     LastBridgeStatusValue := 'native-bridge-prepared';
     return true;
+  end;
+
+  private method ResetInteractiveSession;
+  begin
+    ActiveButtonsValue := new List<Button>();
+    ActiveCheckBoxesValue := new List<CheckBox>();
+    ActiveTextBoxesValue := new List<TextBox>();
+    ActiveSlidersValue := new List<Slider>();
+    ActiveInteractiveWindowsValue := new List<Window>();
+    ActiveInteractiveWindowHandlesValue := new List<NativeHandle>();
+    PendingFocusTextBoxValue := nil;
+  end;
+
+  private function RegisterInteractiveButton(button: Button): Integer;
+  begin
+    if button = nil then
+    begin
+      return 0;
+    end;
+
+    var index := 0;
+    while index < ActiveButtonsValue.Count do
+    begin
+      if ActiveButtonsValue[index] = button then
+      begin
+        return index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    ActiveButtonsValue.Add(button);
+    return ActiveButtonsValue.Count;
+  end;
+
+  private function FindInteractiveButton(buttonId: Integer): Button;
+  begin
+    if buttonId <= 0 then
+    begin
+      return nil;
+    end;
+
+    var index := buttonId - 1;
+    if index >= ActiveButtonsValue.Count then
+    begin
+      return nil;
+    end;
+
+    return ActiveButtonsValue[index];
+  end;
+
+  private function RegisterInteractiveCheckBox(checkBox: CheckBox): Integer;
+  begin
+    if checkBox = nil then
+    begin
+      return 0;
+    end;
+
+    var index := 0;
+    while index < ActiveCheckBoxesValue.Count do
+    begin
+      if ActiveCheckBoxesValue[index] = checkBox then
+      begin
+        return index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    ActiveCheckBoxesValue.Add(checkBox);
+    return ActiveCheckBoxesValue.Count;
+  end;
+
+  private function FindInteractiveCheckBox(checkBoxId: Integer): CheckBox;
+  begin
+    if checkBoxId <= 0 then
+    begin
+      return nil;
+    end;
+
+    var index := checkBoxId - 1;
+    if index >= ActiveCheckBoxesValue.Count then
+    begin
+      return nil;
+    end;
+
+    return ActiveCheckBoxesValue[index];
+  end;
+
+  private function RegisterInteractiveTextBox(textBox: TextBox): Integer;
+  begin
+    if textBox = nil then
+    begin
+      return 0;
+    end;
+
+    var index := 0;
+    while index < ActiveTextBoxesValue.Count do
+    begin
+      if ActiveTextBoxesValue[index] = textBox then
+      begin
+        return index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    ActiveTextBoxesValue.Add(textBox);
+    return ActiveTextBoxesValue.Count;
+  end;
+
+  private function FindInteractiveTextBox(textBoxId: Integer): TextBox;
+  begin
+    if textBoxId <= 0 then
+    begin
+      return nil;
+    end;
+
+    var index := textBoxId - 1;
+    if index >= ActiveTextBoxesValue.Count then
+    begin
+      return nil;
+    end;
+
+    return ActiveTextBoxesValue[index];
+  end;
+
+  private function RegisterInteractiveSlider(slider: Slider): Integer;
+  begin
+    if slider = nil then
+    begin
+      return 0;
+    end;
+
+    var index := 0;
+    while index < ActiveSlidersValue.Count do
+    begin
+      if ActiveSlidersValue[index] = slider then
+      begin
+        return index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    ActiveSlidersValue.Add(slider);
+    return ActiveSlidersValue.Count;
+  end;
+
+  private function FindInteractiveSlider(sliderId: Integer): Slider;
+  begin
+    if sliderId <= 0 then
+    begin
+      return nil;
+    end;
+
+    var index := sliderId - 1;
+    if index >= ActiveSlidersValue.Count then
+    begin
+      return nil;
+    end;
+
+    return ActiveSlidersValue[index];
+  end;
+
+  private function EncodeButtonInteraction(buttonId: Integer): Integer;
+  begin
+    return buttonId;
+  end;
+
+  private function EncodeTextBoxInteraction(textBoxId: Integer): Integer;
+  begin
+    return 0 - textBoxId;
+  end;
+
+  private function EncodeCheckBoxInteraction(checkBoxId: Integer): Integer;
+  begin
+    return 0 - (1000000 + checkBoxId);
+  end;
+
+  private function EncodeSliderInteraction(sliderId: Integer): Integer;
+  begin
+    return 0 - (2000000 + sliderId);
+  end;
+
+  private method TrackInteractiveWindow(window: Window; windowHandle: NativeHandle);
+  begin
+    if window = nil or windowHandle = NativeHandle.Null then
+    begin
+      return;
+    end;
+
+    ActiveInteractiveWindowsValue.Add(window);
+    ActiveInteractiveWindowHandlesValue.Add(windowHandle);
+  end;
+
+  private function RefreshInteractiveWindows: Integer;
+  begin
+    var refreshed := 0;
+    var index := 0;
+    while index < ActiveInteractiveWindowHandlesValue.Count do
+    begin
+      if RefreshNativeWindow(ActiveInteractiveWindowHandlesValue[index], ActiveInteractiveWindowsValue[index]) then
+      begin
+        refreshed := refreshed + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    return refreshed;
+  end;
+
+  public method RequestTextBoxFocus(textBox: TextBox);
+  begin
+    PendingFocusTextBoxValue := textBox;
+  end;
+
+  private function ResolvePendingFocusTextBoxId: Integer;
+  begin
+    if PendingFocusTextBoxValue = nil then
+    begin
+      return 0;
+    end;
+
+    var index := 0;
+    while index < ActiveTextBoxesValue.Count do
+    begin
+      if ActiveTextBoxesValue[index] = PendingFocusTextBoxValue then
+      begin
+        return index + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    return 0;
+  end;
+
+  private function ApplyPendingTextBoxFocus: Integer;
+  begin
+    var textBoxId := ResolvePendingFocusTextBoxId();
+    PendingFocusTextBoxValue := nil;
+    if textBoxId <= 0 then
+    begin
+      return 0;
+    end;
+
+    var focused := 0;
+    var index := 0;
+    while index < ActiveInteractiveWindowHandlesValue.Count do
+    begin
+      if QtQuickNative.FocusTextInput(ActiveInteractiveWindowHandlesValue[index], textBoxId) > 0 then
+      begin
+        focused := focused + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    return focused;
+  end;
+
+  public static function HandleNativeInteraction(interactionToken: Integer): Integer;
+  begin
+    var currentBackend := QtQuickBackend.CurrentInteractiveBackend;
+    if currentBackend = nil then
+    begin
+      return 0;
+    end;
+
+    return currentBackend.DispatchNativeInteraction(interactionToken);
+  end;
+
+  public function DispatchNativeInteraction(interactionToken: Integer): Integer;
+  begin
+    if interactionToken <= -2000000 then
+    begin
+      return DispatchNativeSliderChanged((0 - interactionToken) - 2000000);
+    end;
+
+    if interactionToken > 0 then
+    begin
+      return DispatchNativeClick(interactionToken);
+    end;
+
+    if interactionToken <= -1000000 then
+    begin
+      return DispatchNativeCheckBoxToggled((0 - interactionToken) - 1000000);
+    end;
+
+    if interactionToken < 0 then
+    begin
+      return DispatchNativeTextChanged(0 - interactionToken);
+    end;
+
+    LastBridgeStatusValue := 'native-interaction-rejected';
+    return 0;
+  end;
+
+  public function DispatchNativeClick(buttonId: Integer): Integer;
+  begin
+    var button := FindInteractiveButton(buttonId);
+    if button = nil then
+    begin
+      LastBridgeStatusValue := 'native-click-missing-button';
+      return 0;
+    end;
+
+    if button.Click() = false then
+    begin
+      LastBridgeStatusValue := 'native-click-rejected';
+      return 0;
+    end;
+
+    var refreshed := RefreshInteractiveWindows();
+    var focused := ApplyPendingTextBoxFocus();
+    if refreshed > 0 then
+    begin
+      if focused > 0 then
+      begin
+        LastBridgeStatusValue := 'native-click-dispatched-focus-restored';
+      end
+      else
+      begin
+        LastBridgeStatusValue := 'native-click-dispatched';
+      end;
+    end
+    else
+    begin
+      LastBridgeStatusValue := 'native-click-refresh-failed';
+    end;
+
+    return refreshed;
+  end;
+
+  public function DispatchNativeSliderChanged(sliderId: Integer): Integer;
+  begin
+    var slider := FindInteractiveSlider(sliderId);
+    if slider = nil then
+    begin
+      LastBridgeStatusValue := 'native-slider-missing-slider';
+      return 0;
+    end;
+
+    if NativeBackendHandleValue = NativeHandle.Null then
+    begin
+      LastBridgeStatusValue := 'native-slider-missing-backend';
+      return 0;
+    end;
+
+    var currentValue := QtQuickNative.ReadSliderValue(NativeBackendHandleValue, sliderId);
+    slider.Value := currentValue;
+    var notified := slider.NotifyValueChanged();
+    var refreshed := RefreshInteractiveWindows();
+    if refreshed > 0 then
+    begin
+      if notified then
+      begin
+        LastBridgeStatusValue := 'native-slider-dispatched';
+      end
+      else
+      begin
+        LastBridgeStatusValue := 'native-slider-refreshed';
+      end;
+    end
+    else if notified then
+    begin
+      LastBridgeStatusValue := 'native-slider-notified';
+    end
+    else
+    begin
+      LastBridgeStatusValue := 'native-slider-noop';
+    end;
+
+    return refreshed;
+  end;
+
+  public function DispatchNativeCheckBoxToggled(checkBoxId: Integer): Integer;
+  begin
+    var checkBox := FindInteractiveCheckBox(checkBoxId);
+    if checkBox = nil then
+    begin
+      LastBridgeStatusValue := 'native-toggle-missing-checkbox';
+      return 0;
+    end;
+
+    var toggledValue := checkBox.Toggle();
+    var notified := checkBox.NotifyToggled();
+    var refreshed := RefreshInteractiveWindows();
+    if refreshed > 0 then
+    begin
+      if notified then
+      begin
+        LastBridgeStatusValue := 'native-toggle-dispatched';
+      end
+      else if toggledValue then
+      begin
+        LastBridgeStatusValue := 'native-toggle-on';
+      end
+      else
+      begin
+        LastBridgeStatusValue := 'native-toggle-off';
+      end;
+    end
+    else if notified then
+    begin
+      LastBridgeStatusValue := 'native-toggle-notified';
+    end
+    else
+    begin
+      LastBridgeStatusValue := 'native-toggle-noop';
+    end;
+
+    return refreshed;
+  end;
+
+  public function DispatchNativeTextChanged(textBoxId: Integer): Integer;
+  begin
+    var textBox := FindInteractiveTextBox(textBoxId);
+    if textBox = nil then
+    begin
+      LastBridgeStatusValue := 'native-text-missing-textbox';
+      return 0;
+    end;
+
+    if NativeBackendHandleValue = NativeHandle.Null then
+    begin
+      LastBridgeStatusValue := 'native-text-missing-backend';
+      return 0;
+    end;
+
+    var currentText := QtQuickNative.ReadTextInputValue(NativeBackendHandleValue, textBoxId);
+    textBox.Text := currentText;
+    var notified := textBox.NotifyTextChanged();
+    var refreshed := RefreshInteractiveWindows();
+    if refreshed > 0 then
+    begin
+      if notified then
+      begin
+        LastBridgeStatusValue := 'native-text-dispatched';
+      end
+      else
+      begin
+        LastBridgeStatusValue := 'native-text-refreshed';
+      end;
+    end
+    else if notified then
+    begin
+      LastBridgeStatusValue := 'native-text-notified';
+    end
+    else
+    begin
+      LastBridgeStatusValue := 'native-text-noop';
+    end;
+
+    return refreshed;
   end;
 
   private function EscapeQmlString(value: String): String;
@@ -339,7 +849,8 @@ begin
       begin
         result := result + '\' + 'n';
       end
-      else if current = '' then
+      else if current = '
+' then
       begin
         result := result + '\' + 'r';
       end
@@ -389,6 +900,26 @@ begin
     return 'transparent';
   end;
 
+  private function ThicknessToHorizontalPadding(value: Thickness): Integer;
+  begin
+    if value = nil then
+    begin
+      return 0;
+    end;
+
+    return value.Left + value.Right;
+  end;
+
+  private function ThicknessToVerticalPadding(value: Thickness): Integer;
+  begin
+    if value = nil then
+    begin
+      return 0;
+    end;
+
+    return value.Top + value.Bottom;
+  end;
+
   private function DescribeRootView(view: View): String;
   begin
     if view = nil then
@@ -425,16 +956,37 @@ begin
     begin
       var panel := view as StackPanel;
       var containerType := 'Column';
+      var spacing := '14';
+      var layoutWidth := '380';
+      var layoutHeight := 'childrenRect.height';
       if panel.Orientation = Orientation.Horizontal then
       begin
         containerType := 'Row';
+        spacing := '12';
+        layoutWidth := 'childrenRect.width';
       end;
 
-      var result := containerType + ' { spacing: 12; ';
+      if panel.Name = 'demoRoot' then
+      begin
+        spacing := '16';
+      end
+      else if panel.Name = 'demoActions' then
+      begin
+        spacing := '14';
+      end
+      else if panel.Name = 'demoIntensityRow' then
+      begin
+        spacing := '10';
+        layoutWidth := '380';
+      end;
+
+      var result := containerType + ' { spacing: ' + spacing + '; ';
       if centerInParent then
       begin
-        result := result + 'anchors.centerIn: parent; ';
+        result := result + 'id: ilcContentRoot; anchors.centerIn: parent; ';
       end;
+
+      result := result + 'width: ' + layoutWidth + '; height: ' + layoutHeight + '; ';
 
       if panel.Name <> '' then
       begin
@@ -459,6 +1011,81 @@ begin
     if view is TextBlock then
     begin
       var textBlock := view as TextBlock;
+      var fontSize := '18';
+      var fontWeight := 'Font.Normal';
+      var wrapMode := 'Text.WordWrap';
+      var horizontalAlignment := 'Text.AlignLeft';
+      var textWidth := '380';
+      if textBlock.Name = 'demoTitle' then
+      begin
+        fontSize := '30';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoEyebrow' then
+      begin
+        fontSize := '12';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoSubtitle' then
+      begin
+        fontSize := '15';
+      end
+      else if textBlock.Name = 'demoStatusLabel' then
+      begin
+        fontSize := '12';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoStatus' then
+      begin
+        fontSize := '16';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoHintLabel' then
+      begin
+        fontSize := '12';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoHint' then
+      begin
+        fontSize := '14';
+      end
+      else if textBlock.Name = 'demoInputLabel' then
+      begin
+        fontSize := '13';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoControlsLabel' then
+      begin
+        fontSize := '13';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoSummaryLabel' then
+      begin
+        fontSize := '13';
+        fontWeight := 'Font.DemiBold';
+      end
+      else if textBlock.Name = 'demoSummary' then
+      begin
+        fontSize := '14';
+      end;
+
+      if textBlock.Name = 'demoIntensityLabel' then
+      begin
+        fontSize := '13';
+        fontWeight := 'Font.DemiBold';
+        textWidth := '150';
+      end
+      else if textBlock.Name = 'demoIntensityValue' then
+      begin
+        fontSize := '13';
+        fontWeight := 'Font.DemiBold';
+        textWidth := '220';
+      end
+      else if textBlock.Name = 'demoEyebrow' then
+      begin
+        textWidth := '380';
+      end;
+
       var textResult := 'Text { ';
       if centerInParent then
       begin
@@ -473,8 +1100,158 @@ begin
       textResult := textResult +
         'text: "' + EscapeQmlString(textBlock.Text) + '"; ' +
         'color: "' + ColorToQml(textBlock.Foreground) + '"; ' +
+        'width: ' + textWidth + '; wrapMode: ' + wrapMode + '; horizontalAlignment: ' + horizontalAlignment + '; font.pixelSize: ' + fontSize + '; font.weight: ' + fontWeight + '; ' +
         '}';
       return textResult;
+    end;
+
+    if view is Button then
+    begin
+      var button := view as Button;
+      var buttonId := RegisterInteractiveButton(button);
+      var buttonBackgroundColor := ColorToQml(button.Background);
+      var buttonBorderColor := '#1d4fb5';
+      var buttonWidth := '260';
+      if button.Background = Color.Red then
+      begin
+        buttonBorderColor := '#9b2c2c';
+      end
+      else if button.Background = Color.Green then
+      begin
+        buttonBorderColor := '#276749';
+      end
+      else if button.Background = Color.Gray then
+      begin
+        buttonBorderColor := '#4a5568';
+      end;
+
+      if button.Name = 'demoButton' then
+      begin
+        buttonWidth := '248';
+      end
+      else if button.Name = 'demoResetButton' then
+      begin
+        buttonWidth := '120';
+      end;
+
+      var buttonResult := 'Rectangle { width: ' + buttonWidth + '; height: 46; radius: 10; color: "' + buttonBackgroundColor + '"; border.width: 1; border.color: "' + buttonBorderColor + '"; ';
+      if centerInParent then
+      begin
+        buttonResult := buttonResult + 'anchors.centerIn: parent; ';
+      end;
+
+      if button.Name <> '' then
+      begin
+        buttonResult := buttonResult + 'objectName: "' + EscapeQmlString(button.Name) + '"; ';
+      end;
+
+      buttonResult := buttonResult +
+        'property int ilcButtonId: ' + EncodeButtonInteraction(buttonId).ToString() + '; ' +
+        'MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (ilcBridge !== null) { ilcBridge.onButtonClicked(parent.ilcButtonId); } } } ' +
+        'Text { anchors.centerIn: parent; color: "#f4f7fb"; text: "' + EscapeQmlString(button.Text) + '" } ' +
+        '}';
+      return buttonResult;
+    end;
+
+    if view is CheckBox then
+    begin
+      var checkBox := view as CheckBox;
+      var checkBoxId := RegisterInteractiveCheckBox(checkBox);
+      var markColor := '#8a94a6';
+      var markVisible := 'false';
+      if checkBox.IsChecked then
+      begin
+        markColor := '#38a169';
+        markVisible := 'true';
+      end;
+
+      var checkBoxResult := 'Item { width: 380; height: 28; ';
+      if centerInParent then
+      begin
+        checkBoxResult := checkBoxResult + 'anchors.centerIn: parent; ';
+      end;
+
+      if checkBox.Name <> '' then
+      begin
+        checkBoxResult := checkBoxResult + 'objectName: "' + EscapeQmlString(checkBox.Name) + '"; ';
+      end;
+
+      checkBoxResult := checkBoxResult +
+        'property int ilcCheckBoxId: ' + EncodeCheckBoxInteraction(checkBoxId).ToString() + '; ' +
+        'Row { anchors.verticalCenter: parent.verticalCenter; spacing: 12; ' +
+        'Rectangle { width: 22; height: 22; radius: 6; color: "#232a35"; border.width: 1; border.color: "#4a5568"; ' +
+        'Rectangle { visible: ' + markVisible + '; anchors.centerIn: parent; width: 12; height: 12; radius: 4; color: "' + markColor + '"; } } ' +
+        'Text { text: "' + EscapeQmlString(checkBox.Text) + '"; color: "#d8e1ee"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 15; } ' +
+        '} ' +
+        'MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (ilcBridge !== null) { ilcBridge.onButtonClicked(parent.ilcCheckBoxId); } } } ' +
+        '}';
+      return checkBoxResult;
+    end;
+
+    if view is TextBox then
+    begin
+      var textBox := view as TextBox;
+      var textBoxId := RegisterInteractiveTextBox(textBox);
+      var horizontalPadding := 16 + ThicknessToHorizontalPadding(textBox.Padding);
+      var verticalPadding := 10 + ThicknessToVerticalPadding(textBox.Padding);
+      var readOnlyText := 'false';
+      var inputText := textBox.Text;
+      var placeholderText := textBox.PlaceholderText;
+      var inputObjectName := 'ilcTextInput_' + textBoxId.ToString();
+      if textBox.IsReadOnly then
+      begin
+        readOnlyText := 'true';
+      end;
+
+      var textBoxResult := 'Rectangle { width: 380; height: 52; radius: 10; color: "#232a35"; border.width: 1; border.color: "#4a5568"; ';
+      if centerInParent then
+      begin
+        textBoxResult := textBoxResult + 'anchors.centerIn: parent; ';
+      end;
+
+      if textBox.Name <> '' then
+      begin
+        textBoxResult := textBoxResult + 'objectName: "' + EscapeQmlString(textBox.Name) + '"; ';
+      end;
+
+      textBoxResult := textBoxResult +
+        'property int ilcTextBoxId: ' + textBoxId.ToString() + '; ' +
+        'TextInput { id: textInput; objectName: "' + inputObjectName + '"; anchors.fill: parent; anchors.leftMargin: ' + horizontalPadding.ToString() + '; anchors.rightMargin: ' + horizontalPadding.ToString() + '; anchors.topMargin: ' + verticalPadding.ToString() + '; anchors.bottomMargin: ' + verticalPadding.ToString() + '; ' +
+        'readOnly: ' + readOnlyText + '; ' +
+        'text: "' + EscapeQmlString(inputText) + '"; ' +
+        'color: "#f4f7fb"; ' +
+        'onTextEdited: { if (ilcBridge !== null) { ilcBridge.onTextEdited(parent.ilcTextBoxId, textInput.text); } } ' +
+        'selectionColor: "#4c7cf0"; selectedTextColor: "#f4f7fb"; } ' +
+        'Text { visible: textInput.text.length === 0; anchors.fill: parent; anchors.leftMargin: ' + horizontalPadding.ToString() + '; anchors.rightMargin: ' + horizontalPadding.ToString() + '; anchors.topMargin: ' + verticalPadding.ToString() + '; anchors.bottomMargin: ' + verticalPadding.ToString() + '; text: "' + EscapeQmlString(placeholderText) + '"; color: "#bac4d3"; verticalAlignment: Text.AlignVCenter; } ' +
+        '}';
+      return textBoxResult;
+    end;
+
+    if view is Slider then
+    begin
+      var slider := view as Slider;
+      var sliderId := RegisterInteractiveSlider(slider);
+      var sliderFrom := slider.Minimum.ToString() + '.0';
+      var sliderTo := slider.Maximum.ToString() + '.0';
+      var sliderValue := slider.Value.ToString() + '.0';
+      var sliderResult := 'Item { width: 380; height: 40; ';
+      if centerInParent then
+      begin
+        sliderResult := sliderResult + 'anchors.centerIn: parent; ';
+      end;
+
+      if slider.Name <> '' then
+      begin
+        sliderResult := sliderResult + 'objectName: "' + EscapeQmlString(slider.Name) + '"; ';
+      end;
+
+      sliderResult := sliderResult +
+        'property int ilcSliderId: ' + sliderId.ToString() + '; ' +
+        'Slider { id: sliderControl; anchors.fill: parent; from: ' + sliderFrom + '; to: ' + sliderTo + '; value: ' + sliderValue + '; stepSize: 1.0; ' +
+        'onPressedChanged: { if (!sliderControl.pressed && ilcBridge !== null) { ilcBridge.onSliderValueChanged(parent.ilcSliderId, Math.round(sliderControl.value)); } } ' +
+        '} ' +
+        '}';
+      return sliderResult;
     end;
 
     var fallback := 'Rectangle { width: 180; height: 40; radius: 6; color: "#313844"; ';
@@ -510,11 +1287,22 @@ begin
       end;
     end;
 
+    var windowWidth := 640;
+    var windowHeight := 480;
+    if window <> nil then
+    begin
+      windowWidth := window.Width;
+      windowHeight := window.Height;
+    end;
+
     var contentQml := BuildViewQml(window.Content, true);
     return
       'import QtQuick' + '
 ' +
-      'Rectangle { width: 960; height: 540; color: "' + backgroundColor + '"; objectName: "' + EscapeQmlString(rootName) + '"; ' +
+      'import QtQuick.Controls' + '
+' +
+      'Rectangle { width: ' + windowWidth.ToString() + '; height: ' + windowHeight.ToString() + '; color: "' + backgroundColor + '"; objectName: "' + EscapeQmlString(rootName) + '"; ' +
+      'Rectangle { width: 468; height: Math.max(400, ilcContentRoot.height + 56); anchors.centerIn: parent; radius: 22; color: "#171c24"; border.width: 1; border.color: "#2a3240"; opacity: 0.98; } ' +
       contentQml +
       ' }';
   end;
@@ -522,6 +1310,8 @@ begin
   public function Run(application: Application): Integer;
   begin
     EngineInitializedValue := true;
+    ResetInteractiveSession();
+    LastInteractiveWindowHandleValue := NativeHandle.Null;
     LastHostedWindowTitleValue := '';
     LastHostedRootDescriptionValue := '';
 
@@ -560,10 +1350,9 @@ begin
             else
             begin
               nativeWindowHandles.Add(nativeWindowHandle);
-              var rootNameResult := QtQuickNative.SetRootName(nativeWindowHandle, LastHostedRootDescriptionValue);
-              var qmlResult := QtQuickNative.SetContentQml(nativeWindowHandle, BuildWindowContentQml(currentWindow));
+              TrackInteractiveWindow(currentWindow, nativeWindowHandle);
               var showResult := 0;
-              if rootNameResult <> 0 and qmlResult <> 0 then
+              if RefreshNativeWindow(nativeWindowHandle, currentWindow) then
               begin
                 showResult := QtQuickNative.ShowWindow(nativeWindowHandle);
               end
@@ -581,7 +1370,9 @@ begin
         end;
       end;
 
-      var runResult := QtQuickNative.RunBackend(NativeBackendHandleValue);
+      QtQuickBackend.CurrentInteractiveBackend := self;
+      var runResult := QtQuickNative.RunBackendWithClickCallback(NativeBackendHandleValue, QtQuickBackend.HandleNativeInteraction);
+      QtQuickBackend.CurrentInteractiveBackend := nil;
       var destroyIndex := 0;
       while destroyIndex < nativeWindowHandles.Count do
       begin
@@ -591,6 +1382,8 @@ begin
 
       QtQuickNative.DestroyBackend(NativeBackendHandleValue);
       NativeBackendHandleValue := NativeHandle.Null;
+      LastInteractiveWindowHandleValue := NativeHandle.Null;
+      ResetInteractiveSession();
       if runResult <> 0 then
       begin
         LastBridgeStatusValue := 'native-bridge-rendered-qml';
@@ -631,5 +1424,29 @@ begin
     end;
 
     return hosted;
+  end;
+
+  public function RefreshNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
+  begin
+    if windowHandle = NativeHandle.Null or window = nil then
+    begin
+      LastBridgeStatusValue := 'native-window-refresh-rejected';
+      return false;
+    end;
+
+    LastHostedWindowTitleValue := window.Title;
+    LastHostedRootDescriptionValue := DescribeRootView(window.Content);
+    var minSizeResult := QtQuickNative.SetWindowMinimumSize(windowHandle, window.MinWidth, window.MinHeight);
+    var sizeResult := QtQuickNative.SetWindowSize(windowHandle, window.Width, window.Height);
+    var rootNameResult := QtQuickNative.SetRootName(windowHandle, LastHostedRootDescriptionValue);
+    var qmlResult := QtQuickNative.SetContentQml(windowHandle, BuildWindowContentQml(window));
+    if minSizeResult <> 0 and sizeResult <> 0 and rootNameResult <> 0 and qmlResult <> 0 then
+    begin
+      LastBridgeStatusValue := 'native-window-refreshed';
+      return true;
+    end;
+
+    LastBridgeStatusValue := 'native-window-refresh-failed';
+    return false;
   end;
 end;

@@ -1058,6 +1058,8 @@ begin
   private var TextValue: String;
   /// <summary>The command that is executed when the button is clicked.</summary>
   private var CommandValue: ICommand;
+  /// <summary>The background color of the button.</summary>
+  private var BackgroundValue: Color;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • PROPERTIES •
@@ -1090,6 +1092,20 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the background color of the button.</summary>
+  public property Background: Color
+  begin
+    get
+    begin
+      return BackgroundValue;
+    end;
+
+    set(value)
+    begin
+      BackgroundValue := value;
+    end;
+  end;
+
   /// <summary>Gets a value indicating whether the button can be clicked, which is determined by whether the command is set and can be executed.</summary>
   public property CanClick: Boolean
   begin
@@ -1109,6 +1125,7 @@ begin
     InitializeView();
     TextValue := '';
     CommandValue := nil;
+    BackgroundValue := Color.Blue;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1144,7 +1161,13 @@ begin
   private var TextValue: String;
   /// <summary>A value indicating whether the checkbox is checked.</summary>
   private var IsCheckedValue: Boolean;
+  /// <summary>The command executed when the checked state changes.</summary>
+  private var ToggledCommandValue: ICommand;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the text displayed next to the checkbox.</summary>
   public property Text: String
   begin
     get
@@ -1158,6 +1181,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets a value indicating whether the checkbox is checked.</summary>
   public property IsChecked: Boolean
   begin
     get
@@ -1171,13 +1195,48 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the command executed when the checked state changes.</summary>
+  public property ToggledCommand: ICommand
+  begin
+    get
+    begin
+      return ToggledCommandValue;
+    end;
+
+    set(value)
+    begin
+      ToggledCommandValue := value;
+    end;
+  end;
+
+  /// <summary>Gets a value indicating whether the checkbox can notify that it has been toggled.</summary>
+  public property CanNotifyToggled: Boolean
+  begin
+    get
+    begin
+      return ToggledCommandValue <> nil and ToggledCommandValue.CanExecute();
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="CheckBox"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
     TextValue := '';
     IsCheckedValue := false;
+    ToggledCommandValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Toggle
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Toggles the checked state of the checkbox.</summary>
+  /// <returns>The new checked state of the checkbox after toggling.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Toggle: Boolean;
   begin
     if IsCheckedValue then
@@ -1189,14 +1248,49 @@ begin
     IsCheckedValue := true;
     return true;
   end;
-end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NotifyToggled
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Notifies that the checked state of the checkbox has been toggled, executing the toggled command if it can notify.</summary>
+  /// <returns><c>true</c> if the toggled command was executed; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function NotifyToggled: Boolean;
+  begin
+    if CanNotifyToggled = false then
+    begin
+      return false;
+    end;
+
+    ToggledCommandValue.Execute();
+    return true;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Slider
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a slider that can be used to select a value from a range.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Slider: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The minimum value of the slider.</summary>
   private var MinimumValue: Integer;
+  /// <summary>The maximum value of the slider.</summary>
   private var MaximumValue: Integer;
+  /// <summary>The current value of the slider.</summary>
   private var ValueValue: Integer;
+  // <summary>The command executed when the slider value changes.</summary>
+  private var ValueChangedCommandValue: ICommand;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The minimum value of the slider.</summary>
   public property Minimum: Integer
   begin
     get
@@ -1219,6 +1313,7 @@ begin
     end;
   end;
 
+  /// <summary>The maximum value of the slider.</summary>
   public property Maximum: Integer
   begin
     get
@@ -1241,6 +1336,7 @@ begin
     end;
   end;
 
+  /// <summary>The current value of the slider.</summary>
   public property Value: Integer
   begin
     get
@@ -1266,14 +1362,49 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the command executed when the slider value changes.</summary>
+  public property ValueChangedCommand: ICommand
+  begin
+    get
+    begin
+      return ValueChangedCommandValue;
+    end;
+    set(value)
+    begin
+      ValueChangedCommandValue := value;
+    end;
+  end;
+  
+  /// <summary>Gets a value indicating whether the slider can notify that its value has changed.</summary>
+  public property CanNotifyValueChanged: Boolean
+  begin
+    get
+    begin
+      return ValueChangedCommandValue <> nil and ValueChangedCommandValue.CanExecute();
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Slider"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
     MinimumValue := 0;
     MaximumValue := 100;
     ValueValue := 0;
+    ValueChangedCommandValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SetRange
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the minimum and maximum values of the slider, ensuring that the current value remains within the new range.</summary>
+  /// <param name="minimum">The minimum value to set.</param>
+  /// <param name="maximum">The maximum value to set.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method SetRange(minimum: Integer; maximum: Integer);
   begin
     MinimumValue := minimum;
@@ -1295,15 +1426,50 @@ begin
       ValueValue := MaximumValue;
     end;
   end;
-end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NotifyValueChanged
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Notifies that the slider value has changed, executing the value changed command if it can notify.</summary>
+  /// <returns><c>true</c> if the value changed command was executed; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function NotifyValueChanged: Boolean;
+  begin
+    if CanNotifyValueChanged = false then
+    begin
+      return false;
+    end;
+    ValueChangedCommandValue.Execute();
+    return true;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TextBox
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a text box that can be used to enter and edit text.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TextBox: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The text entered in the text box.</summary>
   private var TextValue: String;
+  /// <summary>The placeholder text displayed when the text box is empty.</summary>
   private var PlaceholderTextValue: String;
+  /// <summary>A value indicating whether the text box is read-only.</summary>
   private var IsReadOnlyValue: Boolean;
+  /// <summary>The padding inside the text box.</summary>
   private var PaddingValue: Thickness;
+  /// <summary>The command to execute when the text changes.</summary>
+  private var TextChangedCommandValue: ICommand;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The text entered in the text box.</summary>
   public property Text: String
   begin
     get
@@ -1322,6 +1488,7 @@ begin
     end;
   end;
 
+  /// <summary>The placeholder text displayed when the text box is empty.</summary>
   public property PlaceholderText: String
   begin
     get
@@ -1335,6 +1502,7 @@ begin
     end;
   end;
 
+  /// <summary>A value indicating whether the text box is read-only.</summary>
   public property IsReadOnly: Boolean
   begin
     get
@@ -1348,6 +1516,7 @@ begin
     end;
   end;
 
+  /// <summary>The text displayed in the text box, which is either the entered text or the placeholder text.</summary>
   public property DisplayText: String
   begin
     get
@@ -1361,6 +1530,7 @@ begin
     end;
   end;
 
+  /// <summary>The padding inside the text box.</summary>
   public property Padding: Thickness
   begin
     get
@@ -1380,6 +1550,34 @@ begin
     end;
   end;
 
+  /// <summary>The command to execute when the text changes.</summary>
+  public property TextChangedCommand: ICommand
+  begin
+    get
+    begin
+      return TextChangedCommandValue;
+    end;
+
+    set(value)
+    begin
+      TextChangedCommandValue := value;
+    end;
+  end;
+
+  /// <summary>A value indicating whether the text box can notify about text changes.</summary>
+  public property CanNotifyTextChanged: Boolean
+  begin
+    get
+    begin
+      return TextChangedCommandValue <> nil and TextChangedCommandValue.CanExecute();
+    end;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="TextBox"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
@@ -1387,8 +1585,14 @@ begin
     PlaceholderTextValue := '';
     IsReadOnlyValue := false;
     PaddingValue := new Thickness();
+    TextChangedCommandValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Clear
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Clears the text in the text box if it is not read-only.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Clear;
   begin
     if IsReadOnlyValue then
@@ -1398,13 +1602,48 @@ begin
 
     TextValue := '';
   end;
-end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • NotifyTextChanged
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Notifies that the text has changed.</summary>
+  /// <returns><c>true</c> if the text changed command was executed; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  public function NotifyTextChanged: Boolean;
+  begin
+    if CanNotifyTextChanged = false then
+    begin
+      return false;
+    end;
+
+    TextChangedCommandValue.Execute();
+    return true;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • TextBinding
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents a binding between an <see cref="ObservableText"/> source and a target text property, allowing for efficient updates by tracking
+///   the version of the source text.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class TextBinding
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The source of the text for the binding.</summary>
   private var SourceValue: ObservableText;
+  /// <summary>The last applied version of the source text, used to determine if the binding is dirty and needs to be reapplied.</summary>
   private var LastAppliedVersionValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets a value indicating whether the binding is dirty and needs to be reapplied.</summary>
   public property IsDirty: Boolean
   begin
     get
@@ -1418,12 +1657,24 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="TextBinding"/> class with the specified source.</summary>
+  /// <param name="source">The source of the text for the binding.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(source: ObservableText);
   begin
     SourceValue := source;
     LastAppliedVersionValue := -1;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Apply
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Applies the binding to the specified target text block, updating its text if the binding is dirty.</summary>
+  /// <param name="target">The target text block to apply the binding to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Apply(target: TextBlock);
   begin
     if SourceValue = nil or target = nil then
@@ -1435,6 +1686,14 @@ begin
     LastAppliedVersionValue := SourceValue.ChangeVersion;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ApplyToTextBox
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Applies the binding to the specified target text box, updating its text if the binding is dirty and the text box is not read-only.
+  /// </summary>
+  /// <param name="target">The target text box to apply the binding to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ApplyToTextBox(target: TextBox);
   begin
     if SourceValue = nil or target = nil then
@@ -1446,26 +1705,29 @@ begin
     LastAppliedVersionValue := SourceValue.ChangeVersion;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ItemsControl<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a collection of items, allowing for data binding and templating of the items.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ItemsControl<T>: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The source collection of items to display in the control.</summary>
   private var ItemsSourceValue: IEnumerable<T>;
+  /// <summary>The text to display when the items source is empty.</summary>
   private var EmptyTextValue: String;
+  /// <summary>A selector function that creates a view for a given item in the items source.</summary>
   private var ItemTemplateValue: Selector<T, View>;
 
-  protected method InitializeItemsControl;
-  begin
-    InitializeView();
-    ItemsSourceValue := nil;
-    EmptyTextValue := '';
-    ItemTemplateValue := nil;
-  end;
-
-  protected function GetItemsSourceCore: IEnumerable<T>;
-  begin
-    return ItemsSourceValue;
-  end;
-
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The source collection of items to display in the control.</summary>
   public property ItemsSource: IEnumerable<T>
   begin
     get
@@ -1479,6 +1741,7 @@ begin
     end;
   end;
 
+  /// <summary>The text to display when the items source is empty.</summary>
   public property EmptyText: String
   begin
     get
@@ -1492,6 +1755,7 @@ begin
     end;
   end;
 
+  /// <summary>A selector function that creates a view for a given item in the items source.</summary>
   public property ItemTemplate: Selector<T, View>
   begin
     get
@@ -1505,6 +1769,7 @@ begin
     end;
   end;
 
+  /// <summary>The number of items in the control.</summary>
   public property ItemCount: Integer
   begin
     get
@@ -1525,6 +1790,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the control has any items.</summary>
   public property HasItems: Boolean
   begin
     get
@@ -1533,6 +1799,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the control has an item template.</summary>  
   public property HasItemTemplate: Boolean
   begin
     get
@@ -1541,11 +1808,49 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ItemsControl{T}"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeItemsControl();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetItemsSourceCore
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Gets the items source for the control. This method can be overridden by derived classes to provide custom logic for retrieving the 
+  ///   items source.
+  /// </summary>
+  /// <returns>The items source for the control.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected function GetItemsSourceCore: IEnumerable<T>;
+  begin
+    return ItemsSourceValue;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • InitializeItemsControl
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes the items control.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  protected method InitializeItemsControl;
+  begin
+    InitializeView();
+    ItemsSourceValue := nil;
+    EmptyTextValue := '';
+    ItemTemplateValue := nil;
+  end;
+
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • BuildItems
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Builds the items for the control.</summary>
+  /// <returns>A list of views representing the items.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function BuildItems: List<View>;
   begin
     var builtItems := new List<View>();
@@ -1568,11 +1873,25 @@ begin
     return builtItems;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ListView<T>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a list of items, allowing for selection of a single item.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ListView<T>: ItemsControl<T>
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The index of the currently selected item in the control, or -1 if no item is selected.</summary>
   private var SelectedIndexValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the index of the currently selected item in the control, or -1 if no item is selected.</summary>
   public property SelectedIndex: Integer
   begin
     get
@@ -1581,6 +1900,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the control has a selected item.</summary>
   public property HasSelection: Boolean
   begin
     get
@@ -1589,6 +1909,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the currently selected item in the control.</summary>
   public property SelectedItem: T
   begin
     get
@@ -1620,12 +1941,24 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ListView{T}"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeItemsControl();
     SelectedIndexValue := -1;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SelectIndex
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Selects the item at the specified index.</summary>
+  /// <param name="index">The index of the item to select.</param>
+  /// <returns><c>true</c> if the item was successfully selected; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function SelectIndex(index: Integer): Boolean;
   begin
     if index < 0 or index >= ItemCount then
@@ -1638,18 +1971,39 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ClearSelection
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Clears the current selection.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ClearSelection;
   begin
     SelectedIndexValue := -1;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Grid
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a grid of rows and columns, allowing for the arrangement of child views in a tabular layout.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Grid: Panel
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The number of rows in the grid.</summary>
   private var RowsValue: Integer;
+  /// <summary>The number of columns in the grid.</summary>
   private var ColumnsValue: Integer;
+  /// <summary>A value indicating whether to show grid lines between the cells.</summary>
   private var ShowGridLinesValue: Boolean;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the number of rows in the grid.</summary>
   public property Rows: Integer
   begin
     get
@@ -1658,6 +2012,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the number of columns in the grid.</summary>
   public property Columns: Integer
   begin
     get
@@ -1666,6 +2021,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the total number of cells in the grid.</summary>
   public property CellCount: Integer
   begin
     get
@@ -1674,6 +2030,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets a value indicating whether to show grid lines between the cells.</summary>
   public property ShowGridLines: Boolean
   begin
     get
@@ -1687,6 +2044,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Grid"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContainer();
@@ -1695,6 +2057,13 @@ begin
     ShowGridLinesValue := false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • SetDimensions
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the number of rows and columns in the grid.</summary>
+  /// <param name="rows">The number of rows.</param>
+  /// <param name="columns">The number of columns.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method SetDimensions(rows: Integer; columns: Integer);
   begin
     if rows <= 0 then
@@ -1716,13 +2085,31 @@ begin
     end;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Border
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents a view that displays a border around its child view, allowing for customization of the border thickness, background, and padding.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Border: ContentControl
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The thickness of the border around the child view.</summary>
   private var BorderThicknessValue: Integer;
+  /// <summary>The background color of the border.</summary>
   private var BackgroundValue: Color;
+  /// <summary>The padding inside the border.</summary>
   private var PaddingValue: Thickness;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the child view of the border.</summary>
   public property Child: View
   begin
     get
@@ -1736,6 +2123,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the thickness of the border around the child view.</summary>
   public property BorderThickness: Integer
   begin
     get
@@ -1756,6 +2144,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the border has a child view.</summary>
   public property HasChild: Boolean
   begin
     get
@@ -1764,6 +2153,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the background color of the border.</summary>
   public property Background: Color
   begin
     get
@@ -1777,6 +2167,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the padding inside the border.</summary>
   public property Padding: Thickness
   begin
     get
@@ -1796,6 +2187,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Border"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContentControl();
@@ -1804,14 +2200,31 @@ begin
     PaddingValue := new Thickness();
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • ScrollViewer
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a scrollable area that can contain a single child element.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class ScrollViewer: ContentControl
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The horizontal offset of the scroll viewer.</summary>
   private var HorizontalOffsetValue: Integer;
+  /// <summary>The vertical offset of the scroll viewer.</summary>
   private var VerticalOffsetValue: Integer;
+  /// <summary>The width of the viewport of the scroll viewer.</summary>
   private var ViewportWidthValue: Integer;
+  /// <summary>The height of the viewport of the scroll viewer.</summary>
   private var ViewportHeightValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the horizontal offset of the scroll viewer.</summary>
   public property HorizontalOffset: Integer
   begin
     get
@@ -1820,6 +2233,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the vertical offset of the scroll viewer.</summary>
   public property VerticalOffset: Integer
   begin
     get
@@ -1828,6 +2242,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the width of the viewport of the scroll viewer.</summary>
   public property ViewportWidth: Integer
   begin
     get
@@ -1848,6 +2263,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the height of the viewport of the scroll viewer.</summary>
   public property ViewportHeight: Integer
   begin
     get
@@ -1868,6 +2284,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the scroll viewer can scroll.</summary>
   public property CanScroll: Boolean
   begin
     get
@@ -1876,6 +2293,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="ScrollViewer"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContentControl();
@@ -1885,6 +2307,13 @@ begin
     ViewportHeightValue := 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ScrollTo
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Scrolls the content to the specified horizontal and vertical offsets.</summary>
+  /// <param name="horizontalOffset">The horizontal offset to scroll to.</param>
+  /// <param name="verticalOffset">The vertical offset to scroll to.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method ScrollTo(horizontalOffset: Integer; verticalOffset: Integer);
   begin
     if horizontalOffset < 0 then
@@ -1906,13 +2335,29 @@ begin
     end;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • MenuItem
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents an item in a menu, which can have a header, an associated command, and child menu items for creating submenus.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class MenuItem: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The header text of the menu item.</summary>
   private var HeaderValue: String;
+  /// <summary>The command associated with the menu item, which is executed when the item is invoked.</summary>
   private var CommandValue: ICommand;
+  /// <summary>The child menu items of the menu item, used for creating submenus.</summary>
   private var ItemsValue: List<MenuItem>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The header text of the menu item.</summary>
   public property Header: String
   begin
     get
@@ -1926,6 +2371,7 @@ begin
     end;
   end;
 
+  /// <summary>The command associated with the menu item, which is executed when the item is invoked.</summary>
   public property Command: ICommand
   begin
     get
@@ -1939,6 +2385,7 @@ begin
     end;
   end;
 
+  /// <summary>The child menu items of the menu item, used for creating submenus.</summary>
   public property Items: List<MenuItem>
   begin
     get
@@ -1947,6 +2394,7 @@ begin
     end;
   end;
 
+  /// <summary>The number of child menu items.</summary>
   public property ItemCount: Integer
   begin
     get
@@ -1955,6 +2403,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the command associated with the menu item can be executed.</summary>
   public property CanExecute: Boolean
   begin
     get
@@ -1963,6 +2412,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="MenuItem"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
@@ -1971,6 +2425,12 @@ begin
     ItemsValue := new List<MenuItem>();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AddItem
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds a child menu item to the menu item.</summary>
+  /// <param name="item">The menu item to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method AddItem(item: MenuItem);
   begin
     if item = nil then
@@ -1981,6 +2441,12 @@ begin
     ItemsValue.Add(item);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Invoke
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Invokes the command associated with the menu item.</summary>
+  /// <returns>True if the command was executed; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Invoke: Boolean;
   begin
     if CanExecute = false then
@@ -1992,11 +2458,25 @@ begin
     return true;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// CLASS • MenuBar
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that displays a menu bar, which can contain multiple menu items for organizing commands and actions.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class MenuBar: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The menu items contained in the menu bar.</summary>
   private var ItemsValue: List<MenuItem>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The menu items contained in the menu bar.</summary>
   public property Items: List<MenuItem>
   begin
     get
@@ -2005,6 +2485,7 @@ begin
     end;
   end;
 
+  /// <summary>The number of menu items in the menu bar.</summary>
   public property ItemCount: Integer
   begin
     get
@@ -2013,12 +2494,23 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="MenuBar"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
     ItemsValue := new List<MenuItem>();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AddItem
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds a menu item to the menu bar.</summary>
+  /// <param name="item">The menu item to add.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method AddItem(item: MenuItem);
   begin
     if item = nil then
@@ -2029,11 +2521,25 @@ begin
     ItemsValue.Add(item);
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • StackPanel
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that arranges its child views in a single line, either horizontally or vertically.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class StackPanel: Panel
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The orientation of the stack panel, which determines whether child views are arranged horizontally
   private var OrientationValue: Orientation;
 
+  ///————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the orientation of the stack panel, which determines whether child
   public property Orientation: Orientation
   begin
     get
@@ -2047,17 +2553,36 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="StackPanel"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContainer();
     OrientationValue := Orientation.Vertical;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// CLASS • Page
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that serves as a page in a navigation host, allowing for the display of content with an associated title.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Page: ContentControl
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The title of the page, which can be used for display in a navigation host.</summary>
   private var TitleValue: String;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the title of the page, which can be used for
   public property Title: String
   begin
     get
@@ -2071,19 +2596,40 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Page"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeContentControl();
     TitleValue := '';
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// CLASS • NavigationHost
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view that serves as a navigation host, allowing for the display of pages and navigation between them.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class NavigationHost: View
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The currently displayed page in the navigation host.</summary>
   private var CurrentPageValue: Page;
+  /// <summary>The history of pages that have been navigated to, used for implementing back navigation.</summary>
   private var BackHistoryValue: List<Page>;
+  /// <summary>The number of entries in the back navigation history.</summary>
   private var BackHistoryCountValue: Integer;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the currently displayed page in the navigation host.</summary>
   public property CurrentPage: Page
   begin
     get
@@ -2097,6 +2643,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether there is a page currently displayed in the navigation host.</summary>
   public property HasPage: Boolean
   begin
     get
@@ -2105,6 +2652,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether there is a page to navigate back to in the navigation host.</summary>
   public property CanGoBack: Boolean
   begin
     get
@@ -2113,6 +2661,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="NavigationHost"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     InitializeView();
@@ -2121,6 +2674,13 @@ begin
     BackHistoryCountValue := 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Navigate
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Navigates to the specified page.</summary>
+  /// <param name="page">The page to navigate to.</param>
+  /// <returns><c>true</c> if the navigation was successful; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Navigate(page: Page): Boolean;
   begin
     if page = nil then
@@ -2147,6 +2707,12 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GoBack
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Navigates back to the previous page in the navigation host.</summary>
+  /// <returns><c>true</c> if the navigation was successful; otherwise, <c>false</c>.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GoBack: Boolean;
   begin
     if CanGoBack = false then
@@ -2159,18 +2725,41 @@ begin
     return true;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Window
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents a window that can display content, with properties for title, size, background, and methods for showing and closing the window.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Window
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The title of the window, displayed in the title bar.</summary>
   private var TitleValue: String;
+  /// <summary>The content displayed in the window.</summary>
   private var ContentValue: View;
+  /// <summary>A value indicating whether the window is currently open and visible to the user.</summary>
   private var IsOpenValue: Boolean;
+  /// <summary>The width of the window.</summary>
   private var WidthValue: Integer;
+  /// <summary>The height of the window.</summary>
   private var HeightValue: Integer;
+  /// <summary>The minimum width of the window.</summary>
   private var MinWidthValue: Integer;
+  /// <summary>The minimum height of the window.</summary>
   private var MinHeightValue: Integer;
+  /// <summary>The background color of the window.</summary>
   private var BackgroundValue: Color;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+   /// <summary>Gets or sets the title of the window, displayed in the title bar.</summary>
   public property Title: String
   begin
     get
@@ -2184,6 +2773,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the content displayed in the window.</summary>
   public property Content: View
   begin
     get
@@ -2197,6 +2787,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the window is currently open and visible to the user.</summary>
   public property IsOpen: Boolean
   begin
     get
@@ -2205,6 +2796,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the width of the window.</summary>
   public property Width: Integer
   begin
     get
@@ -2213,6 +2805,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the height of the window.</summary>
   public property Height: Integer
   begin
     get
@@ -2221,6 +2814,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the background color of the window.</summary>
   public property Background: Color
   begin
     get
@@ -2234,6 +2828,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the minimum width of the window.</summary>
   public property MinWidth: Integer
   begin
     get
@@ -2259,6 +2854,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets the minimum height of the window.</summary>
   public property MinHeight: Integer
   begin
     get
@@ -2284,6 +2880,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Window"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     TitleValue := '';
@@ -2296,16 +2897,33 @@ begin
     BackgroundValue := Color.White;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Show
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Shows the window, making it open and visible to the user.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Show;
   begin
     IsOpenValue := true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Close
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Closes the window, making it no longer open or visible to the user.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Close;
   begin
     IsOpenValue := false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Resize
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resizes the window to the specified width and height, respecting the minimum size constraints.</summary>
+  /// <param name="width">The new width of the window.</param>
+  /// <param name="height">The new height of the window.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Resize(width: Integer; height: Integer);
   begin
     if width < MinWidthValue then
@@ -2326,14 +2944,39 @@ begin
       HeightValue := height;
     end;
   end;
-end;
 
+  /// <summary>Sets the minimum window size and clamps the current size to that constraint.</summary>
+  public method SetMinimumSize(width: Integer; height: Integer);
+  begin
+    MinWidth := width;
+    MinHeight := height;
+  end;
+end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Dialog
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents a dialog window that can display a message and return a result indicating whether the dialog was accepted or cancelled.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Dialog: Window
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The message displayed in the dialog.</summary>
   private var MessageValue: String;
+  /// <summary>The result of the dialog, indicating whether it was accepted or cancelled.</summary>
   private var ResultValue: DialogResult;
+  /// <summary>A value indicating whether the dialog is currently shown as a modal dialog.</summary>
   private var IsModalValue: Boolean;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets or sets the message displayed in the dialog.</summary>
   public property Message: String
   begin
     get
@@ -2347,6 +2990,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the result of the dialog, indicating whether it was accepted or cancelled.</summary>
   public property Result: DialogResult
   begin
     get
@@ -2355,6 +2999,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the dialog is currently shown as a modal dialog.</summary>
   public property IsModal: Boolean
   begin
     get
@@ -2363,6 +3008,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Dialog"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     MessageValue := '';
@@ -2370,6 +3020,15 @@ begin
     IsModalValue := false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ShowDialog
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>
+  ///   Shows the dialog as a modal dialog, blocking interaction with other windows until the dialog is accepted or cancelled, and returns the
+  ///   result of the dialog.
+  /// </summary>
+  /// <returns>The result of the dialog, indicating whether it was accepted or cancelled.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function ShowDialog: DialogResult;
   begin
     Show();
@@ -2378,6 +3037,11 @@ begin
     return ResultValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Accept
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Accepts the dialog, setting the result to <see cref="DialogResult.Accepted"/> and closing the dialog.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Accept;
   begin
     ResultValue := DialogResult.Accepted;
@@ -2385,6 +3049,11 @@ begin
     Close();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Cancel
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Cancels the dialog, setting the result to <see cref="DialogResult.Cancelled"/> and closing the dialog.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method Cancel;
   begin
     ResultValue := DialogResult.Cancelled;
@@ -2392,11 +3061,27 @@ begin
     Close();
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • Application
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>
+///   Represents the application that manages the main event loop and the windows of the application, allowing for adding and managing windows.
+/// </summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class Application
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The windows currently managed by the application.</summary>
   private var WindowsValue: List<Window>;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The windows currently managed by the application.</summary>
   public property Windows: List<Window>
   begin
     get
@@ -2405,11 +3090,22 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="Application"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     WindowsValue := new List<Window>();
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • AddWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Adds a window to the application, allowing it to be managed and displayed by the application.</summary>
+  /// <param name="window">The window to add to the application.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method AddWindow(window: Window);
   begin
     if window = nil then
@@ -2420,6 +3116,12 @@ begin
     WindowsValue.Add(window);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Runs the application, displaying all managed windows.</summary>
+  /// <returns>The number of windows shown.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Run: Integer;
   begin
     var shown := 0;
@@ -2434,3 +3136,6 @@ begin
     return shown;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
