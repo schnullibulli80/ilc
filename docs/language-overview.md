@@ -270,8 +270,8 @@ and `Integer.Parse` / `Integer.TryParse` as type intrinsics.
 
 ## 9) Interop and shipped library model
 
-`extern` methods are bound through the host import layer. Unknown host mapping
-names are rejected by the binder.
+Plain shipped-library `extern` methods are bound through the built-in host
+import layer. Unknown built-in host mappings are rejected by the binder.
 
 In addition to built-in host imports, the language now also supports a first
 native FFI slice through method attributes:
@@ -285,10 +285,12 @@ Current `DllImport` scope:
 
 - `static extern` free functions only
 - Linux shared libraries through `dlopen` / `dlsym`
+- runtime invocation through generic `libffi` dispatch
 - current FFI type subset:
-  - parameter: `Integer`, `Boolean`, `String`, `NativeHandle`
-  - return: `Integer`, `Boolean`, `Void`, `NativeHandle`
-- no callbacks, no native structs, no returned native strings yet
+  - parameter: `Integer`, `Boolean`, `String`, `NativeHandle`, supported callback delegates
+  - return: `Integer`, `Boolean`, `Void`, `NativeHandle`, owned UTF-8 `String`
+- callbacks are supported through VM-generated trampolines for the current integer callback shapes
+- no native structs/records or arbitrary user-visible function pointers yet
 
 The shipped library lives under `libs/shipped` and currently includes:
 
@@ -320,6 +322,9 @@ The shipped library lives under `libs/shipped` and currently includes:
   - `Mutex`
   - currently supports `IRunnable`, `ITaskRunnable<T>`, managed thread start/join, first `Task` / `Task<T>` abstractions, current thread id, sleeping, and host-backed mutex synchronization
 - `System.Collections.IEnumerator<T>`, `System.Collections.IEnumerable<T>`, `System.Collections.IReadOnlyList<T>`, `System.Collections.ICollection<T>`, `System.Collections.IList<T>`, `System.Collections.Predicate<T>`, `System.Collections.Selector<TSource, TResult>`, `System.Collections.Enumerable<T>`, `System.Collections.Enumerable<TSource, TResult>`, `System.Collections.ListEnumerator<T>`, `System.Collections.List<T>`, `System.Collections.StringList`, `System.Collections.Dictionary<TKey, TValue>`
+- `System.Ui` neutral UI model (`Application`, `Window`, `View`, `StackPanel`, `TextBlock`, `Button`, `TextBox`, `CheckBox`, `Slider`, `Command`)
+- `System.Ui.Hosting` backend contracts
+- `System.Ui.Backends.QtQuick` first Qt Quick backend over `DllImport`
 - `System.File`
 - `System.Path`
 

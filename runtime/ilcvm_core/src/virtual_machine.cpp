@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <deque>
 #include <dlfcn.h>
+#include <ffi.h>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -1174,17 +1175,6 @@ std::int32_t VirtualMachine::execute(
             return return_kind == NativeFfiValueKind::bool32 ? (value != 0 ? 1 : 0) : value;
         };
 
-        const auto matches_signature = [&](NativeFfiValueKind expected_return, std::initializer_list<NativeFfiValueKind> expected_parameters) -> bool
-        {
-            const std::vector<NativeFfiValueKind> expected_parameter_kinds(expected_parameters);
-            if (dispatch_return_kind != expected_return || dispatch_parameter_kinds != expected_parameter_kinds)
-            {
-                return false;
-            }
-
-            return true;
-        };
-
         const auto ensure_callback_success = [&]()
         {
             const auto callback_failure = take_native_callback_failure_message();
@@ -1229,236 +1219,215 @@ std::int32_t VirtualMachine::execute(
                 });
         };
 
-        const auto invoke_callback_only = [&](NativeFfiValueKind callback_kind) -> std::int32_t
+        ffi_cif call_interface {};
+        std::vector<ffi_type*> native_parameter_types;
+        std::vector<void*> native_argument_values;
+        std::vector<std::int32_t> i32_arguments(parameter_kinds.size());
+        std::vector<void*> pointer_arguments(parameter_kinds.size());
+        std::vector<NativeI32CallbackRegistration> callback_registrations;
+        native_parameter_types.reserve(parameter_kinds.size());
+        native_argument_values.reserve(parameter_kinds.size());
+        callback_registrations.reserve(parameter_kinds.size());
+
+        const auto map_ffi_type = [&](NativeFfiValueKind kind) -> ffi_type*
         {
-            NativeI32CallbackRegistration callback_registration = create_callback_registration_for_argument(0);
-            if (native_ffi_debug_enabled)
+            switch (normalize_native_ffi_dispatch_kind(kind))
             {
-                std::fprintf(
-                    stderr,
-                    "DEBUG vm_ffi: dispatch signature function=%s shape=(callback)->%u callbackKind=%u\n",
-                    function.name.c_str(),
-                    static_cast<unsigned>(dispatch_return_kind),
-                    static_cast<unsigned>(callback_kind));
+            case NativeFfiValueKind::void_:
+                return &ffi_type_void;
+            case NativeFfiValueKind::i32:
+            case NativeFfiValueKind::bool32:
+                return &ffi_type_sint32;
+            case NativeFfiValueKind::utf8_string:
+            case NativeFfiValueKind::native_handle:
+            case NativeFfiValueKind::callback_i32_i32:
+            case NativeFfiValueKind::callback_void_i32:
+                return &ffi_type_pointer;
             }
 
-            if (dispatch_return_kind == NativeFfiValueKind::void_)
-            {
-                if (callback_kind == NativeFfiValueKind::callback_void_i32)
-                {
-                    reinterpret_cast<void(*)(NativeVoidI32CallbackFunction)>(symbol)(callback_registration.void_function);
-                }
-                else
-                {
-                    reinterpret_cast<void(*)(NativeI32CallbackFunction)>(symbol)(callback_registration.function);
-                }
-
-                ensure_callback_success();
-                return 0;
-            }
-
-            const auto result = callback_kind == NativeFfiValueKind::callback_void_i32
-                ? reinterpret_cast<std::int32_t(*)(NativeVoidI32CallbackFunction)>(symbol)(callback_registration.void_function)
-                : reinterpret_cast<std::int32_t(*)(NativeI32CallbackFunction)>(symbol)(callback_registration.function);
-            ensure_callback_success();
-            return finalize_i32_result(result);
+            return nullptr;
         };
 
-        const auto invoke_native_handle_with_callback = [&](NativeFfiValueKind callback_kind) -> std::int32_t
+        for (std::size_t argument_index = 0; argument_index < parameter_kinds.size(); ++argument_index)
         {
-            auto* arg0 = get_native_handle_argument(0);
+            const auto parameter_kind = parameter_kinds[argument_index];
+            const auto normalized_parameter_kind = normalize_native_ffi_dispatch_kind(parameter_kind);
+            auto* native_type = map_ffi_type(parameter_kind);
+            if (native_type == nullptr || normalized_parameter_kind == NativeFfiValueKind::void_)
+            {
+                throw std::runtime_error(
+                    "native ffi parameter kind is not supported for '" +
+                    function.name +
+                    "' (" +
+                    function.dll_import.entry_point +
+                    ") index=" +
+                    std::to_string(argument_index) +
+                    " kind=" +
+                    std::to_string(static_cast<int>(parameter_kind)));
+            }
+
+            native_parameter_types.push_back(native_type);
+            if (normalized_parameter_kind == NativeFfiValueKind::i32)
+            {
+                i32_arguments[argument_index] = get_i32_argument(argument_index);
+                native_argument_values.push_back(&i32_arguments[argument_index]);
+                if (native_ffi_debug_enabled)
+                {
+                    std::fprintf(
+                        stderr,
+                        "DEBUG vm_ffi: arg[%zu] kind=%u normalized=%u ffi=sint32 value=%d\n",
+                        argument_index,
+                        static_cast<unsigned>(parameter_kind),
+                        static_cast<unsigned>(normalized_parameter_kind),
+                        i32_arguments[argument_index]);
+                }
+            }
+            else if (normalized_parameter_kind == NativeFfiValueKind::utf8_string)
+            {
+                pointer_arguments[argument_index] = const_cast<char*>(get_string_argument(argument_index));
+                native_argument_values.push_back(&pointer_arguments[argument_index]);
+                if (native_ffi_debug_enabled)
+                {
+                    std::fprintf(
+                        stderr,
+                        "DEBUG vm_ffi: arg[%zu] kind=%u normalized=%u ffi=pointer utf8=\"%s\"\n",
+                        argument_index,
+                        static_cast<unsigned>(parameter_kind),
+                        static_cast<unsigned>(normalized_parameter_kind),
+                        static_cast<const char*>(pointer_arguments[argument_index]));
+                }
+            }
+            else if (normalized_parameter_kind == NativeFfiValueKind::native_handle)
+            {
+                pointer_arguments[argument_index] = get_native_handle_argument(argument_index);
+                native_argument_values.push_back(&pointer_arguments[argument_index]);
+                if (native_ffi_debug_enabled)
+                {
+                    std::fprintf(
+                        stderr,
+                        "DEBUG vm_ffi: arg[%zu] kind=%u normalized=%u ffi=pointer handle=%p\n",
+                        argument_index,
+                        static_cast<unsigned>(parameter_kind),
+                        static_cast<unsigned>(normalized_parameter_kind),
+                        pointer_arguments[argument_index]);
+                }
+            }
+            else if (normalized_parameter_kind == NativeFfiValueKind::callback_i32_i32 ||
+                     normalized_parameter_kind == NativeFfiValueKind::callback_void_i32)
+            {
+                callback_registrations.push_back(create_callback_registration_for_argument(argument_index));
+                auto& registration = callback_registrations.back();
+                pointer_arguments[argument_index] = normalized_parameter_kind == NativeFfiValueKind::callback_void_i32
+                    ? reinterpret_cast<void*>(registration.void_function)
+                    : reinterpret_cast<void*>(registration.function);
+                native_argument_values.push_back(&pointer_arguments[argument_index]);
+                if (native_ffi_debug_enabled)
+                {
+                    std::fprintf(
+                        stderr,
+                        "DEBUG vm_ffi: arg[%zu] kind=%u normalized=%u ffi=pointer callback=%p\n",
+                        argument_index,
+                        static_cast<unsigned>(parameter_kind),
+                        static_cast<unsigned>(normalized_parameter_kind),
+                        pointer_arguments[argument_index]);
+                }
+            }
+        }
+
+        auto* native_return_type = map_ffi_type(return_kind);
+        if (native_return_type == nullptr)
+        {
+            throw std::runtime_error(
+                "native ffi return kind is not supported for '" +
+                function.name +
+                "' (" +
+                function.dll_import.entry_point +
+                ") returnKind=" +
+                std::to_string(static_cast<int>(return_kind)));
+        }
+
+        if (native_ffi_debug_enabled)
+        {
+            std::fprintf(
+                stderr,
+                "DEBUG vm_ffi: ffi_call function=%s shape=%s argc=%zu\n",
+                function.name.c_str(),
+                describe_native_ffi_signature(dispatch_return_kind, dispatch_parameter_kinds).c_str(),
+                native_argument_values.size());
+        }
+
+        const auto prep_status = ffi_prep_cif(
+            &call_interface,
+            FFI_DEFAULT_ABI,
+            static_cast<unsigned int>(native_parameter_types.size()),
+            native_return_type,
+            native_parameter_types.empty() ? nullptr : native_parameter_types.data());
+        if (prep_status != FFI_OK)
+        {
+            throw std::runtime_error(
+                "native ffi call interface preparation failed for '" +
+                function.name +
+                "' (" +
+                function.dll_import.entry_point +
+                ") status=" +
+                std::to_string(static_cast<int>(prep_status)) +
+                " normalizedShape=" +
+                describe_native_ffi_signature(dispatch_return_kind, dispatch_parameter_kinds));
+        }
+
+        if (return_kind == NativeFfiValueKind::void_)
+        {
+            ffi_call(&call_interface, FFI_FN(symbol), nullptr, native_argument_values.empty() ? nullptr : native_argument_values.data());
+            ensure_callback_success();
             if (native_ffi_debug_enabled)
             {
-                std::fprintf(
-                    stderr,
-                    "DEBUG vm_ffi: dispatch signature function=%s shape=(native_handle, callback)->%u arg0=%p callbackKind=%u\n",
-                    function.name.c_str(),
-                    static_cast<unsigned>(dispatch_return_kind),
-                    arg0,
-                    static_cast<unsigned>(callback_kind));
+                std::fprintf(stderr, "DEBUG vm_ffi: ffi_call result function=%s void\n", function.name.c_str());
             }
+            return 0;
+        }
 
-            NativeI32CallbackRegistration callback_registration = create_callback_registration_for_argument(1);
-            if (dispatch_return_kind == NativeFfiValueKind::void_)
-            {
-                if (callback_kind == NativeFfiValueKind::callback_void_i32)
-                {
-                    reinterpret_cast<void(*)(void*, NativeVoidI32CallbackFunction)>(symbol)(arg0, callback_registration.void_function);
-                }
-                else
-                {
-                    reinterpret_cast<void(*)(void*, NativeI32CallbackFunction)>(symbol)(arg0, callback_registration.function);
-                }
-
-                ensure_callback_success();
-                return 0;
-            }
-
-            const auto result = callback_kind == NativeFfiValueKind::callback_void_i32
-                ? reinterpret_cast<std::int32_t(*)(void*, NativeVoidI32CallbackFunction)>(symbol)(arg0, callback_registration.void_function)
-                : reinterpret_cast<std::int32_t(*)(void*, NativeI32CallbackFunction)>(symbol)(arg0, callback_registration.function);
+        if (dispatch_return_kind == NativeFfiValueKind::i32)
+        {
+            std::int32_t result {};
+            ffi_call(&call_interface, FFI_FN(symbol), &result, native_argument_values.empty() ? nullptr : native_argument_values.data());
             ensure_callback_success();
+            if (native_ffi_debug_enabled)
+            {
+                std::fprintf(stderr, "DEBUG vm_ffi: ffi_call result function=%s i32=%d\n", function.name.c_str(), result);
+            }
             return finalize_i32_result(result);
-        };
-
-        if (matches_signature(NativeFfiValueKind::void_, {}))
-        {
-            reinterpret_cast<void(*)()>(symbol)();
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, {}))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)()>(symbol)());
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, {}))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)()>(symbol)());
-        }
-        if (matches_signature(NativeFfiValueKind::native_handle, {}))
-        {
-            return store_native_handle(reinterpret_cast<void*(*)()>(symbol)());
         }
 
-        if (matches_signature(dispatch_return_kind, { NativeFfiValueKind::callback_i32_i32 }))
+        if (return_kind == NativeFfiValueKind::utf8_string)
         {
-            return invoke_callback_only(NativeFfiValueKind::callback_i32_i32);
-        }
-        if (matches_signature(dispatch_return_kind, { NativeFfiValueKind::callback_void_i32 }))
-        {
-            return invoke_callback_only(NativeFfiValueKind::callback_void_i32);
-        }
-
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::utf8_string }))
-        {
-            reinterpret_cast<void(*)(const char*)>(symbol)(get_string_argument(0));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::utf8_string }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(const char*)>(symbol)(get_string_argument(0)));
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, { NativeFfiValueKind::utf8_string }))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)(const char*)>(symbol)(get_string_argument(0)));
-        }
-        if (matches_signature(NativeFfiValueKind::native_handle, { NativeFfiValueKind::utf8_string }))
-        {
-            return store_native_handle(reinterpret_cast<void*(*)(const char*)>(symbol)(get_string_argument(0)));
+            void* result {};
+            ffi_call(&call_interface, FFI_FN(symbol), &result, native_argument_values.empty() ? nullptr : native_argument_values.data());
+            ensure_callback_success();
+            if (native_ffi_debug_enabled)
+            {
+                std::fprintf(stderr, "DEBUG vm_ffi: ffi_call result function=%s utf8=%p\n", function.name.c_str(), result);
+            }
+            return store_owned_utf8_result(static_cast<char*>(result));
         }
 
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::i32 }))
+        if (return_kind == NativeFfiValueKind::native_handle)
         {
-            reinterpret_cast<void(*)(std::int32_t)>(symbol)(get_i32_argument(0));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::i32 }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(std::int32_t)>(symbol)(get_i32_argument(0)));
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, { NativeFfiValueKind::i32 }))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)(std::int32_t)>(symbol)(get_i32_argument(0)));
-        }
-        if (matches_signature(NativeFfiValueKind::native_handle, { NativeFfiValueKind::i32 }))
-        {
-            return store_native_handle(reinterpret_cast<void*(*)(std::int32_t)>(symbol)(get_i32_argument(0)));
-        }
-
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::native_handle }))
-        {
-            reinterpret_cast<void(*)(void*)>(symbol)(get_native_handle_argument(0));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::native_handle }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(void*)>(symbol)(get_native_handle_argument(0)));
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, { NativeFfiValueKind::native_handle }))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)(void*)>(symbol)(get_native_handle_argument(0)));
-        }
-        if (matches_signature(NativeFfiValueKind::native_handle, { NativeFfiValueKind::native_handle }))
-        {
-            return store_native_handle(reinterpret_cast<void*(*)(void*)>(symbol)(get_native_handle_argument(0)));
-        }
-
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::i32, NativeFfiValueKind::i32 }))
-        {
-            reinterpret_cast<void(*)(std::int32_t, std::int32_t)>(symbol)(get_i32_argument(0), get_i32_argument(1));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::i32, NativeFfiValueKind::i32 }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(std::int32_t, std::int32_t)>(symbol)(get_i32_argument(0), get_i32_argument(1)));
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, { NativeFfiValueKind::i32, NativeFfiValueKind::i32 }))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)(std::int32_t, std::int32_t)>(symbol)(get_i32_argument(0), get_i32_argument(1)));
-        }
-
-        if (matches_signature(dispatch_return_kind, { NativeFfiValueKind::native_handle, NativeFfiValueKind::callback_i32_i32 }))
-        {
-            return invoke_native_handle_with_callback(NativeFfiValueKind::callback_i32_i32);
-        }
-        if (matches_signature(dispatch_return_kind, { NativeFfiValueKind::native_handle, NativeFfiValueKind::callback_void_i32 }))
-        {
-            return invoke_native_handle_with_callback(NativeFfiValueKind::callback_void_i32);
-        }
-
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::native_handle, NativeFfiValueKind::utf8_string }))
-        {
-            reinterpret_cast<void(*)(void*, const char*)>(symbol)(get_native_handle_argument(0), get_string_argument(1));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::native_handle, NativeFfiValueKind::utf8_string }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(void*, const char*)>(symbol)(get_native_handle_argument(0), get_string_argument(1)));
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, { NativeFfiValueKind::native_handle, NativeFfiValueKind::utf8_string }))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)(void*, const char*)>(symbol)(get_native_handle_argument(0), get_string_argument(1)));
-        }
-        if (matches_signature(NativeFfiValueKind::native_handle, { NativeFfiValueKind::native_handle, NativeFfiValueKind::utf8_string }))
-        {
-            return store_native_handle(reinterpret_cast<void*(*)(void*, const char*)>(symbol)(get_native_handle_argument(0), get_string_argument(1)));
-        }
-
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::native_handle, NativeFfiValueKind::i32 }))
-        {
-            reinterpret_cast<void(*)(void*, std::int32_t)>(symbol)(get_native_handle_argument(0), get_i32_argument(1));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::native_handle, NativeFfiValueKind::i32 }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(void*, std::int32_t)>(symbol)(get_native_handle_argument(0), get_i32_argument(1)));
-        }
-        if (matches_signature(NativeFfiValueKind::utf8_string, { NativeFfiValueKind::native_handle, NativeFfiValueKind::i32 }))
-        {
-            return store_owned_utf8_result(reinterpret_cast<char*(*)(void*, std::int32_t)>(symbol)(get_native_handle_argument(0), get_i32_argument(1)));
-        }
-        if (matches_signature(NativeFfiValueKind::native_handle, { NativeFfiValueKind::native_handle, NativeFfiValueKind::i32 }))
-        {
-            return store_native_handle(reinterpret_cast<void*(*)(void*, std::int32_t)>(symbol)(get_native_handle_argument(0), get_i32_argument(1)));
-        }
-
-        if (matches_signature(NativeFfiValueKind::void_, { NativeFfiValueKind::native_handle, NativeFfiValueKind::i32, NativeFfiValueKind::i32 }))
-        {
-            reinterpret_cast<void(*)(void*, std::int32_t, std::int32_t)>(symbol)(get_native_handle_argument(0), get_i32_argument(1), get_i32_argument(2));
-            return 0;
-        }
-        if (matches_signature(NativeFfiValueKind::i32, { NativeFfiValueKind::native_handle, NativeFfiValueKind::i32, NativeFfiValueKind::i32 }))
-        {
-            return finalize_i32_result(reinterpret_cast<std::int32_t(*)(void*, std::int32_t, std::int32_t)>(symbol)(get_native_handle_argument(0), get_i32_argument(1), get_i32_argument(2)));
+            void* result {};
+            ffi_call(&call_interface, FFI_FN(symbol), &result, native_argument_values.empty() ? nullptr : native_argument_values.data());
+            ensure_callback_success();
+            if (native_ffi_debug_enabled)
+            {
+                std::fprintf(stderr, "DEBUG vm_ffi: ffi_call result function=%s handle=%p\n", function.name.c_str(), result);
+            }
+            return store_native_handle(result);
         }
 
         throw std::runtime_error(
-            "native ffi signature is not yet supported for '" +
+            "native ffi return kind is not yet supported for '" +
             function.name +
             "' (" +
             function.dll_import.entry_point +
-            ") argumentCount=" +
-            std::to_string(function.argument_count) +
-            " returnKind=" +
+            ") returnKind=" +
             std::to_string(static_cast<int>(return_kind)) +
             " normalizedShape=" +
             describe_native_ffi_signature(dispatch_return_kind, dispatch_parameter_kinds) +

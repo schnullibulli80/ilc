@@ -8,9 +8,10 @@ The standard library is intentionally minimal and implementation-first:
 
 - it is written in ILC source (`libs/shipped/system.ilc`, `libs/shipped/diagnostics.ilc`);
 - it exposes APIs through regular language syntax (`uses System;`);
-- platform behavior is implemented through `extern` host bridges;
-- the compiler recognizes supported `extern` signatures and maps them to VM host imports;
-- runtime behavior is executed through the runtime host service layer.
+- built-in platform behavior is implemented through explicit `extern` host bridges;
+- the compiler recognizes supported built-in `extern` signatures and maps them to VM host imports;
+- native ABI behavior is implemented separately through `DllImport` and the FFI runtime path;
+- runtime behavior is executed either through the runtime host service layer or the native FFI layer, depending on the declaration.
 
 In addition to the shipped source library, the bootstrap currently exposes a
 small set of compiler/runtime-backed built-ins for `String` and `Integer`. Those
@@ -34,7 +35,11 @@ The current shipped library is split across:
 - `libs/shipped/text.ilc`
 - `libs/shipped/json.ilc`
 - `libs/shipped/net.ilc`
+- `libs/shipped/threading.ilc`
 - `libs/shipped/collections.ilc`
+- `libs/shipped/ui.ilc`
+- `libs/shipped/ui-hosting.ilc`
+- `libs/shipped/ui-backends-qtquick.ilc`
 
 Current shipped types:
 
@@ -87,6 +92,21 @@ Current shipped types:
 - `System.Collections.ListEnumerator<T>`
 - `System.Collections.List<T>`
 - `System.Collections.StringList`
+- `System.Ui.Application`
+- `System.Ui.Window`
+- `System.Ui.View`
+- `System.Ui.StackPanel`
+- `System.Ui.TextBlock`
+- `System.Ui.Button`
+- `System.Ui.TextBox`
+- `System.Ui.CheckBox`
+- `System.Ui.Slider`
+- `System.Ui.Command`
+- `System.Ui.Hosting.IUiBackend`
+- `System.Ui.Hosting.IWindowHost`
+- `System.Ui.Hosting.IViewHost`
+- `System.Ui.Backends.QtQuick.QtQuickBackend`
+- `System.Ui.Backends.QtQuick.QtQuickNative`
 
 The current shipped file does **not** define a `System.String` class. String
 helpers such as `StartsWith(...)` or `Trim()` are currently provided as
@@ -115,7 +135,7 @@ Current limitation:
 - the implementation is still bootstrap-oriented and internally uses synthetic
   projector symbols rather than a polished public structural type feature.
 
-### 2.1 `System.Console`
+### 2.2 `System.Console`
 
 - `public static extern method Write(text: String): void`
 - `public static extern method WriteLine(text: String): void`
@@ -125,7 +145,7 @@ These are mapped to:
 - `HostImportKind.ConsoleWrite`
 - `HostImportKind.ConsoleWriteLine`
 
-### 2.2 `System.Environment`
+### 2.3 `System.Environment`
 
 Public static properties:
 
@@ -148,7 +168,7 @@ Private `extern` cores:
 - `GetEnvironmentVariableCore`
 - `SetEnvironmentVariableCore`
 
-### 2.3 `System.Clock`
+### 2.4 `System.Clock`
 
 - `MonotonicMillisecondsText: String` (get)
 - `WallMillisecondsText: String` (get)
@@ -156,7 +176,7 @@ Private `extern` cores:
 
 Backed by private `extern` methods returning `String`.
 
-### 2.4 `System` exceptions
+### 2.5 `System` exceptions
 
 Current shipped exception surface:
 
@@ -170,7 +190,7 @@ Current shipped exception surface:
 This is currently a small bootstrap exception model intended to support
 library-raised failures such as unsupported diagnostics stack traces.
 
-### 2.5 `System.Math`
+### 2.6 `System.Math`
 
 Current shipped numeric helpers:
 
@@ -182,7 +202,7 @@ Current shipped numeric helpers:
 Unlike `Console`, `Environment`, `Clock`, `File`, or `Path`, `System.Math` is
 currently implemented entirely in ILC source and does not depend on host imports.
 
-### 2.6 `System.Convert`
+### 2.7 `System.Convert`
 
 Current shipped conversion helpers:
 
@@ -397,7 +417,9 @@ transport showcase and bootstrap building block for later socket and HTTP work.
 as a pragmatic showcase step between plain transport primitives and later
 higher-level streaming/async APIs.
 
-### 6.2 `System.Threading`
+## 7) `libs/shipped/threading.ilc`
+
+### 7.1 `System.Threading`
 
 Current shipped threading surface:
 
@@ -444,9 +466,9 @@ The current `System.Threading` slice now covers:
 managed thread execution and expose completion/fault state, but higher-level
 shapes such as `async` / `await` are still future work.
 
-## 7) `libs/shipped/collections.ilc`
+## 8) `libs/shipped/collections.ilc`
 
-### 7.1 `System.Collections.IEnumerator<T>`
+### 8.1 `System.Collections.IEnumerator<T>`
 
 Current shipped generic enumerator view:
 
@@ -454,7 +476,7 @@ Current shipped generic enumerator view:
 - `MoveNext(): Boolean`
 - `Reset()`
 
-### 6.2 `System.Collections.IEnumerable<T>`
+### 8.2 `System.Collections.IEnumerable<T>`
 
 Current shipped generic enumerable view:
 
@@ -464,7 +486,7 @@ In the current bootstrap this is available as a collection API surface and for
 manual enumerator-driven iteration. It is now also wired into generic `foreach`
 lowering.
 
-### 6.3 `System.Collections.IReadOnlyList<T>`
+### 8.3 `System.Collections.IReadOnlyList<T>`
 
 Current shipped read-only generic list view:
 
@@ -474,7 +496,7 @@ Current shipped read-only generic list view:
 This is the smallest generic collection abstraction currently shipped and is
 intended for APIs that want indexed read access without mutation.
 
-### 6.4 `System.Collections.ICollection<T>`
+### 8.4 `System.Collections.ICollection<T>`
 
 Current shipped mutable generic collection view:
 
@@ -486,7 +508,7 @@ Current shipped mutable generic collection view:
 This is the current minimal mutable collection abstraction beneath list-shaped
 APIs.
 
-### 6.5 `System.Collections.IList<T>`
+### 8.5 `System.Collections.IList<T>`
 
 Current shipped mutable generic list view:
 
@@ -496,7 +518,7 @@ Current shipped mutable generic list view:
 - `IndexOf(value: T): Integer`
 - `ToArray(): array of T`
 
-### 6.6 `System.Collections.StringList`
+### 8.6 `System.Collections.StringList`
 
 `System.Collections.StringList` is now a thin compatibility subclass of:
 
@@ -505,7 +527,7 @@ Current shipped mutable generic list view:
 It remains available for bootstrap code, but the real long-term collection
 surface now starts at the generic `IEnumerator<T>` / `IEnumerable<T>` / `IReadOnlyList<T>` / `ICollection<T>` / `IList<T>` / `List<T>` set.
 
-### 6.7 `System.Collections.ListEnumerator<T>`
+### 8.7 `System.Collections.ListEnumerator<T>`
 
 Current shipped generic list enumerator:
 
@@ -514,7 +536,7 @@ Current shipped generic list enumerator:
 - `MoveNext(): Boolean`
 - `Reset()`
 
-### 6.8 `System.Collections.List<T>`
+### 8.8 `System.Collections.List<T>`
 
 Current shipped first generic collection type:
 
@@ -533,7 +555,7 @@ Current shipped first generic collection type:
 - `IndexOf(value: T): Integer`
 - `ToArray(): array of T`
 
-### 6.9 `System.Collections.Dictionary<TKey, TValue>`
+### 8.9 `System.Collections.Dictionary<TKey, TValue>`
 
 Current shipped generic dictionary surface:
 
@@ -551,7 +573,7 @@ The current implementation is intentionally simple and bootstrap-oriented:
 - lookup is linear
 - the API surface is ahead of any hash-based optimization work
 
-### 6.10 `System.Collections.Predicate<T>` and `Selector<TSource, TResult>`
+### 8.10 `System.Collections.Predicate<T>` and `Selector<TSource, TResult>`
 
 Current shipped enumerable pipeline delegate surface:
 
@@ -561,7 +583,7 @@ Current shipped enumerable pipeline delegate surface:
 These delegates are intended as the first reusable callback substrate for
 query-style enumerable helpers.
 
-### 6.11 `System.Collections.Enumerable<T>` and `Enumerable<TSource, TResult>`
+### 8.11 `System.Collections.Enumerable<T>` and `Enumerable<TSource, TResult>`
 
 Current shipped enumerable pipeline helper surface:
 
@@ -601,7 +623,7 @@ The current implementation is intentionally wrapper-based:
 - filtering and projection are applied during enumeration, not eagerly
 - `Any`, `Count`, `First`, `FirstOrDefault`, `Single`, `SingleOrDefault`, `Last`, `LastOrDefault`, `ToList`, and `ToArray` enumerate eagerly over the current source
 
-## 7) Binding and Host Mapping
+## 9) Binding and Host Mapping
 
 `extern` methods are resolved in the binder based on exact signature patterns.
 
@@ -641,18 +663,85 @@ Current `DllImport` status:
 - runtime:
   - Linux shared-library loading via `dlopen` / `dlsym`
   - free functions only
+  - generic runtime dispatch through `libffi`
   - currently supported FFI value types:
-    - parameters: `Integer`, `Boolean`, `String`, `NativeHandle`
-    - return: `Integer`, `Boolean`, `Void`, `NativeHandle`
+    - parameters: `Integer`, `Boolean`, `String`, `NativeHandle`, supported callback delegates
+    - return: `Integer`, `Boolean`, `Void`, `NativeHandle`, owned UTF-8 `String`
+  - callbacks:
+    - VM trampolines for the current integer callback shapes
+  - strings:
+    - ILC-to-native strings are UTF-8 call arguments
+    - native-to-ILC strings require explicit owned UTF-8 metadata and a free entry point
 
 This is intentionally separate from the private shipped `_Core` host bridge methods.
 
-## 8) Built-in Intrinsics Outside the shipped source library
+## 10) UI shipped surface
+
+The shipped UI layer is intentionally backend-neutral at the public model level.
+The Qt Quick backend is the first concrete backend and is implemented as a
+`DllImport` bridge over a native C ABI shim.
+
+Current source units:
+
+- `libs/shipped/ui.ilc`
+- `libs/shipped/ui-hosting.ilc`
+- `libs/shipped/ui-backends-qtquick.ilc`
+
+Current neutral UI surface:
+
+- `Application`
+- `Window`
+  - `Title`
+  - `Content`
+  - `Background`
+  - `Resize(width; height)`
+  - `SetMinimumSize(width; height)`
+- `View`
+  - `Name`
+- `StackPanel`
+  - `Orientation`
+  - child view collection
+- `TextBlock`
+  - `Text`
+  - `Foreground`
+- `Button`
+  - `Text`
+  - `Background`
+  - `Command`
+- `TextBox`
+  - `Text`
+  - `PlaceholderText`
+  - `Padding`
+  - `TextChangedCommand`
+- `CheckBox`
+  - `Text`
+  - `IsChecked`
+  - `ToggledCommand`
+- `Slider`
+  - `Minimum`
+  - `Maximum`
+  - `Value`
+  - `ValueChangedCommand`
+- `Command`
+
+Current Qt Quick backend behavior:
+
+- `QtQuickBackend` implements the hosting interfaces;
+- native calls are declared in `QtQuickNative` with `DllImport`;
+- the native bridge library is `libilc_qtbridge.so`;
+- callbacks from QML are routed through VM callback trampolines;
+- interaction dispatch currently uses full declarative refresh from ILC state;
+- `ILC_QTBRIDGE_DEBUG=1` logs the active refresh mode.
+
+The incremental native patch helpers in `ui-backends-qtquick.ilc` are
+experimental and not active in the interaction dispatch path.
+
+## 11) Built-in Intrinsics Outside the shipped source library
 
 The following APIs are currently supported even though they are not declared in
 the shipped source file:
 
-### 7.1 `String` intrinsic instance methods
+### 11.1 `String` intrinsic instance methods
 
 - `StartsWith(value: String): Boolean`
 - `EndsWith(value: String): Boolean`
@@ -673,7 +762,7 @@ These are resolved by the binder as synthetic methods, lowered through dedicated
 IR instructions, emitted as dedicated bytecode opcodes, and executed directly by
 the VM.
 
-### 7.2 `Integer` intrinsic methods
+### 11.2 `Integer` intrinsic methods
 
 - `Integer.Parse(value: String): Integer`
 - `Integer.TryParse(value: String; out result: Integer): Boolean`
@@ -683,7 +772,7 @@ the VM.
 `Dictionary<TKey, TValue>.TryGetValue(...)` all now exercise the same general
 `out` argument call path rather than isolated ad-hoc lowering behavior.
 
-## 8) Runtime Semantics and Limits
+## 12) Runtime Semantics and Limits
 
 Current runtime behavior is constrained to bootstrap correctness:
 
@@ -697,7 +786,7 @@ it calls host `set_environment_variable` and the runtime can implement this by u
 
 `Console.ReadLine` is not currently exposed through `System.Console`.
 
-## 9) Where It Is Used
+## 13) Where It Is Used
 
 Typical usage:
 
@@ -720,7 +809,7 @@ end;
 
 Examples and integration checks live in compiler tests and runtime tests.
 
-## 10) Extending the Standard Library
+## 14) Extending the Standard Library
 
 Recommended process for adding APIs:
 
@@ -739,7 +828,7 @@ Suggested package growth order:
 - text/date/time modules based on existing `Clock` style
 - collections/cryptographic helpers once type support and object model are ready
 
-## 8) Documentation Status
+## 15) Documentation Status
 
 Current status in this repository:
 

@@ -6,9 +6,14 @@ This roadmap reflects the current implementation trajectory and near-term planni
 
 - Compiler/frontend pipeline is active from syntax through bytecode emission.
 - Runtime is a native, register-based interpreter (no JIT yet).
-- Shipped standard library exists as `libs/shipped/system.ilc`.
+- Shipped standard library exists under `libs/shipped/` and now spans core
+  `System`, diagnostics, text, JSON, networking, threading, collections, and UI units.
 - Verification scripts and benchmark scripts are in use for correctness and performance iteration.
 - Secure packaging and cryptographic integer work are architected and partially prepared, with broader runtime support planned.
+- Native interop is available through `DllImport` and generic `libffi` dispatch
+  on the runtime side.
+- A first Qt Quick UI backend exists over a C ABI shim and is exercised by a
+  dedicated UI smoke.
 
 ## Immediate focus (next 1-2 iterations)
 
@@ -22,7 +27,7 @@ This roadmap reflects the current implementation trajectory and near-term planni
   - `uses` and shipped-library linking behavior
 - Expand compiler and runtime tests for combinations that are now partly covered but not yet fully matrixed.
 
-### 2. Standard library hardening
+### 2. Standard library and UI hardening
 
 - Keep `System` as minimal but production-usable.
 - Add incremental, stable APIs behind existing host-import conventions.
@@ -30,6 +35,10 @@ This roadmap reflects the current implementation trajectory and near-term planni
   - command line and environment handling
   - path and file semantics
   - clock/time behavior consistency
+- Keep `System.Ui` backend-neutral.
+- Keep the Qt Quick backend outside the VM and routed through `DllImport`.
+- Treat full declarative UI refresh as the current stable path; keep
+  incremental native patching experimental until it has a testable contract.
 
 ### 3. Runtime correctness and perf guardrails
 
@@ -61,19 +70,23 @@ The expected first practical milestone is a robust `UInt128` baseline, with clea
 - Improve allocation lifecycle clarity and object/array behavior.
 - Revisit exception model edges and stack semantics with more production-like tests.
 - Add dedicated instrumentation around call dispatch and host-import boundaries.
-- Keep future UI integration out of VM-specific host-import growth where possible.
-- Prefer a general FFI path for larger external systems:
+- Keep UI integration out of VM-specific host-import growth.
+- Prefer the existing general FFI path for larger external systems:
   - primitive and enum transparency
   - explicit string marshalling rules
   - transparent POD-style records only
   - callback trampolines with strict lifetime rules
   - opaque handles for complex foreign types
+- Keep the runtime native-call implementation generic through `libffi`; avoid
+  per-signature dispatch cascades.
 
 ### 6. Build/test engineering
 
 - Keep build and verification as one-click path for contributors.
 - Reduce “environment drift” risk for local scripts (documented prerequisites, explicit logs, deterministic settings).
 - Extend test coverage for generated temporary artifacts and compile smoke outputs.
+- Keep `scripts/run-ui-qtquick-smoke.sh` as the dedicated graphical smoke for
+  Qt Quick showcase work.
 
 ## Long-term
 

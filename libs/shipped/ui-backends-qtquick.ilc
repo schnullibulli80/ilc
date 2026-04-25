@@ -49,6 +49,9 @@ begin
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_minimum_size', CallingConvention := CallingConvention.Cdecl)]
   public static extern function SetWindowMinimumSize(windowHandle: NativeHandle; minWidth: Integer; minHeight: Integer): Integer;
 
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_background', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetWindowBackground(windowHandle: NativeHandle; color: String): Integer;
+
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_destroy', CallingConvention := CallingConvention.Cdecl)]
   public static extern procedure DestroyWindow(windowHandle: NativeHandle);
 
@@ -57,6 +60,12 @@ begin
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_content_qml', CallingConvention := CallingConvention.Cdecl)]
   public static extern function SetContentQml(windowHandle: NativeHandle; qmlSource: String): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_element_text', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetElementText(windowHandle: NativeHandle; objectName: String; text: String): Integer;
+
+  [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_element_color', CallingConvention := CallingConvention.Cdecl)]
+  public static extern function SetElementColor(windowHandle: NativeHandle; objectName: String; color: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run', CallingConvention := CallingConvention.Cdecl)]
   public static extern function RunBackend(backendHandle: NativeHandle): Integer;
@@ -514,6 +523,49 @@ begin
     return ActiveSlidersValue.Count;
   end;
 
+  private function GetButtonLabelObjectName(button: Button): String;
+  begin
+    if button = nil then
+    begin
+      return '';
+    end;
+
+    if button.Name = nil then
+    begin
+      return '';
+    end;
+
+    if button.Name = '' then
+    begin
+      return '';
+    end;
+
+    return button.Name + '_label';
+  end;
+
+  private function HasPatchObjectName(name: String): Boolean;
+  begin
+    if name = nil then
+    begin
+      return false;
+    end;
+
+    return name <> '';
+  end;
+
+  private function IsBackendDebugEnabled: Boolean;
+  begin
+    return Environment.Variables['ILC_QTBRIDGE_DEBUG'] = '1';
+  end;
+
+  private method WriteBackendDebug(message: String);
+  begin
+    if IsBackendDebugEnabled() then
+    begin
+      Console.WriteLine('[ilc_qtquick/backend] ' + message);
+    end;
+  end;
+
   private function FindInteractiveSlider(sliderId: Integer): Slider;
   begin
     if sliderId <= 0 then
@@ -563,6 +615,7 @@ begin
 
   private function RefreshInteractiveWindows: Integer;
   begin
+    WriteBackendDebug('refresh mode=full-refresh windows=' + ActiveInteractiveWindowHandlesValue.Count.ToString());
     var refreshed := 0;
     var index := 0;
     while index < ActiveInteractiveWindowHandlesValue.Count do
@@ -576,6 +629,111 @@ begin
     end;
 
     return refreshed;
+  end;
+
+  // Experimental and intentionally inactive in the interaction dispatch path.
+  // The canonical path is full declarative re-rendering via RefreshInteractiveWindows().
+  // Re-enable this only once every supported View type can patch all visible QML state
+  // and the smoke logs prove that no stale UI state remains.
+  private function TryPatchNativeView(windowHandle: NativeHandle; view: View): Boolean;
+  begin
+    if view = nil then
+    begin
+      return true;
+    end;
+
+    if view is StackPanel then
+    begin
+      var panel := view as StackPanel;
+      if panel.Children = nil then
+      begin
+        return true;
+      end;
+
+      var children := panel.Children;
+      var index := 0;
+      while index < children.Count do
+      begin
+        if TryPatchNativeView(windowHandle, children[index]) = false then
+        begin
+          return false;
+        end;
+
+        index := index + 1;
+      end;
+
+      return true;
+    end;
+
+    if view is TextBlock then
+    begin
+      var textBlock := view as TextBlock;
+      if HasPatchObjectName(textBlock.Name) = false then
+      begin
+        return true;
+      end;
+
+      var textResult := QtQuickNative.SetElementText(windowHandle, textBlock.Name, textBlock.Text);
+      var colorResult := QtQuickNative.SetElementColor(windowHandle, textBlock.Name, ColorToQml(textBlock.Foreground));
+      return textResult <> 0 and colorResult <> 0;
+    end;
+
+    if view is Button then
+    begin
+      var button := view as Button;
+      if HasPatchObjectName(button.Name) = false then
+      begin
+        return true;
+      end;
+
+      var colorResult := QtQuickNative.SetElementColor(windowHandle, button.Name, ColorToQml(button.Background));
+      var labelName := GetButtonLabelObjectName(button);
+      if HasPatchObjectName(labelName) = false then
+      begin
+        return colorResult <> 0;
+      end;
+
+      var labelResult := QtQuickNative.SetElementText(windowHandle, labelName, button.Text);
+      return colorResult <> 0 and labelResult <> 0;
+    end;
+
+    return true;
+  end;
+
+  private function TryPatchNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
+  begin
+    if windowHandle = NativeHandle.Null or window = nil then
+    begin
+      return false;
+    end;
+
+    var backgroundResult := QtQuickNative.SetWindowBackground(windowHandle, ColorToQml(window.Background));
+    var contentResult := TryPatchNativeView(windowHandle, window.Content);
+    if backgroundResult <> 0 and contentResult then
+    begin
+      LastBridgeStatusValue := 'native-window-patched';
+      return true;
+    end;
+
+    LastBridgeStatusValue := 'native-window-patch-failed';
+    return false;
+  end;
+
+  private function TryPatchInteractiveWindows: Integer;
+  begin
+    var patched := 0;
+    var index := 0;
+    while index < ActiveInteractiveWindowHandlesValue.Count do
+    begin
+      if TryPatchNativeWindow(ActiveInteractiveWindowHandlesValue[index], ActiveInteractiveWindowsValue[index]) then
+      begin
+        patched := patched + 1;
+      end;
+
+      index := index + 1;
+    end;
+
+    return patched;
   end;
 
   public method RequestTextBoxFocus(textBox: TextBox);
@@ -720,6 +878,7 @@ begin
     slider.Value := currentValue;
     var notified := slider.NotifyValueChanged();
     var refreshed := RefreshInteractiveWindows();
+
     if refreshed > 0 then
     begin
       if notified then
@@ -800,12 +959,22 @@ begin
     var currentText := QtQuickNative.ReadTextInputValue(NativeBackendHandleValue, textBoxId);
     textBox.Text := currentText;
     var notified := textBox.NotifyTextChanged();
+    PendingFocusTextBoxValue := textBox;
     var refreshed := RefreshInteractiveWindows();
+    var focused := ApplyPendingTextBoxFocus();
+
     if refreshed > 0 then
     begin
       if notified then
       begin
-        LastBridgeStatusValue := 'native-text-dispatched';
+        if focused > 0 then
+        begin
+          LastBridgeStatusValue := 'native-text-dispatched-focus-restored';
+        end
+        else
+        begin
+          LastBridgeStatusValue := 'native-text-dispatched';
+        end;
       end
       else
       begin
@@ -1148,7 +1317,7 @@ begin
       buttonResult := buttonResult +
         'property int ilcButtonId: ' + EncodeButtonInteraction(buttonId).ToString() + '; ' +
         'MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (ilcBridge !== null) { ilcBridge.onButtonClicked(parent.ilcButtonId); } } } ' +
-        'Text { anchors.centerIn: parent; color: "#f4f7fb"; text: "' + EscapeQmlString(button.Text) + '" } ' +
+        'Text { objectName: "' + EscapeQmlString(GetButtonLabelObjectName(button)) + '"; anchors.centerIn: parent; color: "#f4f7fb"; text: "' + EscapeQmlString(button.Text) + '" } ' +
         '}';
       return buttonResult;
     end;
@@ -1302,7 +1471,7 @@ begin
       'import QtQuick.Controls' + '
 ' +
       'Rectangle { width: ' + windowWidth.ToString() + '; height: ' + windowHeight.ToString() + '; color: "' + backgroundColor + '"; objectName: "' + EscapeQmlString(rootName) + '"; ' +
-      'Rectangle { width: 468; height: Math.max(400, ilcContentRoot.height + 56); anchors.centerIn: parent; radius: 22; color: "#171c24"; border.width: 1; border.color: "#2a3240"; opacity: 0.98; } ' +
+      'Rectangle { width: 468; height: Math.max(160, parent.height - 96); anchors.centerIn: parent; radius: 22; color: "#171c24"; border.width: 1; border.color: "#2a3240"; opacity: 0.98; } ' +
       contentQml +
       ' }';
   end;

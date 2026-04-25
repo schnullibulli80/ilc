@@ -276,16 +276,19 @@ Recommended v1 defaults:
 
 ## 8) Qt Quick / QML Mapping
 
-The first backend should map the neutral controls onto Qt Quick primitives.
+The first backend maps the neutral controls onto Qt Quick / QML through the
+ILC-side `System.Ui.Backends.QtQuick` adapter and a native `libilc_qtbridge.so`
+C ABI shim.
 
-Recommended mapping:
+Current implemented mapping:
 
-- `Window` -> `ApplicationWindow`
-- `StackPanel` -> `ColumnLayout` / `RowLayout`
-- `TextBlock` -> `Label` or `Text`
-- `Button` -> `Button`
-- `TextBox` -> `TextField`
-- `ListView` -> `ListView`
+- `Window` -> root QML `Rectangle` hosted by `QQuickView`
+- `StackPanel` -> `Column` / `Row`
+- `TextBlock` -> `Text`
+- `Button` -> styled `Rectangle` + `MouseArea` + `Text`
+- `CheckBox` -> styled QML item + `MouseArea`
+- `TextBox` -> styled `Rectangle` + `TextInput` + placeholder `Text`
+- `Slider` -> Qt Quick Controls `Slider`
 
 The ILC side should provide:
 
@@ -302,6 +305,27 @@ Qt/QML should provide:
 - styling
 - animation
 - platform integration
+
+Current event flow:
+
+- QML controls call the bridge object exposed as `ilcBridge`;
+- the native Qt bridge converts those events to integer interaction tokens;
+- the VM callback trampoline dispatches the token into `QtQuickBackend.HandleNativeInteraction`;
+- the ILC backend updates the neutral UI state and commands;
+- the active path re-renders the window content from the current ILC UI model.
+
+The active refresh strategy is intentionally full declarative re-rendering:
+
+- every interaction that changes UI state calls `RefreshInteractiveWindows()`;
+- the backend regenerates QML from the current `Window.Content`;
+- `SetContentQml` installs a new QML revision in the native bridge;
+- text input refresh restores focus through `FocusTextInput`;
+- `ILC_QTBRIDGE_DEBUG=1` logs `refresh mode=full-refresh`.
+
+An experimental incremental patch path exists in the backend source for future
+work, but it is not active in the interaction dispatch path. It must not be
+used for showcase behavior until every supported view type can patch all visible
+QML state without stale UI.
 
 ## 9) Imperative First, Declarative Later
 
@@ -338,27 +362,32 @@ The first milestone should be intentionally small.
 
 ### 10.1 MVP goals
 
-- open a window
-- render text
-- render a button
-- handle a button command
-- support one vertical layout container
-- support one textbox
-- support one list view
+- open a window - implemented
+- render text - implemented
+- render a button - implemented
+- handle a button command - implemented
+- support one vertical/horizontal layout container - implemented through `StackPanel`
+- support one textbox - implemented
+- support checkbox and slider interactions - implemented in the Qt Quick showcase slice
+- support one list view - still deferred
 
 ### 10.2 MVP type set
 
 - `Application`
 - `Window`
 - `View`
-- `Container`
 - `StackPanel`
 - `TextBlock`
 - `Button`
 - `TextBox`
-- `ListView`
-- `ObservableObject`
+- `CheckBox`
+- `Slider`
 - `Command`
+
+Deferred or not yet part of the active Qt Quick smoke:
+
+- `ListView`
+- full `ObservableObject` / binding surface
 
 ### 10.3 MVP backend
 
@@ -404,14 +433,14 @@ polluting the neutral surface.
 
 Recommended implementation sequence:
 
-1. define `System.Ui` base classes and enums
-2. add `ObservableObject` and `Command`
-3. add the MVP controls and `StackPanel`
-4. define backend hosting interfaces
-5. implement a minimal Qt Quick backend
-6. build a `Hello UI` sample
-7. add one interaction sample with state + command
-8. add one list-binding sample
+1. define `System.Ui` base classes and enums - done
+2. add `Command` - done
+3. add MVP controls and `StackPanel` - mostly done
+4. define backend hosting interfaces - done
+5. implement a minimal Qt Quick backend - done
+6. build a `Hello UI` sample - covered by runtime smoke
+7. add one interaction sample with state + command - covered by `ui-qtquick-demo`
+8. add one list-binding sample - still future work
 
 Only after that should the project consider:
 
@@ -419,6 +448,16 @@ Only after that should the project consider:
 - advanced binding
 - more controls
 - additional backends
+
+Current dedicated smoke:
+
+```bash
+ILC_QTBRIDGE_DEBUG=1 scripts/run-ui-qtquick-smoke.sh
+```
+
+The smoke compiles `tests/fixtures/ui-qtquick-demo.ilc`, runs it through
+`ilcvm_cli`, writes compile output to `tmp/ui-qtquick-demo-compile.log`, and
+writes Qt/backend output to `tmp/ui-qtquick-demo-run.log`.
 
 ## 14) Strategic Summary
 

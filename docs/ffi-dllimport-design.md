@@ -42,7 +42,7 @@ This fits the likely first use cases:
 - libc-style experiments
 - operating-system APIs
 - small C shim libraries
-- future Qt bridge shims
+- Qt bridge shims
 
 `LibraryImport` would introduce ambiguity too early:
 
@@ -153,14 +153,17 @@ This is enough to unlock:
 
 ### Current implementation status
 
-The current repository implementation now covers this first vertical slice:
+The current repository implementation now covers more than the original first
+vertical slice:
 
 - `DllImport` method attributes are parsed on methods
 - binder metadata is attached to `MethodSymbol`
 - metadata is serialized into ILB method rows
 - runtime metadata is deserialized again from ILB
 - Linux shared-library loading works through `dlopen` / `dlsym`
-- native calls currently execute for a narrow C-ABI subset
+- native calls are dispatched through a generic `libffi` call frame
+- callbacks are supported through VM-created native trampolines for the current callback shapes
+- owned UTF-8 string returns are supported when the import declares the ownership/free convention
 
 What is implemented right now in the runtime:
 
@@ -176,27 +179,36 @@ What is implemented right now in the runtime:
   - `Boolean`
   - `String`
   - `NativeHandle`
+  - callback delegates currently shaped as `Integer -> Integer` or `Integer -> Void`
 - supported return types:
   - `Integer`
   - `Boolean`
   - `Void`
   - `NativeHandle`
+  - `String` when `StringReturn := StringReturn.Utf8Owned` and `StringFreeEntryPoint` is provided
 
-This is intentionally still a v1 subset, not a full interop system.
+The runtime no longer contains per-signature function-pointer dispatch paths.
+It marshals each argument by FFI value kind, prepares an `ffi_cif`, and invokes
+the native symbol through `ffi_call`. This keeps adding new supported shapes from
+turning into a cascade of complete-signature special cases.
+
+This is intentionally still an early interop system, not a complete ABI model.
 
 ## 7) What V1 Should Explicitly Exclude
 
-The first version should **not** support:
+The first version should **not** attempt to support:
 
-- callbacks
 - function pointers in user code
 - C++ member functions
 - C++ name-mangled direct imports
 - struct/record by-value marshalling
 - variadic native functions
 - exception propagation across ABI boundary
-- automatic resource ownership protocols
 - ordinal export lookup
+
+Callback support exists for the current VM trampoline shapes, but user-facing
+function-pointer values and arbitrary native callback signatures are still out
+of scope.
 
 These are all real features, but they should be layered on later.
 
@@ -222,16 +234,18 @@ The runtime implementation currently supports:
 
 - `Integer`
 - `Boolean`
-- `String` as inbound argument only
+- `String` as inbound UTF-8 argument
+- owned UTF-8 `String` returns when an explicit free entry point is declared
 - `Void` return
 - `NativeHandle` as an opaque runtime-managed native pointer handle
+- callback delegates for the currently implemented VM trampoline shapes
 
 Not implemented yet in the runtime path:
 
 - `Pointer`
-- returned native strings as managed `String`
 - byref native marshalling
 - records/structs
+- arbitrary native callback signatures
 
 ### 8.2 Suggested semantics
 
@@ -256,15 +270,17 @@ Recommended v1 policy:
 - inbound `String` arguments:
   - runtime allocates temporary UTF-8 memory for the call
 - returned string pointers:
-  - **not supported** in v1 as automatic `String` returns
+  - supported only when the declaration explicitly states that the native value
+    is owned UTF-8 and provides a matching native free function
 
-This avoids a huge amount of ownership complexity.
+This avoids implicit ownership guessing.
 
 If native code must return text in v1, prefer:
 
+- explicit owned-string declarations with `StringFreeEntryPoint`
 - caller-provided buffer patterns later
-- or dedicated shim functions
-- or explicit `NativeHandle`/`Pointer` handling
+- dedicated shim functions
+- explicit `NativeHandle`/`Pointer` handling where ownership is not string-like
 
 ## 9) Why Qt Still Needs a Shim
 
@@ -331,6 +347,12 @@ Reason:
 - avoids pretending that native functions are normal VM functions
 - keeps the bytecode/runtime boundary explicit
 
+Current implementation note:
+
+- the runtime dispatch is already generic through `libffi`;
+- argument and return handling branches only by individual FFI value kind;
+- complete method-signature cascades are intentionally avoided.
+
 ## 12) Bytecode Responsibilities
 
 The bytecode layer should preserve enough data for runtime resolution.
@@ -357,6 +379,7 @@ The runtime must implement:
 - symbol lookup
 - native function invocation
 - marshaling for supported v1 types
+- callback trampoline registration for supported callback delegate shapes
 
 Platform-specific examples:
 
@@ -376,6 +399,8 @@ The runtime should also define:
 Recommended v1 behavior:
 
 - fail fast with explicit runtime errors
+- emit `ILC_VM_FFI_DEBUG=1` / callback debug diagnostics around normalized
+  signatures, marshalled arguments, return values, and trampoline failures
 
 ## 14) Error Model
 
@@ -418,12 +443,12 @@ Good v1 FFI targets:
 - libc helper calls
 - OS process/file helpers exposed through C ABI
 - tiny native shim libraries
-- future Qt bridge shim
+- Qt bridge shim
 
 Bad v1 FFI targets:
 
 - direct Qt class interop
-- callback-heavy APIs
+- arbitrary callback-heavy APIs
 - complex struct-heavy native SDKs
 - graphics APIs with large pointer/ownership surfaces
 
@@ -437,8 +462,8 @@ Bad v1 FFI targets:
 6. extend bytecode/module format for FFI imports
 7. implement runtime dynamic loading + invocation for Linux first
 8. add compiler/runtime smoke tests using a tiny native test library
-9. add Windows support
-10. only then build higher-level native integrations such as UI backends
+9. build higher-level native integrations such as UI backends over a C ABI shim
+10. add Windows support
 
 ## 18) Strategic Summary
 
@@ -446,9 +471,10 @@ The correct first interop move for ILC is:
 
 - `DllImport`
 - C#-style attribute syntax
-- narrow C-ABI scope
+- C-ABI scope
 - small supported type set
 - explicit calling conventions
+- generic `libffi` runtime dispatch rather than signature-specific VM code
 - no attempt to solve compiled ILC library import yet
 
 This gives ILC a real native interop foundation without overloading the design

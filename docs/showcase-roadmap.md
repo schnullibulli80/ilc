@@ -42,16 +42,20 @@ ILC can already demonstrate:
 - diagnostics and tracing;
 - generic `foreach`;
 - `out` / `ref`;
-- native interop v1 through `DllImport`.
+- native interop through `DllImport`;
+- JSON parsing/building;
+- TCP, HTTP, and WebSocket client smokes;
+- threading and first task primitives;
+- a Qt Quick UI smoke with callbacks and state-driven refresh.
 
-This is already enough for a credible “language core + standard library + FFI”
-presentation.
+This is already enough for a credible “language core + standard library + FFI +
+native UI bridge” presentation.
 
 ## 3) Recommended showcase order
 
 ### Stage 1. Native interop hardening
 
-Priority: very high
+Status: largely implemented for the current Linux/C-ABI slice
 
 Why:
 
@@ -59,18 +63,26 @@ Why:
 - it makes the language feel connected to the host platform;
 - it reduces pressure to hard-code every integration into the runtime first.
 
-Recommended next work:
+Implemented baseline:
 
-- `NativeHandle` or `Pointer` in `System`
-- pointer/handle parameters and return values in FFI
-- first callback design notes
-- one small native demo library or C shim for controlled examples
+- `NativeHandle` in `System`
+- primitive, string, handle, and owned UTF-8 string return marshalling
+- generic `libffi` runtime dispatch instead of per-signature VM dispatch
+- VM callback trampolines for the current integer callback shapes
+- native C ABI shim usage through the Qt Quick bridge
 
 Good demo outcomes:
 
 - call operating-system or libc functions;
 - hold a native handle;
 - open/close an external resource through FFI.
+
+Remaining hardening:
+
+- Windows shared-library loading path
+- records/POD marshalling
+- richer callback lifetime policy
+- broader native test matrix
 
 ### Stage 2. JSON and data exchange
 
@@ -216,21 +228,23 @@ Good demo outcomes:
 
 ### Stage 8. UI foundation
 
-Priority: medium
+Status: first Qt Quick showcase slice implemented
 
 Why:
 
 - UI is one of the most visible showcase targets;
 - but it depends on stable interop, handles, lifetime rules, and probably callbacks/events.
 
-Recommended scope:
+Implemented scope:
 
-- finalize FFI primitives needed by a backend bridge
-- build a minimal `System.Ui` object model
-- target one backend first
-- prefer a backend strategy over hard-coded runtime UI hooks
-- keep the UI backend outside the VM and bridge it through `DllImport`
-- use a small C ABI shim in front of Qt / C++
+- FFI primitives needed by the Qt bridge
+- minimal `System.Ui` object model
+- `System.Ui.Hosting`
+- `System.Ui.Backends.QtQuick`
+- Qt Quick native bridge in `libilc_qtbridge.so`
+- UI backend outside the VM, bridged through `DllImport`
+- C ABI shim in front of Qt / C++
+- dedicated UI smoke script
 
 For this stage, the FFI baseline should be:
 
@@ -247,7 +261,23 @@ Good demo outcomes:
 
 - hello window;
 - button click + state update;
-- small form or list application.
+- checkbox, textbox, slider callbacks;
+- full declarative refresh from ILC state;
+- small form-style Qt Quick demo.
+
+Current UI smoke:
+
+```bash
+ILC_QTBRIDGE_DEBUG=1 scripts/run-ui-qtquick-smoke.sh
+```
+
+Current active UI refresh behavior:
+
+- interactions dispatch from QML through the native bridge into an ILC callback;
+- ILC state and commands are updated;
+- the Qt Quick backend regenerates QML from the neutral UI model;
+- logs report `refresh mode=full-refresh`;
+- the experimental incremental patch path is intentionally inactive.
 
 ### Stage 9. Higher-level async model
 
@@ -275,17 +305,17 @@ Good demo outcomes:
 
 For the next implementation window, the most sensible sequence is:
 
-1. Extend FFI with `NativeHandle` / pointer-style support.
-2. Add JSON.
-3. Add TCP networking.
-4. Add minimal HTTP client support.
-5. Add basic thread + lock primitives.
+1. Harden the current FFI/Qt bridge diagnostics and docs.
+2. Add a small list/data UI demo once `ListView` is ready.
+3. Start SQLite/local persistence over `DllImport`.
+4. Add a connected UI demo that combines HTTP/WebSocket + UI.
+5. Continue async/task work on top of the existing threading substrate.
 
 Reason:
 
-- this gives a strong “systems + application + integration” story quickly;
-- every step feeds later UI and service features;
-- none of these steps requires prematurely committing to a full UI backend.
+- the basic systems/application/integration story already exists;
+- the next showcase value comes from composition;
+- UI should remain backend-neutral and driven by the generic FFI bridge.
 
 ## 5) Showcase bundles
 

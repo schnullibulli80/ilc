@@ -225,7 +225,26 @@ used to remove dispatch overhead where behavior is static and verified by benchm
 - host mapping is intentionally constrained to currently implemented APIs
 - exception system is functional but still minimal compared to larger managed runtimes
 
-## 11) Practical Consequences for Future Work
+## 11) Native FFI Runtime Path
+
+`DllImport` calls are a separate runtime path from built-in host imports.
+
+Current behavior:
+
+- native libraries are loaded through the platform dynamic loader on Linux;
+- symbols are resolved by the imported entry point;
+- calls are invoked through a generic `libffi` call frame;
+- arguments are marshalled by individual FFI value kind rather than by complete
+  method-signature special cases;
+- `NativeHandle` values represent opaque native pointers;
+- owned UTF-8 string returns require explicit metadata and a native free entry point;
+- callbacks are exposed to native code through VM-created trampolines for the
+  currently supported callback shapes.
+
+The VM must not grow UI-specific host imports for graphical backends. The current
+Qt Quick backend uses this FFI path through a small C ABI shim instead.
+
+## 12) Practical Consequences for Future Work
 
 This runtime shape is stable enough for:
 

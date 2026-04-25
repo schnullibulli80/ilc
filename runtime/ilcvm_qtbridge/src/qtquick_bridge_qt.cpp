@@ -386,6 +386,27 @@ namespace
         return "ilcTextInput_" + std::to_string(text_box_id);
     }
 
+    QObject* find_named_object(WindowState& window, const std::string& object_name)
+    {
+        if (window.view == nullptr || object_name.empty())
+        {
+            return nullptr;
+        }
+
+        QObject* search_root = window.view->rootObject();
+        if (search_root == nullptr)
+        {
+            search_root = window.view->contentItem();
+        }
+
+        if (search_root == nullptr)
+        {
+            return nullptr;
+        }
+
+        return search_root->findChild<QObject*>(QString::fromStdString(object_name), Qt::FindChildrenRecursively);
+    }
+
     void restore_text_input_focus(WindowState& window, std::int32_t text_box_id)
     {
         if (window.view == nullptr)
@@ -662,6 +683,34 @@ extern "C"
         return 1;
     }
 
+    std::int32_t ilc_qtquick_window_set_background(std::int32_t window_handle, const char* color_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_set_background rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        if (it->second.view == nullptr || it->second.view->rootObject() == nullptr)
+        {
+            qtbridge_debug("window_set_background rejected missing_root=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        const auto color = safe_utf8(color_utf8);
+        const auto applied = it->second.view->rootObject()->setProperty("color", QColor(QString::fromStdString(color)));
+        qtbridge_debug(
+            "window_set_background handle=" +
+            std::to_string(window_handle) +
+            " color='" +
+            color +
+            "' applied=" +
+            std::to_string(applied ? 1 : 0));
+        return applied ? 1 : 0;
+    }
+
     void ilc_qtquick_window_destroy(std::int32_t window_handle)
     {
         std::lock_guard<std::mutex> lock(bridge_mutex);
@@ -717,6 +766,70 @@ extern "C"
         }
 
         return install_content_qml(it->second, qml) ? 1 : 0;
+    }
+
+    std::int32_t ilc_qtquick_window_set_element_text(std::int32_t window_handle, const char* object_name_utf8, const char* text_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_set_element_text rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        const auto object_name = safe_utf8(object_name_utf8);
+        auto* object = find_named_object(it->second, object_name);
+        if (object == nullptr)
+        {
+            qtbridge_debug("window_set_element_text rejected missing_object window=" + std::to_string(window_handle) + " object='" + object_name + "'");
+            return 0;
+        }
+
+        const auto text = safe_utf8(text_utf8);
+        const auto applied = object->setProperty("text", QString::fromStdString(text));
+        qtbridge_debug(
+            "window_set_element_text handle=" +
+            std::to_string(window_handle) +
+            " object='" +
+            object_name +
+            "' applied=" +
+            std::to_string(applied ? 1 : 0) +
+            " length=" +
+            std::to_string(text.length()));
+        return applied ? 1 : 0;
+    }
+
+    std::int32_t ilc_qtquick_window_set_element_color(std::int32_t window_handle, const char* object_name_utf8, const char* color_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        const auto it = windows.find(window_handle);
+        if (it == windows.end())
+        {
+            qtbridge_debug("window_set_element_color rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        const auto object_name = safe_utf8(object_name_utf8);
+        auto* object = find_named_object(it->second, object_name);
+        if (object == nullptr)
+        {
+            qtbridge_debug("window_set_element_color rejected missing_object window=" + std::to_string(window_handle) + " object='" + object_name + "'");
+            return 0;
+        }
+
+        const auto color = safe_utf8(color_utf8);
+        const auto applied = object->setProperty("color", QColor(QString::fromStdString(color)));
+        qtbridge_debug(
+            "window_set_element_color handle=" +
+            std::to_string(window_handle) +
+            " object='" +
+            object_name +
+            "' color='" +
+            color +
+            "' applied=" +
+            std::to_string(applied ? 1 : 0));
+        return applied ? 1 : 0;
     }
 
     std::int32_t ilc_qtquick_window_focus_text_input(std::int32_t window_handle, std::int32_t text_box_id)

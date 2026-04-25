@@ -292,7 +292,8 @@ security-sensitive designs benefit from scrutiny much more than from wishful sec
 
 ## Current status
 
-ILC is currently in a **specification-first phase**.
+ILC is currently in an implementation-heavy bootstrap phase backed by the
+original specification work.
 
 The project already has substantial design material, including:
 
@@ -305,7 +306,20 @@ The project already has substantial design material, including:
 - a secure packaging and hardened execution specification
 - a numeric and cryptographic integer specification
 
-So while ILC is still early as an implementation project, it is already much more than “just an idea for a language”.
+Implemented showcase-capable slices currently include:
+
+- compiler pipeline through bytecode / `.ilb` emission
+- native C++ VM execution
+- shipped standard library units for `System`, diagnostics, text, JSON, networking, threading, collections, and UI
+- native `DllImport` through Linux shared libraries and generic `libffi` dispatch
+- opaque native handles, UTF-8 string marshalling, owned UTF-8 string returns, and current callback trampolines
+- a Qt Quick UI backend through `libilc_qtbridge.so`
+- full local verification through `scripts/run-local-verification.sh`
+- dedicated Qt Quick UI smoke through `scripts/run-ui-qtquick-smoke.sh`
+
+So while ILC is still early as a language/runtime implementation, it is already
+exercising end-to-end compiler, runtime, library, FFI, networking, threading, and
+UI paths.
 
 ---
 
@@ -319,7 +333,8 @@ A realistic implementation path looks like this:
 4. **Arrays and collections**
 5. **Exceptions + debug information**
 6. **Generics + broader language surface**
-7. **Packaging, hardening, and runtime maturation**
+7. **Native interop + backend bridges**
+8. **Packaging, hardening, and runtime maturation**
 
 The idea is simple:
 make it real first, then make it broad, then make it tougher.
@@ -331,7 +346,10 @@ make it real first, then make it broad, then make it tougher.
 - [Architecture](docs/architecture.md)
 - [Language overview](docs/language-overview.md)
 - [Runtime and bytecode](docs/runtime-and-bytecode.md)
+- [FFI / DllImport](docs/ffi-dllimport-design.md)
 - [Standard library](docs/standard-library.md)
+- [UI architecture](docs/ui-architecture.md)
+- [Showcase roadmap](docs/showcase-roadmap.md)
 - [Building and testing](docs/building-and-testing.md)
 - [Benchmarks](docs/benchmarks.md)
 - [Roadmap](docs/roadmap.md)

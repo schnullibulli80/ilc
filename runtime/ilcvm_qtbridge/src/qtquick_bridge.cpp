@@ -170,6 +170,24 @@ extern "C"
         return 1;
     }
 
+    std::int32_t ilc_qtquick_window_set_background(std::int32_t window_handle, const char* color_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        if (!windows.contains(window_handle))
+        {
+            qtbridge_debug("window_set_background rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "window_set_background handle=" +
+            std::to_string(window_handle) +
+            " color='" +
+            safe_utf8(color_utf8) +
+            "'");
+        return 1;
+    }
+
     void ilc_qtquick_window_destroy(std::int32_t window_handle)
     {
         std::lock_guard<std::mutex> lock(bridge_mutex);
@@ -204,6 +222,46 @@ extern "C"
 
         it->second.content_qml = safe_utf8(qml_utf8);
         qtbridge_debug("window_set_content_qml handle=" + std::to_string(window_handle) + " length=" + std::to_string(it->second.content_qml.length()));
+        return 1;
+    }
+
+    std::int32_t ilc_qtquick_window_set_element_text(std::int32_t window_handle, const char* object_name_utf8, const char* text_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        if (!windows.contains(window_handle))
+        {
+            qtbridge_debug("window_set_element_text rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "window_set_element_text handle=" +
+            std::to_string(window_handle) +
+            " object='" +
+            safe_utf8(object_name_utf8) +
+            "' text='" +
+            safe_utf8(text_utf8) +
+            "'");
+        return 1;
+    }
+
+    std::int32_t ilc_qtquick_window_set_element_color(std::int32_t window_handle, const char* object_name_utf8, const char* color_utf8)
+    {
+        std::lock_guard<std::mutex> lock(bridge_mutex);
+        if (!windows.contains(window_handle))
+        {
+            qtbridge_debug("window_set_element_color rejected missing_window=" + std::to_string(window_handle));
+            return 0;
+        }
+
+        qtbridge_debug(
+            "window_set_element_color handle=" +
+            std::to_string(window_handle) +
+            " object='" +
+            safe_utf8(object_name_utf8) +
+            "' color='" +
+            safe_utf8(color_utf8) +
+            "'");
         return 1;
     }
 
