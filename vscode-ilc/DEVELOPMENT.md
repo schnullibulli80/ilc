@@ -3,7 +3,7 @@
 ## Project Structure
 
 ```
-vscode-ilc-highlighter/
+vscode-ilc/
 ├── syntaxes/
 │   └── ilc.tmLanguage.json      # TextMate grammar definition
 ├── src/
@@ -24,7 +24,7 @@ vscode-ilc-highlighter/
 
 ### 1. Install Dependencies
 ```bash
-cd vscode-ilc-highlighter
+cd vscode-ilc
 npm install
 ```
 
@@ -36,14 +36,30 @@ npm run compile
 ### 3. Test the Extension
 
 In VS Code:
-1. Open this folder in VS Code: `code vscode-ilc-highlighter`
+1. Open this folder in VS Code: `code vscode-ilc`
 2. Press `F5` to launch the Extension Development Host
 3. A new VS Code window will open with the extension loaded
 4. Open `test-files/comprehensive-example.ilc` to see syntax highlighting in action
+5. Open the ILC repository root in the Extension Development Host if you want compiler-backed commands and diagnostics
 
 ### 4. Build for Release
 ```bash
 npm run vscode:prepublish
+```
+
+### 5. Package and Install Locally
+
+From `vscode-ilc`:
+
+```bash
+npx vsce package
+code --install-extension ilc-0.1.0.vsix --force
+```
+
+Then reload VS Code:
+
+```text
+Developer: Reload Window
 ```
 
 ## Features
@@ -62,6 +78,111 @@ npm run vscode:prepublish
 - **Bracket matching**: Proper nesting detection
 - **Smart indentation**: Automatic indentation for code blocks
 - **Comment support**: Both line and block comments recognized
+
+### Compiler-backed integration
+
+The extension currently provides the first non-LSP integration layer:
+
+- `ILC: Compile Current File`
+- `ILC: Run Current File`
+- `ILC: Refresh Diagnostics`
+- `ILC: Run Local Verification`
+- `ILC: Run QtQuick Smoke`
+- `ILC: Show Output`
+- keyword, built-in type, local variable, and workspace-symbol completions
+- snippets from `snippets/ilc.json`
+- hover documentation from `/// <summary>`, `/// <param>`, and `/// <returns>`
+- signature help for method/function calls
+- document symbols for Outline and Breadcrumbs
+- workspace symbol search
+- go-to-definition by exact symbol name
+
+Diagnostics are produced by invoking:
+
+```bash
+dotnet run --project src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj -- --debug <active-file> libs/shipped/*.ilc
+```
+
+The extension parses compiler diagnostics of the form:
+
+```text
+file.ilc(line,column): error ILC0000: message
+```
+
+Set `ilc.debugOutput` to `true` to log command arguments, repository-root
+detection, and diagnostic counts to the `ILC` output channel.
+
+### Language server boundary
+
+The experimental language server lives in:
+
+```text
+src/ILC.LanguageServer
+```
+
+It speaks a minimal stdio-based LSP subset and reuses:
+
+- `ILC.Compiler.Syntax`
+- `ILC.Compiler.Binding`
+- `ILC.Compiler.Core`
+
+The VS Code extension starts it with:
+
+```bash
+dotnet run --project src/ILC.LanguageServer/ILC.LanguageServer.csproj -- --workspace <repo-root>
+```
+
+With `ilc.debugOutput = true`, the extension appends `--debug` so the language
+server can report extra state through LSP `window/logMessage` notifications
+without writing to stdout.
+
+Before testing the extension against a changed language server, build it from
+the repository root:
+
+```bash
+dotnet build src/ILC.LanguageServer/ILC.LanguageServer.csproj --no-restore
+```
+
+Disable it with `ilc.languageServer.enabled := false` to force the TypeScript
+fallback providers.
+
+Do not reimplement the ILC parser or binder in TypeScript for advanced editor
+features. Completion, hover, go-to-definition, rename, semantic highlighting,
+and richer diagnostics should move into this language server.
+
+Current semantic lookup in the language server includes imported-namespace
+filtering for workspace symbols, nested document symbols for Outline, local
+variable declarations with simple type inference, member access lookup through
+locals/static types/enums, and one-step base-type lookup for inherited members.
+Completion is context-aware: member access returns only members for the resolved
+receiver type, `new` returns constructible classes, type-name contexts return
+known types plus built-ins, and normal word completion combines scoped locals
+with visible global symbols.
+Signature help also resolves member invocations through the receiver type, so
+`window.SetMinimumSize(...)` is matched against `Window` methods instead of all
+methods with the same name.
+Code actions currently provide a first quick fix for missing imports: if the
+identifier under the cursor is known in another workspace namespace, the server
+offers `Add uses <namespace>`.
+The same missing-import scan publishes `ILC1001` diagnostics so the lightbulb is
+discoverable without manually invoking Quick Fix on an unmarked identifier.
+Editor diagnostics include parser diagnostics plus Binder diagnostics from the
+same merge model as the compiler CLI: active document plus imported workspace
+namespaces. The server filters the result back to the active document before
+publishing diagnostics.
+
+The current TypeScript symbol index is intentionally a fallback bridge:
+
+- it scans `.ilc` files and shipped libraries with line-based declaration patterns;
+- it is good enough for first completions, hover, signature help, Outline, workspace symbols, and simple go-to-definition;
+- it should not become the long-term semantic source of truth.
+
+### Reload rules
+
+- C# language server only changed: rebuild `src/ILC.LanguageServer`, then reload VS Code.
+- TypeScript extension client changed: run `npm run vscode:prepublish`, rebuild the VSIX, reinstall it, then reload VS Code.
+- Grammar/snippet/package metadata changed: rebuild and reinstall the VSIX.
+- If behavior looks stale, first check the `ILC` output channel with `ilc.debugOutput = true`.
 
 ## Publishing to VS Code Marketplace
 

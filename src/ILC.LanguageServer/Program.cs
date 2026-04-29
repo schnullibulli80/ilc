@@ -1,0 +1,2003 @@
+using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using ILC.Compiler.Binding;
+using ILC.Compiler.Core;
+using ILC.Compiler.Syntax;
+
+var workspaceRoot = Directory.GetCurrentDirectory();
+var debugEnabled = false;
+for (var index = 0; index < args.Length; index++)
+{
+    if (args[index] == "--workspace" && index + 1 < args.Length)
+    {
+        workspaceRoot = Path.GetFullPath(args[++index]);
+        continue;
+    }
+
+    if (args[index] == "--debug")
+    {
+        debugEnabled = true;
+    }
+}
+
+var server = new LanguageServer(workspaceRoot, debugEnabled);
+await server.RunAsync();
+
+internal sealed class LanguageServer(string workspaceRoot, bool debugEnabled)
+{
+    private static readonly TimeSpan DiagnosticsDebounceDelay = TimeSpan.FromMilliseconds(350);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly ConcurrentDictionary<string, string> documents = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> documentRevisions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> scheduledDiagnostics = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CachedModelSnapshot> modelSnapshots = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ModelSnapshot> importedWorkspaceSnapshots = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim writeLock = new(1, 1);
+    private readonly Stream input = Console.OpenStandardInput();
+    private readonly Stream output = Console.OpenStandardOutput();
+    private readonly LanguageModel model = new(workspaceRoot);
+    private long modelRevision;
+
+    public async Task RunAsync()
+    {
+        while (true)
+        {
+            var payload = await ReadPayloadAsync();
+            if (payload is null)
+            {
+                return;
+            }
+
+            try
+            {
+                await HandleMessageAsync(payload);
+            }
+            catch (Exception ex)
+            {
+                await LogAsync($"unhandled {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task<string?> ReadPayloadAsync()
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (true)
+        {
+            var line = await ReadAsciiLineAsync();
+            if (line is null)
+            {
+                return null;
+            }
+
+            if (line.Length == 0)
+            {
+                break;
+            }
+
+            var separator = line.IndexOf(':', StringComparison.Ordinal);
+            if (separator > 0)
+            {
+                headers[line[..separator].Trim()] = line[(separator + 1)..].Trim();
+            }
+        }
+
+        if (!headers.TryGetValue("Content-Length", out var lengthText) || !int.TryParse(lengthText, out var length))
+        {
+            return null;
+        }
+
+        var buffer = new byte[length];
+        var offset = 0;
+        while (offset < length)
+        {
+            var read = await input.ReadAsync(buffer.AsMemory(offset, length - offset));
+            if (read == 0)
+            {
+                return null;
+            }
+
+            offset += read;
+        }
+
+        return Encoding.UTF8.GetString(buffer);
+    }
+
+    private async Task<string?> ReadAsciiLineAsync()
+    {
+        var buffer = new List<byte>();
+        while (true)
+        {
+            var value = input.ReadByte();
+            if (value < 0)
+            {
+                return buffer.Count == 0 ? null : Encoding.ASCII.GetString(buffer.ToArray());
+            }
+
+            if (value == '\n')
+            {
+                if (buffer.Count > 0 && buffer[^1] == '\r')
+                {
+                    buffer.RemoveAt(buffer.Count - 1);
+                }
+
+                return Encoding.ASCII.GetString(buffer.ToArray());
+            }
+
+            buffer.Add((byte)value);
+            await Task.Yield();
+        }
+    }
+
+    private async Task HandleMessageAsync(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        var method = root.TryGetProperty("method", out var methodElement) ? methodElement.GetString() : null;
+        var hasId = root.TryGetProperty("id", out var idElement);
+
+        switch (method)
+        {
+            case "initialize":
+                await RespondAsync(idElement, new
+                {
+                    capabilities = new
+                    {
+                        textDocumentSync = 1,
+                        completionProvider = new { triggerCharacters = new[] { ".", ":" } },
+                        hoverProvider = true,
+                        signatureHelpProvider = new { triggerCharacters = new[] { "(", ",", ";" } },
+                        documentSymbolProvider = true,
+                        definitionProvider = true,
+                        codeActionProvider = true,
+                        workspaceSymbolProvider = true
+                    },
+                    serverInfo = new { name = "ILC Language Server", version = "0.1.0" }
+                });
+                break;
+            case "initialized":
+                await LogAsync("initialized");
+                await LogDebugAsync($"workspace={workspaceRoot}");
+                break;
+            case "shutdown" when hasId:
+                await RespondAsync(idElement, null);
+                break;
+            case "exit":
+                Environment.Exit(0);
+                break;
+            case "textDocument/didOpen":
+                HandleDidOpen(root);
+                break;
+            case "textDocument/didChange":
+                HandleDidChange(root);
+                break;
+            case "textDocument/didSave":
+                await PublishDiagnosticsNowAsync(GetDocumentUri(root), "save");
+                break;
+            case "textDocument/completion" when hasId:
+                await RespondAsync(idElement, HandleCompletion(root));
+                break;
+            case "textDocument/hover" when hasId:
+                await RespondAsync(idElement, HandleHover(root));
+                break;
+            case "textDocument/signatureHelp" when hasId:
+                await RespondAsync(idElement, await HandleSignatureHelpAsync(root));
+                break;
+            case "textDocument/documentSymbol" when hasId:
+                await RespondAsync(idElement, HandleDocumentSymbols(root));
+                break;
+            case "textDocument/definition" when hasId:
+                await RespondAsync(idElement, HandleDefinition(root));
+                break;
+            case "textDocument/codeAction" when hasId:
+                await RespondAsync(idElement, HandleCodeAction(root));
+                break;
+            case "workspace/symbol" when hasId:
+                await RespondAsync(idElement, HandleWorkspaceSymbols(root));
+                break;
+            default:
+                if (hasId)
+                {
+                    await RespondAsync(idElement, null);
+                }
+                break;
+        }
+    }
+
+    private void HandleDidOpen(JsonElement root)
+    {
+        var textDocument = root.GetProperty("params").GetProperty("textDocument");
+        var uri = textDocument.GetProperty("uri").GetString() ?? string.Empty;
+        var text = textDocument.GetProperty("text").GetString() ?? string.Empty;
+        UpdateDocument(uri, text);
+        _ = PublishDiagnosticsAsync(uri);
+    }
+
+    private void HandleDidChange(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        var uri = parameters.GetProperty("textDocument").GetProperty("uri").GetString() ?? string.Empty;
+        var changes = parameters.GetProperty("contentChanges");
+        if (changes.GetArrayLength() > 0)
+        {
+            UpdateDocument(uri, changes[0].GetProperty("text").GetString() ?? string.Empty);
+            ScheduleDiagnostics(uri);
+        }
+    }
+
+    private void UpdateDocument(string uri, string text)
+    {
+        documents[uri] = text;
+        var revision = Interlocked.Increment(ref modelRevision);
+        documentRevisions[uri] = revision;
+        modelSnapshots.TryRemove(uri, out _);
+        modelSnapshots.TryRemove(WorkspaceCacheKey, out _);
+        _ = LogDebugAsync($"model cache invalidated uri={uri} revision={revision}");
+    }
+
+    private void ScheduleDiagnostics(string uri)
+    {
+        CancelScheduledDiagnostics(uri);
+
+        var cancellation = new CancellationTokenSource();
+        scheduledDiagnostics[uri] = cancellation;
+        _ = PublishDiagnosticsAfterDelayAsync(uri, cancellation);
+    }
+
+    private async Task PublishDiagnosticsAfterDelayAsync(string uri, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await LogDebugAsync($"diagnostics scheduled uri={uri} delayMs={(int)DiagnosticsDebounceDelay.TotalMilliseconds}");
+            await Task.Delay(DiagnosticsDebounceDelay, cancellation.Token);
+            await PublishDiagnosticsAsync(uri, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            await LogDebugAsync($"diagnostics canceled uri={uri}");
+        }
+        finally
+        {
+            if (scheduledDiagnostics.TryGetValue(uri, out var current) && ReferenceEquals(current, cancellation))
+            {
+                scheduledDiagnostics.TryRemove(uri, out _);
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task PublishDiagnosticsNowAsync(string uri, string reason)
+    {
+        CancelScheduledDiagnostics(uri);
+        await LogDebugAsync($"diagnostics immediate uri={uri} reason={reason}");
+        await PublishDiagnosticsAsync(uri);
+    }
+
+    private void CancelScheduledDiagnostics(string uri)
+    {
+        if (scheduledDiagnostics.TryRemove(uri, out var cancellation))
+        {
+            cancellation.Cancel();
+        }
+    }
+
+    private object HandleCompletion(JsonElement root)
+    {
+        var uri = GetDocumentUri(root);
+        var position = GetPosition(root);
+        _ = LogDebugAsync($"completion request uri={uri} line={position.Line + 1} char={position.Character + 1}");
+        var snapshot = BuildModel(uri);
+        var context = model.GetCompletionContext(snapshot, position.Line, position.Character);
+        var keywordItems = context.IncludeKeywords
+            ? model.Keywords.Select(keyword => new LanguageCompletionItem(keyword, 14, "ILC keyword", null, $"90_{keyword}"))
+            : Enumerable.Empty<LanguageCompletionItem>();
+        var builtInItems = context.IncludeBuiltInTypes
+            ? model.BuiltInTypes.Select(type => new LanguageCompletionItem(type, 7, "ILC built-in type", null, $"30_{type}"))
+            : Enumerable.Empty<LanguageCompletionItem>();
+        var symbolItems = context.Symbols.Select(symbol => new
+            LanguageCompletionItem(
+                symbol.Name,
+                ToCompletionKind(symbol.Kind),
+                symbol.Signature,
+                symbol.Documentation.Length > 0 || symbol.Parameters.Count > 0 || symbol.ReturnsDocumentation.Length > 0
+                    ? (object)new { kind = "markdown", value = symbol.ToMarkdown() }
+                    : null,
+                CompletionSortText(symbol)));
+        var items = keywordItems
+            .Concat(builtInItems)
+            .Concat(symbolItems)
+            .GroupBy(item => $"{item.Label}:{item.Detail}", StringComparer.Ordinal)
+            .Select(group => group.First())
+            .Select(item => new { label = item.Label, kind = item.Kind, detail = item.Detail, documentation = item.Documentation, sortText = item.SortText })
+            .Take(1000)
+            .ToArray();
+        return new { isIncomplete = false, items };
+    }
+
+    private static string CompletionSortText(LanguageSymbol symbol)
+    {
+        var kindRank = symbol.Kind switch
+        {
+            "local" or "parameter" => "00",
+            "property" or "field" or "enumMember" => "10",
+            "method" or "function" or "constructor" => "20",
+            "class" or "interface" or "enum" => "30",
+            "constant" => "40",
+            _ => "80"
+        };
+        var sourceRank = symbol.Uri.Contains("/libs/shipped/", StringComparison.Ordinal) ? "2" : "1";
+        return $"{kindRank}_{sourceRank}_{symbol.Name}";
+    }
+
+    private object? HandleHover(JsonElement root)
+    {
+        var uri = GetDocumentUri(root);
+        var position = GetPosition(root);
+        _ = LogDebugAsync($"hover request uri={uri} line={position.Line + 1} char={position.Character + 1}");
+        var snapshot = BuildModel(uri);
+        var word = LanguageModel.GetWordAt(snapshot.Text, position.Line, position.Character);
+        if (string.IsNullOrWhiteSpace(word))
+        {
+            return null;
+        }
+
+        var symbol = model.ResolveSymbolAt(snapshot, position.Line, position.Character, word);
+        if (symbol is null)
+        {
+            return null;
+        }
+
+        return new
+        {
+            contents = new
+            {
+                kind = "markdown",
+                value = symbol.ToMarkdown()
+            },
+            range = ToRange(symbol.Range)
+        };
+    }
+
+    private async Task<object?> HandleSignatureHelpAsync(JsonElement root)
+    {
+        var uri = GetDocumentUri(root);
+        var position = GetPosition(root);
+        await LogDebugAsync($"signature request uri={uri} line={position.Line + 1} char={position.Character + 1}");
+        var text = documents.TryGetValue(uri, out var openText)
+            ? openText
+            : BuildModel(uri).Text;
+        var invocation = LanguageModel.FindInvocation(text, position.Line, position.Character);
+        if (invocation is null)
+        {
+            await LogDebugAsync($"signature none uri={uri} line={position.Line + 1} char={position.Character + 1}");
+            return null;
+        }
+
+        var snapshot = BuildModel(uri);
+        var constructorMatches = snapshot.Symbols
+            .Where(symbol => symbol.Kind == "constructor" && symbol.OwnerType == invocation.Name)
+            .ToArray();
+        var candidates = model.ResolveInvocationSymbols(snapshot, position.Line, invocation)
+            .Where(symbol => symbol.Kind is "method" or "function" or "constructor")
+            .ToArray();
+        await LogDebugAsync(
+            $"signature invocation uri={uri} line={position.Line + 1} char={position.Character + 1} receiver='{invocation.Receiver}' name='{invocation.Name}' param={invocation.ParameterIndex} constructors={constructorMatches.Length} candidates={candidates.Length}");
+        if (candidates.Length > 0)
+        {
+            await LogDebugAsync("signature candidates " + string.Join(", ", candidates.Select(symbol => $"{symbol.Kind} {symbol.OwnerType}.{symbol.Name} {symbol.Signature} [{Path.GetFileName(UriToPath(symbol.Uri) ?? symbol.Uri)}:{symbol.Range.Start.Line + 1}]")));
+        }
+
+        if (candidates.Length == 0)
+        {
+            return null;
+        }
+
+        return new
+        {
+            signatures = candidates.Select(symbol => new
+            {
+                label = symbol.Signature,
+                documentation = new { kind = "markdown", value = symbol.ToDocumentationMarkdown() },
+                parameters = symbol.Parameters.Select(parameter => new
+                {
+                    label = $"{(parameter.Modifier.Length > 0 ? parameter.Modifier + " " : string.Empty)}{parameter.Name}: {parameter.Type}",
+                    documentation = parameter.Documentation
+                }).ToArray()
+            }).ToArray(),
+            activeSignature = 0,
+            activeParameter = invocation.ParameterIndex
+        };
+    }
+
+    private object[] HandleDocumentSymbols(JsonElement root)
+    {
+        var uri = GetDocumentUri(root);
+        if (documents.TryGetValue(uri, out var text))
+        {
+            return model.BuildDocumentSymbols(uri, text).Select(ToDocumentSymbol).ToArray();
+        }
+
+        var path = UriToPath(uri);
+        if (path is not null && File.Exists(path))
+        {
+            return model.BuildDocumentSymbols(uri, File.ReadAllText(path)).Select(ToDocumentSymbol).ToArray();
+        }
+
+        return [];
+    }
+
+    private object[] HandleDefinition(JsonElement root)
+    {
+        var uri = GetDocumentUri(root);
+        var position = GetPosition(root);
+        _ = LogDebugAsync($"definition request uri={uri} line={position.Line + 1} char={position.Character + 1}");
+        var snapshot = BuildModel(uri);
+        var word = LanguageModel.GetWordAt(snapshot.Text, position.Line, position.Character);
+        if (string.IsNullOrWhiteSpace(word))
+        {
+            return [];
+        }
+
+        return model.ResolveSymbolsAt(snapshot, position.Line, position.Character, word)
+            .Select(symbol => new
+            {
+                uri = symbol.Uri,
+                range = ToRange(symbol.Range)
+            })
+            .ToArray();
+    }
+
+    private object[] HandleWorkspaceSymbols(JsonElement root)
+    {
+        var query = root.GetProperty("params").TryGetProperty("query", out var queryElement)
+            ? queryElement.GetString() ?? string.Empty
+            : string.Empty;
+        var snapshot = BuildWorkspaceModel();
+        return snapshot.Symbols
+            .Where(symbol => query.Length == 0 || symbol.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Take(500)
+            .Select(symbol => new
+            {
+                name = symbol.Name,
+                kind = ToSymbolKind(symbol.Kind),
+                location = new { uri = symbol.Uri, range = ToRange(symbol.Range) }
+            })
+            .ToArray();
+    }
+
+    private object[] HandleCodeAction(JsonElement root)
+    {
+        var uri = GetDocumentUri(root);
+        var position = GetRangeStart(root);
+        if (!HasCodeActionDiagnostics(root))
+        {
+            _ = LogDebugAsync($"codeAction skipped uri={uri} line={position.Line + 1} char={position.Character + 1} reason=no-diagnostics");
+            return [];
+        }
+
+        _ = LogDebugAsync($"codeAction request uri={uri} line={position.Line + 1} char={position.Character + 1}");
+        var snapshot = BuildModel(uri);
+        var word = LanguageModel.GetWordAt(snapshot.Text, position.Line, position.Character);
+        if (string.IsNullOrWhiteSpace(word))
+        {
+            return [];
+        }
+
+        return model.FindMissingUsesActions(snapshot, word)
+            .Select(namespaceName =>
+            {
+                var edit = model.GetUsesInsertEdit(snapshot.Text, namespaceName);
+                return new
+                {
+                    title = $"Add uses {namespaceName}",
+                    kind = "quickfix",
+                    edit = new
+                    {
+                        changes = new Dictionary<string, object[]>
+                        {
+                            [uri] =
+                            [
+                                new
+                                {
+                                    range = ToRange(edit.Range),
+                                    newText = edit.NewText
+                                }
+                            ]
+                        }
+                    }
+                };
+            })
+            .ToArray();
+    }
+
+    private static bool HasCodeActionDiagnostics(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        if (!parameters.TryGetProperty("context", out var context) ||
+            !context.TryGetProperty("diagnostics", out var diagnostics) ||
+            diagnostics.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        return diagnostics.GetArrayLength() > 0;
+    }
+
+    private async Task PublishDiagnosticsAsync(string uri, CancellationToken cancellationToken = default)
+    {
+        if (!documents.TryGetValue(uri, out var text))
+        {
+            return;
+        }
+
+        var snapshot = model.BuildDocument(uri, text);
+        cancellationToken.ThrowIfCancellationRequested();
+        var syntaxDiagnostics = snapshot.Diagnostics.Select(diagnostic => new
+        {
+            range = ToRange(snapshot.ToRange(diagnostic.Span)),
+            severity = diagnostic.Severity == DiagnosticSeverity.Error ? 1 : diagnostic.Severity == DiagnosticSeverity.Warning ? 2 : 3,
+            code = diagnostic.Id,
+            source = "ilc",
+            message = diagnostic.Message
+        });
+        var rawBindingDiagnostics = model.GetBindingDiagnostics(uri, snapshot.Text, documents);
+        cancellationToken.ThrowIfCancellationRequested();
+        var bindingDiagnostics = rawBindingDiagnostics
+            .Where(diagnostic => !snapshot.Diagnostics.Any(existing => existing.Id == diagnostic.Id && existing.Span == diagnostic.Span && existing.Message == diagnostic.Message))
+            .Select(diagnostic => new
+            {
+                range = ToRange(snapshot.ToRange(diagnostic.Span)),
+                severity = diagnostic.Severity == DiagnosticSeverity.Error ? 1 : diagnostic.Severity == DiagnosticSeverity.Warning ? 2 : 3,
+                code = diagnostic.Id,
+                source = "ilc",
+                message = diagnostic.Message
+            });
+        var missingUsesDiagnostics = model.FindMissingUsesDiagnostics(snapshot).Select(diagnostic => new
+        {
+            range = ToRange(diagnostic.Range),
+            severity = 2,
+            code = "ILC1001",
+            source = "ilc",
+            message = $"'{diagnostic.TypeName}' is available in namespace '{diagnostic.NamespaceName}'. Add a uses clause."
+        });
+        var diagnostics = syntaxDiagnostics.Concat(bindingDiagnostics).Concat(missingUsesDiagnostics).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        await LogDebugAsync($"diagnostics uri={uri} syntax={snapshot.Diagnostics.Count} binding={rawBindingDiagnostics.Count} total={diagnostics.Length}");
+
+        await NotifyAsync("textDocument/publishDiagnostics", new { uri, diagnostics });
+    }
+
+    private ModelSnapshot BuildModel(string uri)
+    {
+        var revision = Volatile.Read(ref modelRevision);
+        if (documents.TryGetValue(uri, out var text))
+        {
+            if (modelSnapshots.TryGetValue(uri, out var cached) &&
+                cached.Revision == revision &&
+                string.Equals(cached.Text, text, StringComparison.Ordinal))
+            {
+                _ = LogDebugAsync($"model cache hit uri={uri} revision={revision}");
+                return cached.Snapshot;
+            }
+
+            var visibleNamespaces = model.CollectVisibleNamespaces(text);
+            var workspace = BuildImportedWorkspaceModel(uri, visibleNamespaces);
+            var snapshot = model.BuildDocumentWithWorkspace(uri, text, workspace);
+            modelSnapshots[uri] = new CachedModelSnapshot(revision, text, snapshot);
+            _ = LogDebugAsync($"model cache miss uri={uri} revision={revision} symbols={snapshot.Symbols.Count}");
+            return snapshot;
+        }
+
+        return BuildWorkspaceModel();
+    }
+
+    private ModelSnapshot BuildWorkspaceModel()
+    {
+        var revision = Volatile.Read(ref modelRevision);
+        if (modelSnapshots.TryGetValue(WorkspaceCacheKey, out var cached) && cached.Revision == revision)
+        {
+            _ = LogDebugAsync($"model cache hit uri={WorkspaceCacheKey} revision={revision}");
+            return cached.Snapshot;
+        }
+
+        var snapshot = model.Build(workspaceRoot, documents);
+        modelSnapshots[WorkspaceCacheKey] = new CachedModelSnapshot(revision, string.Empty, snapshot);
+        _ = LogDebugAsync($"model cache miss uri={WorkspaceCacheKey} revision={revision} symbols={snapshot.Symbols.Count}");
+        return snapshot;
+    }
+
+    private ModelSnapshot BuildImportedWorkspaceModel(string primaryUri, IReadOnlySet<string> visibleNamespaces)
+    {
+        var namespaceKey = string.Join("|", visibleNamespaces.OrderBy(namespaceName => namespaceName, StringComparer.Ordinal));
+        var openDependencyKey = string.Join(
+            "|",
+            documentRevisions
+                .Where(pair => !string.Equals(pair.Key, primaryUri, StringComparison.Ordinal))
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{pair.Key}@{pair.Value}"));
+        var cacheKey = $"{namespaceKey}::{openDependencyKey}";
+        if (importedWorkspaceSnapshots.TryGetValue(cacheKey, out var cached))
+        {
+            _ = LogDebugAsync($"import cache hit uri={primaryUri} key={cacheKey} symbols={cached.Symbols.Count}");
+            return cached;
+        }
+
+        var workspace = model.Build(workspaceRoot, documents, visibleNamespaces);
+        importedWorkspaceSnapshots[cacheKey] = workspace;
+        _ = LogDebugAsync($"import cache miss uri={primaryUri} key={cacheKey} symbols={workspace.Symbols.Count}");
+        if (importedWorkspaceSnapshots.Count > 32)
+        {
+            importedWorkspaceSnapshots.Clear();
+            _ = LogDebugAsync("import cache cleared reason=size-limit");
+        }
+
+        return workspace;
+    }
+
+    private const string WorkspaceCacheKey = "<workspace>";
+
+    private static string GetDocumentUri(JsonElement root)
+    {
+        var parameters = root.GetProperty("params");
+        if (parameters.TryGetProperty("textDocument", out var textDocument))
+        {
+            return textDocument.GetProperty("uri").GetString() ?? string.Empty;
+        }
+
+        return string.Empty;
+    }
+
+    private static LspPosition GetPosition(JsonElement root)
+    {
+        var position = root.GetProperty("params").GetProperty("position");
+        return new LspPosition(position.GetProperty("line").GetInt32(), position.GetProperty("character").GetInt32());
+    }
+
+    private static LspPosition GetRangeStart(JsonElement root)
+    {
+        var start = root.GetProperty("params").GetProperty("range").GetProperty("start");
+        return new LspPosition(start.GetProperty("line").GetInt32(), start.GetProperty("character").GetInt32());
+    }
+
+    private async Task RespondAsync(JsonElement id, object? result)
+    {
+        await WriteJsonAsync(new { jsonrpc = "2.0", id, result });
+    }
+
+    private async Task NotifyAsync(string method, object parameters)
+    {
+        await WriteJsonAsync(new { jsonrpc = "2.0", method, @params = parameters });
+    }
+
+    private async Task LogAsync(string message)
+    {
+        await NotifyAsync("window/logMessage", new { type = 4, message = $"[ilc-lsp] {message}" });
+    }
+
+    private async Task LogDebugAsync(string message)
+    {
+        if (debugEnabled)
+        {
+            await LogAsync(message);
+        }
+    }
+
+    private async Task WriteJsonAsync(object message)
+    {
+        var json = JsonSerializer.Serialize(message, JsonOptions);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var header = Encoding.ASCII.GetBytes($"Content-Length: {bytes.Length}\r\n\r\n");
+        await writeLock.WaitAsync();
+        try
+        {
+            await output.WriteAsync(header);
+            await output.WriteAsync(bytes);
+            await output.FlushAsync();
+        }
+        finally
+        {
+            writeLock.Release();
+        }
+    }
+
+    private static object ToRange(LspRange range) => new
+    {
+        start = new { line = range.Start.Line, character = range.Start.Character },
+        end = new { line = range.End.Line, character = range.End.Character }
+    };
+
+    private static int ToSymbolKind(string kind) => kind switch
+    {
+        "class" => 5,
+        "interface" => 11,
+        "enum" => 10,
+        "method" => 6,
+        "function" => 12,
+        "constructor" => 9,
+        "property" => 7,
+        "field" => 8,
+        "parameter" => 13,
+        "local" => 13,
+        "constant" => 14,
+        "enumMember" => 22,
+        _ => 13
+    };
+
+    private static int ToCompletionKind(string kind) => kind switch
+    {
+        "class" or "interface" or "enum" => 7,
+        "method" => 2,
+        "function" or "constructor" => 3,
+        "property" => 10,
+        "field" => 5,
+        "parameter" => 6,
+        "local" => 6,
+        "constant" => 21,
+        "enumMember" => 20,
+        _ => 1
+    };
+
+    private static object ToDocumentSymbol(LanguageDocumentSymbol symbol) => new
+    {
+        name = symbol.Name,
+        detail = symbol.Signature,
+        kind = ToSymbolKind(symbol.Kind),
+        range = ToRange(symbol.Range),
+        selectionRange = ToRange(symbol.SelectionRange),
+        children = symbol.Children.Select(ToDocumentSymbol).ToArray()
+    };
+
+    private static string? UriToPath(string uri)
+    {
+        try
+        {
+            return new Uri(uri).LocalPath;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+internal sealed class LanguageModel(string workspaceRoot)
+{
+    public IReadOnlyList<string> Keywords { get; } =
+    [
+        "namespace", "uses", "public", "private", "protected", "internal", "static", "extern",
+        "class", "record", "interface", "enum", "delegate", "constructor", "method", "function",
+        "procedure", "property", "var", "const", "begin", "end", "if", "then", "else", "while",
+        "do", "for", "foreach", "in", "repeat", "until", "case", "of", "match", "with", "try",
+        "except", "finally", "raise", "return", "new", "nil", "true", "false", "out", "ref"
+    ];
+
+    public IReadOnlyList<string> BuiltInTypes { get; } = TypeSymbol.BuiltInTypes.Select(type => type.Name).ToArray();
+
+    public ModelSnapshot BuildDocument(string uri, string text)
+    {
+        var tree = SyntaxTree.Parse(text);
+        var symbols = CollectSymbols(uri, text, tree.Root).Concat(CollectLocalSymbols(uri, text)).ToArray();
+        var typeBases = CollectTypeBases(tree.Root);
+        return new ModelSnapshot(uri, text, tree.Diagnostics, symbols, typeBases);
+    }
+
+    public IReadOnlyList<LanguageDocumentSymbol> BuildDocumentSymbols(string uri, string text)
+    {
+        var tree = SyntaxTree.Parse(text);
+        return CollectDocumentSymbols(uri, text, tree.Root).ToArray();
+    }
+
+    public ModelSnapshot BuildDocumentWithWorkspace(string uri, string text, IReadOnlyDictionary<string, string> openDocuments)
+    {
+        var primaryTree = SyntaxTree.Parse(text);
+        var primary = BuildDocument(uri, text);
+        var importedNamespaces = CollectVisibleNamespaces(primaryTree.Root);
+        var workspace = Build(workspaceRoot, openDocuments, importedNamespaces);
+        return BuildDocumentWithWorkspace(primary, workspace);
+    }
+
+    public ModelSnapshot BuildDocumentWithWorkspace(string uri, string text, ModelSnapshot workspace)
+    {
+        var primary = BuildDocument(uri, text);
+        return BuildDocumentWithWorkspace(primary, workspace);
+    }
+
+    public IReadOnlySet<string> CollectVisibleNamespaces(string text)
+    {
+        var tree = SyntaxTree.Parse(text);
+        return CollectVisibleNamespaces(tree.Root);
+    }
+
+    private static ModelSnapshot BuildDocumentWithWorkspace(ModelSnapshot primary, ModelSnapshot workspace)
+    {
+        return primary with
+        {
+            Symbols = primary.Symbols.Concat(workspace.Symbols.Where(symbol => symbol.Uri != primary.Uri)).ToArray(),
+            TypeBases = primary.TypeBases.Concat(workspace.TypeBases).GroupBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.First().Value, StringComparer.Ordinal)
+        };
+    }
+
+    public ModelSnapshot Build(string root, IReadOnlyDictionary<string, string> openDocuments) =>
+        Build(root, openDocuments, null);
+
+    public ModelSnapshot Build(string root, IReadOnlyDictionary<string, string> openDocuments, IReadOnlySet<string>? visibleNamespaces)
+    {
+        var symbols = new List<LanguageSymbol>();
+        var typeBases = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var file in EnumerateIlcFiles(root))
+        {
+            var uri = PathToUri(file);
+            var text = openDocuments.TryGetValue(uri, out var openText) ? openText : File.ReadAllText(file);
+            var tree = SyntaxTree.Parse(text);
+            if (IsVisible(tree.Root, visibleNamespaces))
+            {
+                symbols.AddRange(CollectSymbols(uri, text, tree.Root));
+                foreach (var pair in CollectTypeBases(tree.Root))
+                {
+                    typeBases[pair.Key] = pair.Value;
+                }
+            }
+        }
+
+        foreach (var (uri, text) in openDocuments)
+        {
+            if (UriToPath(uri) is { } path && File.Exists(path))
+            {
+                continue;
+            }
+
+            var tree = SyntaxTree.Parse(text);
+            if (IsVisible(tree.Root, visibleNamespaces))
+            {
+                symbols.AddRange(CollectSymbols(uri, text, tree.Root));
+                foreach (var pair in CollectTypeBases(tree.Root))
+                {
+                    typeBases[pair.Key] = pair.Value;
+                }
+            }
+        }
+
+        return new ModelSnapshot(string.Empty, string.Empty, [], symbols, typeBases);
+    }
+
+    public IReadOnlyList<Diagnostic> GetBindingDiagnostics(string uri, string text, IReadOnlyDictionary<string, string> openDocuments)
+    {
+        var primaryTree = SyntaxTree.Parse(text);
+        var importedNamespaces = CollectImportedNamespaces(text);
+        var importedTrees = new List<SyntaxTree>();
+        var seenUris = new HashSet<string>(StringComparer.Ordinal) { uri };
+        foreach (var file in EnumerateIlcFiles(workspaceRoot))
+        {
+            var fileUri = PathToUri(file);
+            if (!seenUris.Add(fileUri))
+            {
+                continue;
+            }
+
+            var importedText = openDocuments.TryGetValue(fileUri, out var openText) ? openText : File.ReadAllText(file);
+            var importedTree = SyntaxTree.Parse(importedText);
+            var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
+            if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
+            {
+                importedTrees.Add(importedTree);
+            }
+        }
+
+        foreach (var (openUri, openText) in openDocuments)
+        {
+            if (!seenUris.Add(openUri))
+            {
+                continue;
+            }
+
+            var importedTree = SyntaxTree.Parse(openText);
+            var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
+            if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
+            {
+                importedTrees.Add(importedTree);
+            }
+        }
+
+        var mergedTree = SyntaxTree.Merge(primaryTree, importedTrees);
+        var binding = new Binder().Bind(mergedTree);
+        return binding.Diagnostics
+            .Where(diagnostic => IsPrimaryDocumentDiagnostic(text, diagnostic))
+            .ToArray();
+    }
+
+    private IEnumerable<string> EnumerateIlcFiles(string root)
+    {
+        if (!Directory.Exists(root))
+        {
+            yield break;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(root, "*.ilc", SearchOption.AllDirectories))
+        {
+            if (file.Contains($"{Path.DirectorySeparatorChar}tmp{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+                file.Contains($"{Path.DirectorySeparatorChar}build{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+                file.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            yield return file;
+        }
+    }
+
+    private IEnumerable<LanguageSymbol> CollectSymbols(string uri, string text, CompilationUnitSyntax root)
+    {
+        foreach (var member in root.Members)
+        {
+            foreach (var symbol in CollectMemberSymbols(uri, text, member))
+            {
+                yield return symbol;
+            }
+        }
+    }
+
+    private static IReadOnlySet<string> CollectVisibleNamespaces(CompilationUnitSyntax root)
+    {
+        var namespaces = new HashSet<string>(StringComparer.Ordinal);
+        if (root.Namespace is not null)
+        {
+            namespaces.Add(root.Namespace.Name.ToDisplayString());
+        }
+
+        if (root.Uses is not null)
+        {
+            foreach (var import in root.Uses.Imports)
+            {
+                namespaces.Add(import.NamespaceName.ToDisplayString());
+            }
+        }
+
+        return namespaces;
+    }
+
+    private static IReadOnlySet<string> CollectImportedNamespaces(string text)
+    {
+        var tree = SyntaxTree.Parse(text);
+        var namespaces = new HashSet<string>(StringComparer.Ordinal);
+        if (tree.Root.Namespace is not null)
+        {
+            namespaces.Add(tree.Root.Namespace.Name.ToDisplayString());
+        }
+
+        if (tree.Root.Uses is not null)
+        {
+            foreach (var import in tree.Root.Uses.Imports)
+            {
+                namespaces.Add(import.NamespaceName.ToDisplayString());
+            }
+        }
+
+        return namespaces;
+    }
+
+    private static string GetNamespaceForSymbol(LanguageSymbol symbol)
+    {
+        if (UriToPath(symbol.Uri) is not { } path || !File.Exists(path))
+        {
+            return string.Empty;
+        }
+
+        var tree = SyntaxTree.Parse(File.ReadAllText(path));
+        return tree.Root.Namespace?.Name.ToDisplayString() ?? string.Empty;
+    }
+
+    private static bool IsVisible(CompilationUnitSyntax root, IReadOnlySet<string>? visibleNamespaces)
+    {
+        if (visibleNamespaces is null)
+        {
+            return true;
+        }
+
+        var namespaceName = root.Namespace?.Name.ToDisplayString();
+        return namespaceName is not null && visibleNamespaces.Contains(namespaceName);
+    }
+
+    private static bool IsPrimaryDocumentDiagnostic(string text, Diagnostic diagnostic)
+    {
+        if (diagnostic.Span.Start < 0 || diagnostic.Span.Start > text.Length)
+        {
+            return false;
+        }
+
+        if (diagnostic.Span.Length <= 0)
+        {
+            return true;
+        }
+
+        return diagnostic.Span.End <= text.Length;
+    }
+
+    private static IReadOnlyDictionary<string, string> CollectTypeBases(CompilationUnitSyntax root)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var member in root.Members)
+        {
+            switch (member)
+            {
+                case ClassDeclarationSyntax declaration when declaration.BaseType is not null:
+                    result[declaration.Identifier.Text] = declaration.BaseType.ToDisplayString();
+                    break;
+                case ClassDeclarationSyntax declaration:
+                    result[declaration.Identifier.Text] = string.Empty;
+                    break;
+                case InterfaceDeclarationSyntax declaration when declaration.BaseInterfaces.Count > 0:
+                    result[declaration.Identifier.Text] = declaration.BaseInterfaces[0].ToDisplayString();
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private IEnumerable<LanguageSymbol> CollectLocalSymbols(string uri, string text)
+    {
+        var callablePattern = new System.Text.RegularExpressions.Regex(@"\b(?:method|function|procedure)\s+[A-Za-z_][A-Za-z0-9_]*\s*\(([^)]*)\)|\bconstructor\s*\(([^)]*)\)", System.Text.RegularExpressions.RegexOptions.Multiline);
+        foreach (System.Text.RegularExpressions.Match callable in callablePattern.Matches(text))
+        {
+            var parameters = callable.Groups[1].Success ? callable.Groups[1] : callable.Groups[2];
+            var parameterText = parameters.Value;
+            var parameterPattern = new System.Text.RegularExpressions.Regex(@"\b(?:(?:out|ref)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)");
+            foreach (System.Text.RegularExpressions.Match parameter in parameterPattern.Matches(parameterText))
+            {
+                var name = parameter.Groups[1].Value;
+                var typeName = parameter.Groups[2].Value;
+                var span = new TextSpan(parameters.Index + parameter.Groups[1].Index, parameter.Groups[1].Length);
+                yield return CreateSymbol(uri, text, name, "parameter", span, $"{name}: {typeName}", typeName: typeName);
+            }
+        }
+
+        var pattern = new System.Text.RegularExpressions.Regex(@"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?))?\s*(?::=\s*new\s+([A-Za-z_][A-Za-z0-9_]*))?", System.Text.RegularExpressions.RegexOptions.Multiline);
+        foreach (System.Text.RegularExpressions.Match match in pattern.Matches(text))
+        {
+            var name = match.Groups[1].Value;
+            var explicitType = match.Groups[2].Success ? match.Groups[2].Value : string.Empty;
+            var newType = match.Groups[3].Success ? match.Groups[3].Value : string.Empty;
+            var typeName = explicitType.Length > 0 ? explicitType : newType.Length > 0 ? newType : "inferred";
+            var span = new TextSpan(match.Groups[1].Index, match.Groups[1].Length);
+            yield return CreateSymbol(uri, text, name, "local", span, $"{name}: {typeName}", typeName: typeName);
+        }
+    }
+
+    private IEnumerable<LanguageDocumentSymbol> CollectDocumentSymbols(string uri, string text, CompilationUnitSyntax root)
+    {
+        foreach (var member in root.Members)
+        {
+            var symbol = CreateDocumentSymbol(uri, text, member);
+            if (symbol is not null)
+            {
+                yield return symbol;
+            }
+        }
+    }
+
+    private LanguageDocumentSymbol? CreateDocumentSymbol(string uri, string text, MemberSyntax member)
+    {
+        switch (member)
+        {
+            case ClassDeclarationSyntax declaration:
+                return CreateDocumentSymbol(
+                    uri,
+                    text,
+                    declaration.Identifier.Text,
+                    "class",
+                    SpanFrom(declaration.ClassKeyword.Span, declaration.SemicolonToken.Span),
+                    declaration.Identifier.Span,
+                    $"class {declaration.Identifier.Text}",
+                    declaration.Members.Select(member => CreateDocumentSymbol(uri, text, member)).Where(symbol => symbol is not null).Cast<LanguageDocumentSymbol>().ToArray());
+            case InterfaceDeclarationSyntax declaration:
+                return CreateDocumentSymbol(
+                    uri,
+                    text,
+                    declaration.Identifier.Text,
+                    "interface",
+                    SpanFrom(declaration.InterfaceKeyword.Span, declaration.SemicolonToken.Span),
+                    declaration.Identifier.Span,
+                    $"interface {declaration.Identifier.Text}",
+                    declaration.Members.Select(member => CreateDocumentSymbol(uri, text, member)).Where(symbol => symbol is not null).Cast<LanguageDocumentSymbol>().ToArray());
+            case EnumDeclarationSyntax declaration:
+                return CreateDocumentSymbol(
+                    uri,
+                    text,
+                    declaration.Identifier.Text,
+                    "enum",
+                    SpanFrom(declaration.EnumKeyword.Span, declaration.SemicolonToken.Span),
+                    declaration.Identifier.Span,
+                    $"enum {declaration.Identifier.Text}",
+                    declaration.Members.Select(member => CreateDocumentSymbol(uri, text, member)).ToArray());
+            case DelegateDeclarationSyntax declaration:
+                return CreateDocumentSymbol(uri, text, declaration.Identifier.Text, "function", declaration.Identifier.Span, declaration.Identifier.Span, FormatDelegate(declaration), []);
+            case TopLevelVariableDeclarationSyntax declaration when declaration.Declarators.Count > 0:
+                return CreateDocumentSymbol(uri, text, declaration.Declarators[0].Identifier.Text, "field", declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Text, []);
+            case TopLevelConstantDeclarationSyntax declaration when declaration.Declarators.Count > 0:
+                return CreateDocumentSymbol(uri, text, declaration.Declarators[0].Identifier.Text, "constant", declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Text, []);
+            default:
+                return null;
+        }
+    }
+
+    private LanguageDocumentSymbol? CreateDocumentSymbol(string uri, string text, TypeMemberSyntax member)
+    {
+        switch (member)
+        {
+            case MethodDeclarationSyntax declaration:
+                var methodKind = declaration.Keyword.Kind == SyntaxKind.ConstructorKeyword
+                    ? "constructor"
+                    : declaration.Keyword.Kind == SyntaxKind.FunctionKeyword
+                        ? "function"
+                        : "method";
+                return CreateDocumentSymbol(uri, text, declaration.Identifier.Text, methodKind, SpanFrom(declaration.Keyword.Span, declaration.TerminatorToken.Span), declaration.Identifier.Span, FormatMethod(declaration), []);
+            case PropertyDeclarationSyntax declaration:
+                return CreateDocumentSymbol(uri, text, declaration.Identifier.Text, "property", declaration.Identifier.Span, declaration.Identifier.Span, $"{declaration.Identifier.Text}: {declaration.TypeName.ToDisplayString()}", []);
+            case FieldDeclarationSyntax declaration when declaration.Declarators.Count > 0:
+                return CreateDocumentSymbol(uri, text, declaration.Declarators[0].Identifier.Text, "field", declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Text, []);
+            case ConstantDeclarationSyntax declaration when declaration.Declarators.Count > 0:
+                return CreateDocumentSymbol(uri, text, declaration.Declarators[0].Identifier.Text, "constant", declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Span, declaration.Declarators[0].Identifier.Text, []);
+            default:
+                return null;
+        }
+    }
+
+    private LanguageDocumentSymbol CreateDocumentSymbol(
+        string uri,
+        string text,
+        string name,
+        string kind,
+        TextSpan rangeSpan,
+        TextSpan selectionSpan,
+        string signature,
+        IReadOnlyList<LanguageDocumentSymbol> children) =>
+        new(uri, name, kind, signature, ToRange(text, rangeSpan), ToRange(text, selectionSpan), children);
+
+    private LanguageDocumentSymbol CreateDocumentSymbol(string uri, string text, EnumMemberSyntax member) =>
+        CreateDocumentSymbol(uri, text, member.Identifier.Text, "enumMember", member.Identifier.Span, member.Identifier.Span, member.Identifier.Text, []);
+
+    private IEnumerable<LanguageSymbol> CollectMemberSymbols(string uri, string text, MemberSyntax member)
+    {
+        switch (member)
+        {
+            case ClassDeclarationSyntax declaration:
+                yield return CreateSymbol(uri, text, declaration.Identifier.Text, "class", declaration.Identifier.Span, $"class {declaration.Identifier.Text}");
+                foreach (var child in declaration.Members.SelectMany(child => CollectTypeMemberSymbols(uri, text, child, declaration.Identifier.Text)))
+                {
+                    yield return child;
+                }
+                break;
+            case InterfaceDeclarationSyntax declaration:
+                yield return CreateSymbol(uri, text, declaration.Identifier.Text, "interface", declaration.Identifier.Span, $"interface {declaration.Identifier.Text}");
+                foreach (var child in declaration.Members.SelectMany(child => CollectTypeMemberSymbols(uri, text, child, declaration.Identifier.Text)))
+                {
+                    yield return child;
+                }
+                break;
+            case EnumDeclarationSyntax declaration:
+                yield return CreateSymbol(uri, text, declaration.Identifier.Text, "enum", declaration.Identifier.Span, $"enum {declaration.Identifier.Text}");
+                foreach (var enumMember in declaration.Members)
+                {
+                    yield return CreateSymbol(uri, text, enumMember.Identifier.Text, "enumMember", enumMember.Identifier.Span, $"{declaration.Identifier.Text}.{enumMember.Identifier.Text}", ownerType: declaration.Identifier.Text);
+                }
+                break;
+            case DelegateDeclarationSyntax declaration:
+                yield return CreateSymbol(uri, text, declaration.Identifier.Text, "function", declaration.Identifier.Span, FormatDelegate(declaration));
+                break;
+            case TopLevelVariableDeclarationSyntax declaration:
+                foreach (var declarator in declaration.Declarators)
+                {
+                    yield return CreateSymbol(uri, text, declarator.Identifier.Text, "field", declarator.Identifier.Span, declarator.Identifier.Text);
+                }
+                break;
+            case TopLevelConstantDeclarationSyntax declaration:
+                foreach (var declarator in declaration.Declarators)
+                {
+                    yield return CreateSymbol(uri, text, declarator.Identifier.Text, "constant", declarator.Identifier.Span, declarator.Identifier.Text);
+                }
+                break;
+        }
+    }
+
+    private IEnumerable<LanguageSymbol> CollectTypeMemberSymbols(string uri, string text, TypeMemberSyntax member, string ownerType)
+    {
+        switch (member)
+        {
+            case MethodDeclarationSyntax declaration:
+                var methodKind = declaration.Keyword.Kind == SyntaxKind.ConstructorKeyword
+                    ? "constructor"
+                    : declaration.Keyword.Kind == SyntaxKind.FunctionKeyword
+                        ? "function"
+                        : "method";
+                yield return CreateSymbol(
+                    uri,
+                    text,
+                    declaration.Identifier.Text,
+                    methodKind,
+                    methodKind == "constructor" ? declaration.Keyword.Span : declaration.Identifier.Span,
+                    FormatMethod(declaration),
+                    declaration.Parameters.Select(FormatParameter).ToArray(),
+                    ownerType: ownerType);
+                break;
+            case PropertyDeclarationSyntax declaration:
+                yield return CreateSymbol(uri, text, declaration.Identifier.Text, "property", declaration.Identifier.Span, $"{declaration.Identifier.Text}: {declaration.TypeName.ToDisplayString()}", ownerType: ownerType, typeName: declaration.TypeName.ToDisplayString());
+                break;
+            case FieldDeclarationSyntax declaration:
+                foreach (var declarator in declaration.Declarators)
+                {
+                    yield return CreateSymbol(uri, text, declarator.Identifier.Text, "field", declarator.Identifier.Span, declarator.TypeName?.ToDisplayString() is { } fieldType ? $"{declarator.Identifier.Text}: {fieldType}" : declarator.Identifier.Text, ownerType: ownerType, typeName: declarator.TypeName?.ToDisplayString() ?? string.Empty);
+                }
+                break;
+            case ConstantDeclarationSyntax declaration:
+                foreach (var declarator in declaration.Declarators)
+                {
+                    yield return CreateSymbol(uri, text, declarator.Identifier.Text, "constant", declarator.Identifier.Span, declarator.Identifier.Text);
+                }
+                break;
+        }
+    }
+
+    private LanguageSymbol CreateSymbol(
+        string uri,
+        string text,
+        string name,
+        string kind,
+        TextSpan span,
+        string signature,
+        IReadOnlyList<LanguageParameter>? parameters = null,
+        string ownerType = "",
+        string typeName = "")
+    {
+        var range = ToRange(text, span);
+        var docs = DocumentationReader.FindDocumentationBefore(text, span.Start);
+        var resolvedParameters = (parameters ?? [])
+            .Select(parameter => parameter with { Documentation = docs.Params.GetValueOrDefault(parameter.Name, parameter.Documentation) })
+            .ToArray();
+        return new LanguageSymbol(uri, name, kind, signature, docs.Summary, docs.Returns, resolvedParameters, range, ownerType, typeName);
+    }
+
+    public static LspRange ToRange(string text, TextSpan span)
+    {
+        var start = ToPosition(text, span.Start);
+        var end = ToPosition(text, span.End);
+        return new LspRange(start, end);
+    }
+
+    private static LspPosition ToPosition(string text, int offset)
+    {
+        var line = 0;
+        var lineStart = 0;
+        var limit = Math.Clamp(offset, 0, text.Length);
+        for (var index = 0; index < limit; index++)
+        {
+            if (text[index] == '\n')
+            {
+                line++;
+                lineStart = index + 1;
+            }
+        }
+
+        return new LspPosition(line, limit - lineStart);
+    }
+
+    public static string GetWordAt(string text, int line, int character)
+    {
+        var offset = OffsetAt(text, line, character);
+        if (offset < 0 || offset > text.Length)
+        {
+            return string.Empty;
+        }
+
+        var start = offset;
+        while (start > 0 && IsIdentifierChar(text[start - 1]))
+        {
+            start--;
+        }
+
+        var end = offset;
+        while (end < text.Length && IsIdentifierChar(text[end]))
+        {
+            end++;
+        }
+
+        return end > start ? text[start..end] : string.Empty;
+    }
+
+    public LanguageCompletionContext GetCompletionContext(ModelSnapshot snapshot, int line, int character)
+    {
+        var prefix = GetWordAt(snapshot.Text, line, character);
+        var receiver = GetMemberCompletionReceiverAt(snapshot.Text, line, character);
+        if (!string.IsNullOrWhiteSpace(receiver))
+        {
+            var receiverType = ResolveReceiverType(snapshot, receiver, line);
+            if (receiverType.Length > 0)
+            {
+                return new LanguageCompletionContext(
+                    FilterByPrefix(ResolveMemberSymbols(snapshot, receiverType, string.Empty), prefix).ToArray(),
+                    IncludeKeywords: false,
+                    IncludeBuiltInTypes: false);
+            }
+        }
+
+        if (IsNewExpressionContext(snapshot.Text, line, character))
+        {
+            return new LanguageCompletionContext(
+                FilterByPrefix(snapshot.Symbols.Where(symbol => symbol.Kind == "class"), prefix).ToArray(),
+                IncludeKeywords: false,
+                IncludeBuiltInTypes: false);
+        }
+
+        if (IsTypeNameContext(snapshot.Text, line, character))
+        {
+            return new LanguageCompletionContext(
+                FilterByPrefix(snapshot.Symbols.Where(symbol => symbol.Kind is "class" or "interface" or "enum" or "function"), prefix).ToArray(),
+                IncludeKeywords: false,
+                IncludeBuiltInTypes: true);
+        }
+
+        var localSymbols = snapshot.Symbols
+            .Where(symbol => symbol.Uri == snapshot.Uri && (symbol.Kind is "local" or "parameter") && symbol.Range.Start.Line <= line);
+        var globalSymbols = snapshot.Symbols
+            .Where(symbol => symbol.Kind is not "local" and not "parameter");
+        return new LanguageCompletionContext(
+            FilterByPrefix(localSymbols.Concat(globalSymbols), prefix)
+                .OrderBy(symbol => symbol.Kind is "local" or "parameter" ? 0 : symbol.Uri == snapshot.Uri ? 1 : symbol.Uri.Contains("/libs/shipped/", StringComparison.Ordinal) ? 3 : 2)
+                .ToArray(),
+            IncludeKeywords: true,
+            IncludeBuiltInTypes: true);
+    }
+
+    public IEnumerable<LanguageSymbol> ResolveSymbolsAt(ModelSnapshot snapshot, int line, int character, string word)
+    {
+        var memberAccess = GetMemberAccessAt(snapshot.Text, line, character);
+        if (memberAccess is not null)
+        {
+            var receiverType = ResolveReceiverType(snapshot, memberAccess.Value.Receiver, line);
+            if (receiverType.Length > 0)
+            {
+                return ResolveMemberSymbols(snapshot, receiverType, memberAccess.Value.Member)
+                    .OrderBy(symbol => symbol.Uri == snapshot.Uri ? 0 : 1)
+                    .ToArray();
+            }
+        }
+
+        var scoped = snapshot.Symbols
+            .Where(symbol => symbol.Name == word && symbol.Uri == snapshot.Uri && (symbol.Kind is "local" or "parameter") && symbol.Range.Start.Line <= line)
+            .OrderByDescending(symbol => symbol.Range.Start.Line)
+            .ToArray();
+        if (scoped.Length > 0)
+        {
+            return scoped;
+        }
+
+        return snapshot.Symbols
+            .Where(symbol => symbol.Name == word && symbol.Kind is not "local" and not "parameter")
+            .OrderBy(symbol => symbol.Uri == snapshot.Uri ? 0 : symbol.Uri.Contains("/libs/shipped/", StringComparison.Ordinal) ? 2 : 1)
+            .ToArray();
+    }
+
+    public LanguageSymbol? ResolveSymbolAt(ModelSnapshot snapshot, int line, int character, string word) =>
+        ResolveSymbolsAt(snapshot, line, character, word).FirstOrDefault();
+
+    public IEnumerable<LanguageSymbol> ResolveInvocationSymbols(ModelSnapshot snapshot, int line, InvocationInfo invocation)
+    {
+        if (!string.IsNullOrWhiteSpace(invocation.Receiver))
+        {
+            var receiverType = ResolveReceiverType(snapshot, invocation.Receiver, line);
+            if (receiverType.Length > 0)
+            {
+                return ResolveMemberSymbols(snapshot, receiverType, invocation.Name)
+                    .Where(symbol => symbol.Kind is "method" or "function" or "constructor")
+                    .OrderBy(symbol => symbol.Uri == snapshot.Uri ? 0 : 1)
+                    .ToArray();
+            }
+        }
+
+        var constructors = snapshot.Symbols
+            .Where(symbol => symbol.OwnerType == invocation.Name && symbol.Kind == "constructor")
+            .OrderBy(symbol => symbol.Uri == snapshot.Uri ? 0 : 1)
+            .ToArray();
+        if (constructors.Length > 0)
+        {
+            return constructors;
+        }
+
+        return snapshot.Symbols
+            .Where(symbol => symbol.Name == invocation.Name && symbol.Kind is "method" or "function" or "constructor")
+            .OrderBy(symbol => symbol.Uri == snapshot.Uri ? 0 : symbol.Uri.Contains("/libs/shipped/", StringComparison.Ordinal) ? 2 : 1)
+            .ToArray();
+    }
+
+    public IEnumerable<string> FindMissingUsesActions(ModelSnapshot snapshot, string typeName)
+    {
+        if (snapshot.Symbols.Any(symbol => symbol.Name == typeName))
+        {
+            yield break;
+        }
+
+        var importedNamespaces = CollectImportedNamespaces(snapshot.Text);
+        var workspace = Build(workspaceRoot, new Dictionary<string, string>(StringComparer.Ordinal));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var symbol in workspace.Symbols.Where(symbol => symbol.Name == typeName && symbol.Kind is "class" or "interface" or "enum" or "function"))
+        {
+            var namespaceName = GetNamespaceForSymbol(symbol);
+            if (namespaceName.Length > 0 && !importedNamespaces.Contains(namespaceName) && seen.Add(namespaceName))
+            {
+                yield return namespaceName;
+            }
+        }
+    }
+
+    public IEnumerable<MissingUsesDiagnostic> FindMissingUsesDiagnostics(ModelSnapshot snapshot)
+    {
+        var importedNamespaces = CollectImportedNamespaces(snapshot.Text);
+        var workspace = Build(workspaceRoot, new Dictionary<string, string>(StringComparer.Ordinal));
+        var visibleNames = snapshot.Symbols.Select(symbol => symbol.Name).ToHashSet(StringComparer.Ordinal);
+        var candidates = workspace.Symbols
+            .Where(symbol => symbol.Kind is "class" or "interface" or "enum" or "function")
+            .Select(symbol => new { Symbol = symbol, NamespaceName = GetNamespaceForSymbol(symbol) })
+            .Where(item => item.NamespaceName.Length > 0 && !importedNamespaces.Contains(item.NamespaceName) && !visibleNames.Contains(item.Symbol.Name))
+            .GroupBy(item => item.Symbol.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().NamespaceName, StringComparer.Ordinal);
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+        var identifierPattern = new System.Text.RegularExpressions.Regex(@"\b[A-Z][A-Za-z0-9_]*\b");
+        foreach (System.Text.RegularExpressions.Match match in identifierPattern.Matches(snapshot.Text))
+        {
+            var name = match.Value;
+            if (IsMemberAccessName(snapshot.Text, match.Index) || !reported.Add(name) || !candidates.TryGetValue(name, out var namespaceName))
+            {
+                continue;
+            }
+
+            yield return new MissingUsesDiagnostic(ToRange(snapshot.Text, new TextSpan(match.Index, match.Length)), name, namespaceName);
+        }
+    }
+
+    private static bool IsMemberAccessName(string text, int offset)
+    {
+        var index = offset - 1;
+        while (index >= 0 && char.IsWhiteSpace(text[index]))
+        {
+            index--;
+        }
+
+        return index >= 0 && text[index] == '.';
+    }
+
+    public TextEditInfo GetUsesInsertEdit(string text, string namespaceName)
+    {
+        var tree = SyntaxTree.Parse(text);
+        var offset = 0;
+        if (tree.Root.Uses is not null)
+        {
+            offset = tree.Root.Uses.SemicolonToken.Span.Start;
+            var position = ToPosition(text, offset);
+            return new TextEditInfo(new LspRange(position, position), $", {namespaceName}");
+        }
+        else if (tree.Root.Namespace is not null)
+        {
+            offset = tree.Root.Namespace.SemicolonToken.Span.End;
+            if (offset < text.Length && text[offset] == '\r')
+            {
+                offset++;
+            }
+
+            if (offset < text.Length && text[offset] == '\n')
+            {
+                offset++;
+            }
+        }
+
+        var insertPosition = ToPosition(text, offset);
+        return new TextEditInfo(new LspRange(insertPosition, insertPosition), $"uses {namespaceName};\n");
+    }
+
+    private IEnumerable<LanguageSymbol> ResolveMemberSymbols(ModelSnapshot snapshot, string receiverType, string memberName)
+    {
+        var currentType = receiverType;
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (currentType.Length > 0 && visited.Add(currentType))
+        {
+            foreach (var symbol in snapshot.Symbols.Where(symbol => (memberName.Length == 0 || symbol.Name == memberName) && symbol.OwnerType == currentType))
+            {
+                yield return symbol;
+            }
+
+            currentType = snapshot.TypeBases.GetValueOrDefault(currentType, string.Empty);
+        }
+    }
+
+    private string ResolveReceiverType(ModelSnapshot snapshot, string receiver, int line)
+    {
+        if (receiver.Contains('.', StringComparison.Ordinal))
+        {
+            var chainType = ResolveReceiverChainType(snapshot, receiver, line);
+            if (chainType.Length > 0)
+            {
+                return chainType;
+            }
+        }
+
+        return ResolveSimpleReceiverType(snapshot, receiver, line);
+    }
+
+    private string ResolveReceiverChainType(ModelSnapshot snapshot, string receiver, int line)
+    {
+        var parts = receiver
+            .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var currentType = ResolveSimpleReceiverType(snapshot, parts[0], line);
+        for (var index = 1; index < parts.Length && currentType.Length > 0; index++)
+        {
+            var member = ResolveMemberSymbols(snapshot, currentType, parts[index])
+                .Where(symbol => symbol.TypeName.Length > 0)
+                .OrderBy(symbol => symbol.Kind is "property" or "field" ? 0 : 1)
+                .FirstOrDefault();
+            currentType = member?.TypeName ?? string.Empty;
+        }
+
+        return currentType;
+    }
+
+    private string ResolveSimpleReceiverType(ModelSnapshot snapshot, string receiver, int line)
+    {
+        var local = snapshot.Symbols
+            .Where(symbol => symbol.Uri == snapshot.Uri && (symbol.Kind is "local" or "parameter") && symbol.Name == receiver && symbol.TypeName.Length > 0 && symbol.Range.Start.Line <= line)
+            .OrderByDescending(symbol => symbol.Range.Start.Line)
+            .FirstOrDefault();
+        if (local is not null)
+        {
+            return local.TypeName;
+        }
+
+        if (snapshot.Symbols.Any(symbol => symbol.Kind is "class" or "interface" or "enum" && symbol.Name == receiver))
+        {
+            return receiver;
+        }
+
+        var field = snapshot.Symbols.FirstOrDefault(symbol => symbol.Name == receiver && symbol.TypeName.Length > 0);
+        return field?.TypeName ?? string.Empty;
+    }
+
+    private static IEnumerable<LanguageSymbol> FilterByPrefix(IEnumerable<LanguageSymbol> symbols, string prefix) =>
+        string.IsNullOrWhiteSpace(prefix)
+            ? symbols
+            : symbols.Where(symbol => symbol.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsNewExpressionContext(string text, int line, int character)
+    {
+        var prefix = GetCurrentLinePrefix(text, line, character);
+        return System.Text.RegularExpressions.Regex.IsMatch(prefix, @"\bnew\s+[A-Za-z_][A-Za-z0-9_]*$|\bnew\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsTypeNameContext(string text, int line, int character)
+    {
+        var prefix = GetCurrentLinePrefix(text, line, character);
+        return System.Text.RegularExpressions.Regex.IsMatch(prefix, @"(:|\bas\b|\bis\b)\s*[A-Za-z_][A-Za-z0-9_]*$|(:|\bas\b|\bis\b)\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static string GetCurrentLinePrefix(string text, int line, int character)
+    {
+        var offset = OffsetAt(text, line, character);
+        var lineStart = Math.Clamp(offset, 0, text.Length);
+        while (lineStart > 0 && text[lineStart - 1] != '\n')
+        {
+            lineStart--;
+        }
+
+        return text[lineStart..Math.Clamp(offset, 0, text.Length)];
+    }
+
+    private static string GetMemberCompletionReceiverAt(string text, int line, int character)
+    {
+        var offset = OffsetAt(text, line, character);
+        if (offset <= 0 || offset > text.Length)
+        {
+            return string.Empty;
+        }
+
+        var memberStart = offset;
+        while (memberStart > 0 && IsIdentifierChar(text[memberStart - 1]))
+        {
+            memberStart--;
+        }
+
+        if (memberStart < 2 || text[memberStart - 1] != '.')
+        {
+            return string.Empty;
+        }
+
+        var receiverEnd = memberStart - 1;
+        var receiverStart = receiverEnd;
+        while (receiverStart > 0 && (IsIdentifierChar(text[receiverStart - 1]) || text[receiverStart - 1] == '.'))
+        {
+            receiverStart--;
+        }
+
+        while (receiverStart < receiverEnd && text[receiverStart] == '.')
+        {
+            receiverStart++;
+        }
+
+        return receiverEnd > receiverStart ? text[receiverStart..receiverEnd] : string.Empty;
+    }
+
+    private static (string Receiver, string Member)? GetMemberAccessAt(string text, int line, int character)
+    {
+        var offset = OffsetAt(text, line, character);
+        if (offset < 0 || offset > text.Length)
+        {
+            return null;
+        }
+
+        var memberStart = offset;
+        while (memberStart > 0 && IsIdentifierChar(text[memberStart - 1]))
+        {
+            memberStart--;
+        }
+
+        var memberEnd = offset;
+        while (memberEnd < text.Length && IsIdentifierChar(text[memberEnd]))
+        {
+            memberEnd++;
+        }
+
+        if (memberStart == memberEnd || memberStart < 2 || text[memberStart - 1] != '.')
+        {
+            return null;
+        }
+
+        var receiverEnd = memberStart - 1;
+        var receiverStart = receiverEnd;
+        while (receiverStart > 0 && (IsIdentifierChar(text[receiverStart - 1]) || text[receiverStart - 1] == '.'))
+        {
+            receiverStart--;
+        }
+
+        while (receiverStart < receiverEnd && text[receiverStart] == '.')
+        {
+            receiverStart++;
+        }
+
+        if (receiverStart == receiverEnd)
+        {
+            return null;
+        }
+
+        return (text[receiverStart..receiverEnd], text[memberStart..memberEnd]);
+    }
+
+    public static InvocationInfo? FindInvocation(string text, int line, int character)
+    {
+        var offset = OffsetAt(text, line, character);
+        if (offset <= 0)
+        {
+            return null;
+        }
+
+        var before = text[..offset];
+        var depth = 0;
+        var openParen = -1;
+        for (var index = before.Length - 1; index >= 0; index--)
+        {
+            if (before[index] == ')')
+            {
+                depth++;
+            }
+            else if (before[index] == '(')
+            {
+                if (depth == 0)
+                {
+                    openParen = index;
+                    break;
+                }
+
+                depth--;
+            }
+        }
+
+        if (openParen < 0)
+        {
+            return null;
+        }
+
+        var nameEnd = openParen;
+        while (nameEnd > 0 && char.IsWhiteSpace(before[nameEnd - 1]))
+        {
+            nameEnd--;
+        }
+
+        var nameStart = nameEnd;
+        while (nameStart > 0 && IsIdentifierChar(before[nameStart - 1]))
+        {
+            nameStart--;
+        }
+
+        if (nameStart == nameEnd)
+        {
+            return null;
+        }
+
+        var parameterIndex = 0;
+        var argumentDepth = 0;
+        foreach (var ch in before[(openParen + 1)..])
+        {
+            if (ch is '(' or '[')
+            {
+                argumentDepth++;
+            }
+            else if (ch is ')' or ']')
+            {
+                argumentDepth = Math.Max(0, argumentDepth - 1);
+            }
+            else if ((ch is ',' or ';') && argumentDepth == 0)
+            {
+                parameterIndex++;
+            }
+        }
+
+        var receiver = string.Empty;
+        if (nameStart > 1 && before[nameStart - 1] == '.')
+        {
+            var receiverEnd = nameStart - 1;
+            var receiverStart = receiverEnd;
+            while (receiverStart > 0 && IsIdentifierChar(before[receiverStart - 1]))
+            {
+                receiverStart--;
+            }
+
+            if (receiverEnd > receiverStart)
+            {
+                receiver = before[receiverStart..receiverEnd];
+            }
+        }
+
+        return new InvocationInfo(receiver, before[nameStart..nameEnd], parameterIndex);
+    }
+
+    private static int OffsetAt(string text, int line, int character)
+    {
+        var currentLine = 0;
+        var currentCharacter = 0;
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (currentLine == line && currentCharacter == character)
+            {
+                return index;
+            }
+
+            if (text[index] == '\n')
+            {
+                currentLine++;
+                currentCharacter = 0;
+            }
+            else
+            {
+                currentCharacter++;
+            }
+        }
+
+        return text.Length;
+    }
+
+    private static bool IsIdentifierChar(char value) => char.IsLetterOrDigit(value) || value == '_';
+
+    private static string FormatMethod(MethodDeclarationSyntax declaration)
+    {
+        var parameters = string.Join("; ", declaration.Parameters.Select(parameter => $"{ParameterModifier(parameter)}{parameter.Identifier.Text}: {parameter.TypeName.ToDisplayString()}"));
+        var returnText = declaration.ReturnType is null ? string.Empty : $": {declaration.ReturnType.ToDisplayString()}";
+        return $"{declaration.Keyword.Text} {declaration.Identifier.Text}({parameters}){returnText}";
+    }
+
+    private static string FormatDelegate(DelegateDeclarationSyntax declaration)
+    {
+        var parameters = string.Join("; ", declaration.Parameters.Select(parameter => $"{ParameterModifier(parameter)}{parameter.Identifier.Text}: {parameter.TypeName.ToDisplayString()}"));
+        var returnText = declaration.ReturnType is null ? string.Empty : $": {declaration.ReturnType.ToDisplayString()}";
+        return $"delegate {declaration.SignatureKeyword.Text} {declaration.Identifier.Text}({parameters}){returnText}";
+    }
+
+    private static LanguageParameter FormatParameter(ParameterSyntax parameter) =>
+        new(parameter.Identifier.Text, parameter.TypeName.ToDisplayString(), ParameterModifier(parameter).Trim(), string.Empty);
+
+    private static string ParameterModifier(ParameterSyntax parameter) =>
+        parameter.ModifierKeyword is null ? string.Empty : parameter.ModifierKeyword.Text + " ";
+
+    private static TextSpan SpanFrom(TextSpan start, TextSpan end) =>
+        new(start.Start, Math.Max(1, end.End - start.Start));
+
+    private static string PathToUri(string path) => new Uri(Path.GetFullPath(path)).AbsoluteUri;
+
+    private static string? UriToPath(string uri)
+    {
+        try
+        {
+            return new Uri(uri).LocalPath;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+internal static class DocumentationReader
+{
+    public static Documentation FindDocumentationBefore(string text, int offset)
+    {
+        var searchStart = Math.Clamp(offset - 1, 0, Math.Max(text.Length - 1, 0));
+        var declarationLineStart = text.Length == 0 ? -1 : text.LastIndexOf('\n', searchStart);
+        var documentationEnd = declarationLineStart < 0 ? 0 : declarationLineStart;
+        var prefix = text[..documentationEnd];
+        var lines = prefix.Split('\n');
+        var docLines = new List<string>();
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var trimmed = lines[index].Trim();
+            if (trimmed.StartsWith("///", StringComparison.Ordinal))
+            {
+                docLines.Insert(0, trimmed[3..].Trim());
+                continue;
+            }
+
+            if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith("/—", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            break;
+        }
+
+        var raw = string.Join('\n', docLines);
+        var parameters = ExtractParameters(raw);
+        return new Documentation(
+            Clean(Extract(raw, "summary") ?? raw),
+            Clean(Extract(raw, "returns") ?? string.Empty),
+            parameters);
+    }
+
+    private static string? Extract(string raw, string tag)
+    {
+        var start = raw.IndexOf($"<{tag}>", StringComparison.OrdinalIgnoreCase);
+        var end = raw.IndexOf($"</{tag}>", StringComparison.OrdinalIgnoreCase);
+        if (start < 0 || end < 0 || end <= start)
+        {
+            return null;
+        }
+
+        return raw[(start + tag.Length + 2)..end];
+    }
+
+    private static IReadOnlyDictionary<string, string> ExtractParameters(string raw)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var searchIndex = 0;
+        while (searchIndex < raw.Length)
+        {
+            var paramStart = raw.IndexOf("<param", searchIndex, StringComparison.OrdinalIgnoreCase);
+            if (paramStart < 0)
+            {
+                break;
+            }
+
+            var tagEnd = raw.IndexOf('>', paramStart);
+            var paramEnd = raw.IndexOf("</param>", paramStart, StringComparison.OrdinalIgnoreCase);
+            if (tagEnd < 0 || paramEnd < 0 || paramEnd <= tagEnd)
+            {
+                break;
+            }
+
+            var tag = raw[paramStart..tagEnd];
+            var name = ExtractAttribute(tag, "name");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                result[name] = Clean(raw[(tagEnd + 1)..paramEnd]);
+            }
+
+            searchIndex = paramEnd + "</param>".Length;
+        }
+
+        return result;
+    }
+
+    private static string ExtractAttribute(string tag, string name)
+    {
+        var marker = name + "=\"";
+        var start = tag.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+        {
+            return string.Empty;
+        }
+
+        start += marker.Length;
+        var end = tag.IndexOf('"', start);
+        return end < 0 ? string.Empty : tag[start..end];
+    }
+
+    private static string Clean(string text) =>
+        text
+            .Replace("<c>", "`", StringComparison.OrdinalIgnoreCase)
+            .Replace("</c>", "`", StringComparison.OrdinalIgnoreCase)
+            .Replace("<see cref=\"", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("\"/>", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .Aggregate(string.Empty, (current, line) => current.Length == 0 ? line : current + " " + line);
+}
+
+internal sealed record Documentation(string Summary, string Returns, IReadOnlyDictionary<string, string> Params);
+internal sealed record LanguageParameter(string Name, string Type, string Modifier, string Documentation);
+internal sealed record LanguageCompletionItem(string Label, int Kind, string Detail, object? Documentation, string SortText);
+internal sealed record LanguageCompletionContext(IReadOnlyList<LanguageSymbol> Symbols, bool IncludeKeywords, bool IncludeBuiltInTypes);
+internal sealed record InvocationInfo(string Receiver, string Name, int ParameterIndex);
+internal sealed record MissingUsesDiagnostic(LspRange Range, string TypeName, string NamespaceName);
+internal sealed record TextEditInfo(LspRange Range, string NewText);
+internal sealed record LanguageDocumentSymbol(string Uri, string Name, string Kind, string Signature, LspRange Range, LspRange SelectionRange, IReadOnlyList<LanguageDocumentSymbol> Children);
+internal sealed record LanguageSymbol(
+    string Uri,
+    string Name,
+    string Kind,
+    string Signature,
+    string Documentation,
+    string ReturnsDocumentation,
+    IReadOnlyList<LanguageParameter> Parameters,
+    LspRange Range,
+    string OwnerType,
+    string TypeName)
+{
+    public string ToMarkdown()
+    {
+        var builder = new StringBuilder();
+        builder.Append("```ilc\n").Append(Signature).Append("\n```\n");
+        builder.Append(ToDocumentationMarkdown());
+        return builder.ToString();
+    }
+
+    public string ToDocumentationMarkdown()
+    {
+        var builder = new StringBuilder();
+        if (Documentation.Length > 0)
+        {
+            builder.Append(Documentation).Append("\n\n");
+        }
+
+        foreach (var parameter in Parameters)
+        {
+            if (parameter.Documentation.Length > 0)
+            {
+                builder.Append("*@param* `").Append(parameter.Name).Append("` ").Append(parameter.Documentation).Append("\n\n");
+            }
+        }
+
+        if (ReturnsDocumentation.Length > 0)
+        {
+            builder.Append("*@returns* ").Append(ReturnsDocumentation).Append("\n\n");
+        }
+
+        return builder.ToString();
+    }
+}
+
+internal sealed record ModelSnapshot(
+    string Uri,
+    string Text,
+    IReadOnlyList<Diagnostic> Diagnostics,
+    IReadOnlyList<LanguageSymbol> Symbols,
+    IReadOnlyDictionary<string, string> TypeBases)
+{
+    public LspRange ToRange(TextSpan span) => LanguageModel.ToRange(Text, span);
+}
+
+internal sealed record CachedModelSnapshot(
+    long Revision,
+    string Text,
+    ModelSnapshot Snapshot);
+
+internal readonly record struct LspPosition(int Line, int Character);
+internal readonly record struct LspRange(LspPosition Start, LspPosition End);

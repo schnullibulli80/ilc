@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ILC.Compiler.Bytecode", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ILC.Compiler.Cli", "src\ILC.Compiler.Cli\ILC.Compiler.Cli.csproj", "{839313E4-E60A-44AD-B57D-6918E6E793E6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ILC.LanguageServer", "src\ILC.LanguageServer\ILC.LanguageServer.csproj", "{F7025D28-299B-4F8F-B5B0-9B50A15D3646}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ILC.Compiler.Tests", "tests\ILC.Compiler.Tests\ILC.Compiler.Tests.csproj", "{80E05DC1-AFCA-4CA0-89CE-5AC5060102A5}"
 EndProject
 Global
@@ -50,6 +52,10 @@ Global
 		{839313E4-E60A-44AD-B57D-6918E6E793E6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{839313E4-E60A-44AD-B57D-6918E6E793E6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{839313E4-E60A-44AD-B57D-6918E6E793E6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F7025D28-299B-4F8F-B5B0-9B50A15D3646}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F7025D28-299B-4F8F-B5B0-9B50A15D3646}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F7025D28-299B-4F8F-B5B0-9B50A15D3646}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F7025D28-299B-4F8F-B5B0-9B50A15D3646}.Release|Any CPU.Build.0 = Release|Any CPU
 		{80E05DC1-AFCA-4CA0-89CE-5AC5060102A5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{80E05DC1-AFCA-4CA0-89CE-5AC5060102A5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{80E05DC1-AFCA-4CA0-89CE-5AC5060102A5}.Release|Any CPU.ActiveCfg = Release|Any CPU

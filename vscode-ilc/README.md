@@ -5,21 +5,75 @@ Full language support for ILC (Integrated Language Compiler) including syntax hi
 ## Features
 
 - **Syntax Highlighting** for all ILC language constructs
-- **IntelliSense** support (coming soon)
-- **Debugging** capabilities (coming soon)
-- **Code Navigation** and Outline view (coming soon)
-- **Full Language Server** integration (planned)
+- **Compiler Diagnostics** in the VS Code Problems panel, backed by the real ILC compiler
+- **Completions** for keywords, built-in types, document/workspace symbols, and local variables
+- **Snippets** for common ILC declarations and XML documentation comments
+- **Hover Help** for symbols with `/// <summary>`, `/// <param>`, and `/// <returns>` documentation
+- **Signature Help** for method/function calls through `Ctrl+Shift+Space`
+- **Outline / Breadcrumb Symbols** for classes, interfaces, enums, methods, functions, properties, fields, and constants
+- **Go to Definition** for symbols found by the lightweight workspace index
+- **Workspace Symbol Search** through VS Code's symbol search
+- **Build / Run Commands** for the active `.ilc` file
+- **Workspace Commands** for local verification and the QtQuick UI smoke
+- **Experimental Language Server** backed by the ILC compiler libraries
+- **Debugging** capabilities (planned through a VS Code debug adapter)
+- **Full semantic language server expansion** (ongoing)
 
 ## Installation
 
-1. Open VS Code
-2. Go to Extensions (Ctrl+Shift+X)
-3. Search for "ILC Syntax Highlighter"
-4. Click Install
+From the repository root:
+
+```bash
+dotnet build src/ILC.LanguageServer/ILC.LanguageServer.csproj --no-restore
+cd vscode-ilc
+npm install
+npm run vscode:prepublish
+npx vsce package
+code --install-extension ilc-0.1.0.vsix --force
+```
+
+Reload VS Code after installing:
+
+```text
+Developer: Reload Window
+```
+
+When only the C# language server changes, rebuilding the language server and
+reloading VS Code is usually enough. When `vscode-ilc/src/extension.ts`,
+`package.json`, snippets, or grammar files change, rebuild and reinstall the
+VSIX.
 
 ## Usage
 
-The highlighter automatically activates for files with `.ilc` extension.
+The extension automatically activates for files with `.ilc` extension.
+
+Open the Command Palette and use:
+
+- `ILC: Compile Current File`
+- `ILC: Run Current File`
+- `ILC: Refresh Diagnostics`
+- `ILC: Run Local Verification`
+- `ILC: Run QtQuick Smoke`
+- `ILC: Show Output`
+
+Diagnostics are refreshed on open and save by default. The extension invokes the
+repository compiler CLI and parses its diagnostics into the Problems panel.
+
+Completion, hover, and signature help are currently implemented by a lightweight
+workspace symbol index. Public XML-style ILC documentation comments such as
+`/// <summary>...</summary>` are surfaced in hover and signature help.
+
+The extension now starts the experimental compiler-backed language server by
+default. If it cannot start, the lightweight TypeScript symbol index remains as
+a fallback for completion, hover, signature help, Outline, Go to Definition, and
+Workspace Symbol Search.
+
+To check that the language server is running:
+
+1. set `ilc.debugOutput` to `true`;
+2. open `View` -> `Output`;
+3. select `ILC` in the output dropdown;
+4. look for `language server initialized` and diagnostics messages.
 
 ### Example
 
@@ -52,6 +106,38 @@ end;
 - **Operators**: All arithmetic, logical, comparison, and special operators
 - **Literals**: Integer (decimal, hex, binary, octal), float, boolean, nil, strings
 - **Comments**: Line comments (`//`) and block comments (`(* *)`)
+- **XML Documentation**: `/// <summary>`, `/// <param>`, and `/// <returns>` are used for hover and signature help
+
+## Settings
+
+- `ilc.compiler.project`: compiler CLI project path relative to the workspace root
+- `ilc.runtime.executable`: VM CLI executable path relative to the workspace root
+- `ilc.includeShippedLibraries`: include `libs/shipped/*.ilc` for active-file compiles
+- `ilc.diagnostics.onSave`: refresh compiler diagnostics when an `.ilc` file is saved
+- `ilc.diagnostics.onOpen`: refresh compiler diagnostics when an `.ilc` file is opened
+- `ilc.debugOutput`: write detailed extension and language-server diagnostics to the ILC output channel
+- `ilc.languageServer.enabled`: start the experimental compiler-backed language server
+- `ilc.languageServer.project`: language server project path relative to the workspace root
+
+The extension detects the ILC repository root by looking for
+`scripts/run-local-verification.sh` and `src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj`.
+
+## Troubleshooting
+
+If IntelliSense, hover, Outline, or Go to Definition behave like the older
+fallback implementation:
+
+1. Make sure `ilc.languageServer.enabled` is `true`.
+2. Make sure `dotnet build src/ILC.LanguageServer/ILC.LanguageServer.csproj --no-restore` succeeds.
+3. Make sure VS Code quick suggestions are enabled for code:
+   `"editor.quickSuggestions": { "other": true, "comments": false, "strings": false }`.
+4. Reinstall the VSIX if the TypeScript client changed.
+5. Run `Developer: Reload Window`.
+6. Check the `ILC` output channel with `ilc.debugOutput = true`.
+
+If the Outline is flat after a client-side change, rebuild and reinstall the
+VSIX. VS Code does not pick up changes in `src/extension.ts` from the repository
+unless the extension is running in an Extension Development Host.
 
 ## License
 

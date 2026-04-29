@@ -1,6 +1,6 @@
 namespace UiQtQuickDemo;
 
-uses System, System.Collections, System.Threading, System.Ui, System.Ui.Hosting, System.Ui.Backends.QtQuick;
+uses System, System.Collections, System.Threading, System.Ui, System.Ui.Hosting, System.Ui.Backends.QtQuick, System.Diagnostics;
 
 public class Program
 begin
@@ -76,8 +76,10 @@ begin
 
   public static function Main: Integer;
   begin
+    Trace.WriteInformation('Starting ILC QtQuick demo application...');
     var app := new Application();
 
+    Trace.WriteInformation('Constructing UI elements...');
     var title := new TextBlock();
     title.Name := 'demoTitle';
     title.Text := 'ILC Qt6 Control Lab';
@@ -175,6 +177,7 @@ begin
     summary.Text := '';
     summary.Foreground := Color.White;
 
+    Trace.WriteInformation('Assembling the UI layout...');
     var actions := new StackPanel();
     actions.Name := 'demoActions';
     actions.Orientation := Orientation.Horizontal;
@@ -207,6 +210,7 @@ begin
     layout.AddChild(summaryLabel);
     layout.AddChild(summary);
 
+    Trace.WriteInformation('Creating the main window...');
     var window := new Window();
     window.Title := 'ILC Qt6 UI Demo';
     window.SetMinimumSize(960, 900);
@@ -216,12 +220,14 @@ begin
 
     app.AddWindow(window);
 
+    Trace.WriteInformation('Initializing QtQuick backend...');
     var backend := new QtQuickBackend();
     if backend.PrepareNativeBridge() = false then
     begin
       return 10;
     end;
 
+    Trace.WriteInformation('Assigning UI elements to program variables...');
     Program.DemoWindow := window;
     Program.DemoEyebrow := eyebrow;
     Program.DemoTitle := title;
@@ -245,6 +251,7 @@ begin
     Program.RefreshIntensityText();
     Program.RefreshSummary();
 
+    Trace.WriteInformation('Running the QtQuick backend...');
     return backend.Run(app);
   end;
 end;
@@ -253,6 +260,7 @@ public class DemoResetAction: IRunnable
 begin
   public method Run;
   begin
+    Trace.WriteInformation('Resetting demo state...');
     Program.DemoClickCount := 0;
     Program.DemoEyebrow.Text := 'INTERACTIVE SHOWCASE';
     Program.DemoTitle.Text := 'ILC Qt6 Control Lab';
@@ -281,6 +289,7 @@ public class DemoIntensityChangedAction: IRunnable
 begin
   public method Run;
   begin
+    Trace.WriteInformation('Handling intensity change...');
     var intensity := Program.DemoIntensity.Value;
     Program.RefreshIntensityText();
 
@@ -314,6 +323,7 @@ public class DemoInputChangedAction: IRunnable
 begin
   public method Run;
   begin
+    Trace.WriteInformation('Handling input change...');
     var currentText := Program.DemoInput.Text;
     if currentText = '' then
     begin
@@ -343,6 +353,7 @@ public class DemoChaosModeChangedAction: IRunnable
 begin
   public method Run;
   begin
+    Trace.WriteInformation('Handling chaos mode change...');
     if Program.DemoChaosMode.IsChecked then
     begin
       Program.DemoStatus.Text := 'Chaos mode enabled.';
@@ -366,6 +377,7 @@ public class DemoButtonAction: IRunnable
 begin
   public method Run;
   begin
+    Trace.WriteInformation('Handling button click...');
     Program.DemoClickCount := Program.DemoClickCount + 1;
     var clickCount := Program.DemoClickCount;
     var codename := Program.DemoInput.Text;

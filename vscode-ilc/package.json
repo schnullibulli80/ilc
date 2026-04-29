@@ -16,6 +16,77 @@
     "Programming Languages"
   ],
   "contributes": {
+    "commands": [
+      {
+        "command": "ilc.compileCurrentFile",
+        "title": "ILC: Compile Current File"
+      },
+      {
+        "command": "ilc.runCurrentFile",
+        "title": "ILC: Run Current File"
+      },
+      {
+        "command": "ilc.refreshDiagnostics",
+        "title": "ILC: Refresh Diagnostics"
+      },
+      {
+        "command": "ilc.verifyWorkspace",
+        "title": "ILC: Run Local Verification"
+      },
+      {
+        "command": "ilc.runQtQuickSmoke",
+        "title": "ILC: Run QtQuick Smoke"
+      },
+      {
+        "command": "ilc.openOutput",
+        "title": "ILC: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "ILC",
+      "properties": {
+        "ilc.compiler.project": {
+          "type": "string",
+          "default": "src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj",
+          "description": "Path to the ILC compiler CLI project, relative to the workspace root."
+        },
+        "ilc.runtime.executable": {
+          "type": "string",
+          "default": "build/runtime/ilcvm_cli/ilcvm_cli",
+          "description": "Path to the ILC VM CLI executable, relative to the workspace root."
+        },
+        "ilc.includeShippedLibraries": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include libs/shipped/*.ilc when compiling a user file from VS Code."
+        },
+        "ilc.diagnostics.onSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refresh ILC compiler diagnostics whenever an .ilc file is saved."
+        },
+        "ilc.diagnostics.onOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refresh ILC compiler diagnostics when an .ilc file is opened."
+        },
+        "ilc.debugOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write detailed extension diagnostics to the ILC output channel."
+        },
+        "ilc.languageServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the experimental compiler-backed ILC language server."
+        },
+        "ilc.languageServer.project": {
+          "type": "string",
+          "default": "src/ILC.LanguageServer/ILC.LanguageServer.csproj",
+          "description": "Path to the ILC language server project, relative to the workspace root."
+        }
+      }
+    },
     "languages": [
       {
         "id": "ilc",
@@ -35,11 +106,23 @@
         "scopeName": "source.ilc",
         "path": "./syntaxes/ilc.tmLanguage.json"
       }
+    ],
+    "snippets": [
+      {
+        "language": "ilc",
+        "path": "./snippets/ilc.json"
+      }
     ]
   },
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:ilc"
+    "onLanguage:ilc",
+    "onCommand:ilc.compileCurrentFile",
+    "onCommand:ilc.runCurrentFile",
+    "onCommand:ilc.refreshDiagnostics",
+    "onCommand:ilc.verifyWorkspace",
+    "onCommand:ilc.runQtQuickSmoke",
+    "onCommand:ilc.openOutput"
   ],
   "scripts": {
     "vscode:prepublish": "npm run compile",

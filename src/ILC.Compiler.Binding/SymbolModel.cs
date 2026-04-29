@@ -2830,6 +2830,144 @@ public sealed class Binder
         }
 
         ValidateExpression(expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+        if (expectedType is null)
+        {
+            return;
+        }
+
+        var actualType = SemanticFacts.InferExpressionType(expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (!IsAssignableTo(actualType, expectedType, knownTypes))
+        {
+            diagnostics.Report(
+                "ILC2240",
+                $"Cannot assign expression of type '{actualType.Name}' to target type '{expectedType.Name}'.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(expression, knownTypes));
+        }
+    }
+
+    private static bool IsAssignableTo(TypeSymbol sourceType, TypeSymbol targetType, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        if (sourceType == targetType || sourceType.Name == targetType.Name)
+        {
+            return true;
+        }
+
+        if (sourceType is TypeParameterSymbol || targetType is TypeParameterSymbol)
+        {
+            return true;
+        }
+
+        if (sourceType == TypeSymbol.Integer && targetType.Name.EndsWith("[]", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (IsCompatibleArrayAssignment(sourceType.Name, targetType.Name))
+        {
+            return true;
+        }
+
+        if (IsOpenGenericAssignment(sourceType, targetType))
+        {
+            return true;
+        }
+
+        if (IsGenericInterfaceAssignment(sourceType, targetType, knownTypes))
+        {
+            return true;
+        }
+
+        if ((sourceType == TypeSymbol.Boolean && targetType == TypeSymbol.Integer) ||
+            (sourceType == TypeSymbol.Integer && targetType == TypeSymbol.Boolean))
+        {
+            return true;
+        }
+
+        if (targetType.IsReferenceType)
+        {
+            return SemanticFacts.IsCompatibleReferenceType(sourceType, targetType, knownTypes);
+        }
+
+        return false;
+    }
+
+    private static bool IsGenericInterfaceAssignment(TypeSymbol sourceType, TypeSymbol targetType, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var targetGenericStart = targetType.Name.IndexOf('<', StringComparison.Ordinal);
+        if (targetGenericStart <= 0)
+        {
+            return false;
+        }
+
+        var targetDefinitionName = targetType.Name[..targetGenericStart];
+        var sourceCandidates = knownTypes
+            .OfType<NamedTypeSymbol>()
+            .Where(type => type.Name == sourceType.Name || type.Name.StartsWith(sourceType.Name + "<", StringComparison.Ordinal))
+            .ToArray();
+        if (SemanticFacts.ResolveTypeReference(sourceType.Name, knownTypes) is NamedTypeSymbol resolvedSource &&
+            !sourceCandidates.Contains(resolvedSource))
+        {
+            sourceCandidates = [.. sourceCandidates, resolvedSource];
+        }
+
+        return sourceCandidates.Any(sourceNamedType => sourceNamedType.InterfaceTypes.Any(interfaceType =>
+        {
+            var interfaceGenericStart = interfaceType.Name.IndexOf('<', StringComparison.Ordinal);
+            return interfaceGenericStart > 0 && interfaceType.Name[..interfaceGenericStart] == targetDefinitionName;
+        }));
+    }
+
+    private static bool IsCompatibleArrayAssignment(string sourceName, string targetName)
+    {
+        if (!sourceName.EndsWith(']') || !targetName.EndsWith(']'))
+        {
+            return false;
+        }
+
+        var sourceBracket = sourceName.IndexOf('[', StringComparison.Ordinal);
+        var targetBracket = targetName.IndexOf('[', StringComparison.Ordinal);
+        if (sourceBracket <= 0 || targetBracket <= 0 || sourceName[..sourceBracket] != targetName[..targetBracket])
+        {
+            return false;
+        }
+
+        var sourceRank = sourceName[sourceBracket..].Count(ch => ch == ',') + 1;
+        var targetRank = targetName[targetBracket..].Count(ch => ch == ',') + 1;
+        return sourceRank == targetRank;
+    }
+
+    private static bool IsOpenGenericAssignment(TypeSymbol sourceType, TypeSymbol targetType)
+    {
+        var sourceGenericStart = sourceType.Name.IndexOf('<', StringComparison.Ordinal);
+        var targetGenericStart = targetType.Name.IndexOf('<', StringComparison.Ordinal);
+        if (sourceGenericStart > 0 && targetGenericStart > 0 &&
+            sourceType.Name[..sourceGenericStart] == targetType.Name[..targetGenericStart])
+        {
+            return true;
+        }
+
+        if (targetType.Name == "IEnumerable" && sourceType.IsReferenceType)
+        {
+            return true;
+        }
+
+        if (targetType.Name.Contains('<', StringComparison.Ordinal) && sourceType.Name == targetType.Name[..targetType.Name.IndexOf('<', StringComparison.Ordinal)])
+        {
+            return true;
+        }
+
+        if (targetGenericStart > 0 && sourceType.Name == targetType.Name[..targetGenericStart])
+        {
+            return true;
+        }
+
+        if (sourceGenericStart > 0 && targetType.Name == sourceType.Name[..sourceGenericStart])
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryValidateDelegateMethodGroupConversion(
@@ -4057,13 +4195,25 @@ public sealed class Binder
         IReadOnlyList<TypeSymbol> knownTypes) =>
         expression switch
         {
+            LiteralExpressionSyntax literal => literal.LiteralToken.Span,
             NameExpressionSyntax name => GetReferenceDiagnosticSpan(name.Name, knownTypes),
+            NewExpressionSyntax newExpression => GetReferenceDiagnosticSpan(newExpression.TypeName, knownTypes),
+            NewArrayExpressionSyntax newArray => GetReferenceDiagnosticSpan(newArray.ElementTypeName, knownTypes),
             MemberAccessExpressionSyntax member => member.MemberName.Span,
             ElementAccessExpressionSyntax element => GetReferenceDiagnosticSpan(element.Target, knownTypes),
             PostfixElementAccessExpressionSyntax element => GetExpressionDiagnosticSpan(element.Target, knownTypes),
             CallExpressionSyntax call => GetExpressionDiagnosticSpan(call.Target, knownTypes),
+            AssignmentExpressionSyntax assignment => GetExpressionDiagnosticSpan(assignment.Expression, knownTypes),
+            CompoundAssignmentExpressionSyntax assignment => GetExpressionDiagnosticSpan(assignment.Expression, knownTypes),
+            BinaryExpressionSyntax binary => binary.OperatorToken.Span,
+            UnaryExpressionSyntax unary => unary.OperatorToken.Span,
+            RangeExpressionSyntax range => range.RangeToken.Span,
+            SetLiteralExpressionSyntax setLiteral => setLiteral.OpenBracketToken.Span,
+            ProjectorExpressionSyntax projector => projector.NewKeyword.Span,
+            TypeTestExpressionSyntax typeTest => typeTest.IsKeyword.Span,
+            AsExpressionSyntax asExpression => asExpression.AsKeyword.Span,
             LambdaExpressionSyntax lambda => lambda.SignatureKeyword.Span,
-            ParenthesizedExpressionSyntax parenthesized => parenthesized.OpenParenToken.Span,
+            ParenthesizedExpressionSyntax parenthesized => GetExpressionDiagnosticSpan(parenthesized.Expression, knownTypes),
             MatchNotPatternSyntax notPattern => notPattern.NotKeyword.Span,
             MatchOrPatternSyntax orPattern => orPattern.Patterns.Count > 0
                 ? GetExpressionDiagnosticSpan(orPattern.Patterns[0], knownTypes)

@@ -1,0 +1,106 @@
+{
+  "Class": {
+    "prefix": "class",
+    "body": [
+      "public class ${1:Name}",
+      "begin",
+      "  $0",
+      "end;"
+    ],
+    "description": "Declare a public class"
+  },
+  "Method": {
+    "prefix": "method",
+    "body": [
+      "public method ${1:Name}(${2:parameters});",
+      "begin",
+      "  $0",
+      "end;"
+    ],
+    "description": "Declare a public method"
+  },
+  "Function": {
+    "prefix": "function",
+    "body": [
+      "public function ${1:Name}(${2:parameters}): ${3:ReturnType};",
+      "begin",
+      "  return ${4:value};",
+      "end;"
+    ],
+    "description": "Declare a public function"
+  },
+  "Property": {
+    "prefix": "property",
+    "body": [
+      "public property ${1:Name}: ${2:Type}",
+      "begin",
+      "  get",
+      "  begin",
+      "    return ${3:value};",
+      "  end;",
+      "",
+      "  set(value)",
+      "  begin",
+      "    ${3:value} := value;",
+      "  end;",
+      "end;"
+    ],
+    "description": "Declare a property with get and set bodies"
+  },
+  "Summary": {
+    "prefix": "summary",
+    "body": [
+      "/// <summary>${1:Description}</summary>"
+    ],
+    "description": "XML summary documentation comment"
+  },
+  "Summary With Params": {
+    "prefix": "doc",
+    "body": [
+      "/// <summary>",
+      "///   ${1:Description}",
+      "/// </summary>",
+      "/// <param name=\"${2:name}\">${3:Description}</param>",
+      "/// <returns>${4:Description}</returns>"
+    ],
+    "description": "XML documentation block"
+  },
+  "If": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} then",
+      "begin",
+      "  $0",
+      "end;"
+    ],
+    "description": "If statement"
+  },
+  "While": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} do",
+      "begin",
+      "  $0",
+      "end;"
+    ],
+    "description": "While loop"
+  },
+  "For": {
+    "prefix": "for",
+    "body": [
+      "for ${1:index} := ${2:0} to ${3:count} do",
+      "begin",
+      "  $0",
+      "end;"
+    ],
+    "description": "For loop"
+  },
+  "DllImport": {
+    "prefix": "dllimport",
+    "body": [
+      "[DllImport('${1:library}', EntryPoint := '${2:symbol}', CallingConvention := CallingConvention.Cdecl)]",
+      "public static extern function ${3:Name}(${4:parameters}): ${5:ReturnType};"
+    ],
+    "description": "Declare a native DllImport function"
+  }
+}

@@ -4,9 +4,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$repo_root/tmp"
+smoke_src_dir="$tmp_dir/ui-qtquick-smoke-src"
 demo_source="$repo_root/tests/fixtures/ui-qtquick-demo.ilc"
-demo_runtime_source="$tmp_dir/ui-qtquick-demo.ilc"
-demo_runtime_ilb="$tmp_dir/ui-qtquick-demo.ilb"
+demo_runtime_source="$smoke_src_dir/ui-qtquick-demo.ilc"
+demo_runtime_ilb="$smoke_src_dir/ui-qtquick-demo.ilb"
 
 system_fixture="$repo_root/libs/shipped/system.ilc"
 diagnostics_fixture="$repo_root/libs/shipped/diagnostics.ilc"
@@ -25,8 +26,29 @@ compile_log="$tmp_dir/ui-qtquick-demo-compile.log"
 run_log="$tmp_dir/ui-qtquick-demo-run.log"
 
 mkdir -p "$tmp_dir"
-rm -f "$demo_runtime_source" "$demo_runtime_ilb" "$compile_log" "$run_log"
-cp "$demo_source" "$demo_runtime_source"
+rm -f "$compile_log" "$run_log"
+rm -rf "$smoke_src_dir"
+mkdir -p "$smoke_src_dir"
+
+copy_smoke_source() {
+    local source_path="$1"
+    local target_path="$smoke_src_dir/$(basename "$source_path")"
+    cp "$source_path" "$target_path"
+    printf '%s\n' "$target_path"
+}
+
+demo_runtime_source="$(copy_smoke_source "$demo_source")"
+system_fixture="$(copy_smoke_source "$system_fixture")"
+diagnostics_fixture="$(copy_smoke_source "$diagnostics_fixture")"
+text_fixture="$(copy_smoke_source "$text_fixture")"
+json_fixture="$(copy_smoke_source "$json_fixture")"
+net_fixture="$(copy_smoke_source "$net_fixture")"
+threading_fixture="$(copy_smoke_source "$threading_fixture")"
+collections_fixture="$(copy_smoke_source "$collections_fixture")"
+ui_fixture="$(copy_smoke_source "$ui_fixture")"
+ui_hosting_fixture="$(copy_smoke_source "$ui_hosting_fixture")"
+ui_qtquick_fixture="$(copy_smoke_source "$ui_qtquick_fixture")"
+demo_core_fixture="$(copy_smoke_source "$demo_core_fixture")"
 
 if [[ -d "$qtbridge_build_dir" ]]; then
     if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
