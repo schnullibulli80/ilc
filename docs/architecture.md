@@ -77,6 +77,15 @@ Current responsibilities include:
 - parsing declarations, statements, expressions, patterns, and type references
 - preserving source structure for diagnostics and later semantic work
 
+The implementation is split by compiler concern:
+
+- `Lexer.cs` owns tokenization.
+- `SyntaxModel.cs` owns syntax node records and token kinds.
+- `SyntaxTree.cs` owns the public parse/merge surface.
+- `SyntaxTree.Aliases.cs` owns uses-alias normalization.
+- `SyntaxTree.Diagnostics.cs` owns syntax-tree-level import diagnostics.
+- `Parser.*.cs` splits parser logic by declarations, members, statements, expressions, and type syntax.
+
 The syntax layer is intentionally rich. It models language structure rather than collapsing too early into semantic concepts. That is important for:
 
 - precise diagnostics
@@ -109,6 +118,15 @@ Current responsibilities include:
 - property/indexer validation
 - constant value analysis where supported
 - control-flow and feature-specific semantic checks
+
+The implementation is split into focused model and binder files:
+
+- `SymbolModel.cs` owns core symbols and semantic resolution records.
+- `BoundModel.cs` owns bound read/write/call/receiver records used by later phases.
+- `BindingResult.cs` owns the public binding result.
+- `Binder.cs` owns the main binding entry point.
+- `Binder.*.cs` splits declaration binding, validation, interop metadata, and property synthesis.
+- `SemanticFacts.*.cs` splits reusable semantic operations into inference, type facts, type resolution, member/invocation resolution, query rewriting, constants, and bound semantic helpers.
 
 This layer is where the language becomes a real typed system rather than just structured syntax.
 
