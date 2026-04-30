@@ -60,15 +60,16 @@ public static partial class SemanticFacts
                 ? qualifier[(typeNameSeparator + 1)..]
                 : qualifier;
 
-            return fields.FirstOrDefault(field => field.IsStatic && field.DeclaringTypeName == declaringTypeName && field.Name == fieldName);
+            return FindFieldsByDeclaringType(fields, declaringTypeName)
+                .FirstOrDefault(field => field.IsStatic && field.Name == fieldName);
         }
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
-            var sameTypeField = fields.FirstOrDefault(field =>
-                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                field.Name == displayName &&
-                (field.IsStatic || !currentMethod.IsStatic));
+            var sameTypeField = FindFieldsByDeclaringType(fields, currentMethod.DeclaringTypeName)
+                .FirstOrDefault(field =>
+                    field.Name == displayName &&
+                    (field.IsStatic || !currentMethod.IsStatic));
             if (sameTypeField is not null)
             {
                 return sameTypeField;
@@ -101,14 +102,14 @@ public static partial class SemanticFacts
                 ? qualifier[(typeNameSeparator + 1)..]
                 : qualifier;
 
-            return knownFields.FirstOrDefault(field => field.DeclaringTypeName == declaringTypeName && field.Name == fieldName);
+            return FindFieldsByDeclaringType(knownFields, declaringTypeName)
+                .FirstOrDefault(field => field.Name == fieldName);
         }
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
-            return knownFields.FirstOrDefault(field =>
-                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                field.Name == displayName);
+            return FindFieldsByDeclaringType(knownFields, currentMethod.DeclaringTypeName)
+                .FirstOrDefault(field => field.Name == displayName);
         }
 
         return null;
@@ -286,14 +287,14 @@ public static partial class SemanticFacts
             MemberAccessExpressionSyntax member => ResolveMemberAccess(member, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Constant?.Value,
             ParenthesizedExpressionSyntax parenthesized => GetConstantValue(parenthesized.Expression, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
             UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.NotKeyword => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is int operand
-                ? InferExpressionType(unary.Operand, locals, [], knownFields, knownConstants, knownProperties, currentMethod) == TypeSymbol.Boolean
+                ? InferExpressionType(unary.Operand, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes) == TypeSymbol.Boolean
                     ? operand == 0 ? 1 : 0
                     : ~operand
                 : null,
-            UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.MinusToken => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod) is int negatedOperand
+            UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.MinusToken => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is int negatedOperand
                 ? -negatedOperand
                 : null,
-            UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.PlusToken => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod) is int positiveOperand
+            UnaryExpressionSyntax unary when unary.OperatorToken.Kind == SyntaxKind.PlusToken => GetConstantValue(unary.Operand, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) is int positiveOperand
                 ? positiveOperand
                 : null,
             _ => null
@@ -385,15 +386,20 @@ public static partial class SemanticFacts
         var valueReceiverType = TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
+            if (name.Parts[^1].Text == "Length" && HasLengthProperty(valueReceiverType))
+            {
+                return TypeSymbol.Integer;
+            }
+
             var instanceProperty = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => knownType.Properties
                     .Where(property =>
                         property.Name == name.Parts[^1].Text &&
                         !property.IsStatic)
-                    .Concat(knownProperties.Where(property =>
-                        property.DeclaringTypeName == knownType.Name &&
-                        property.Name == name.Parts[^1].Text &&
-                        !property.IsStatic)))
+                    .Concat(FindPropertiesByDeclaringType(knownProperties, knownType.Name)
+                        .Where(property =>
+                            property.Name == name.Parts[^1].Text &&
+                            !property.IsStatic)))
                 .FirstOrDefault();
             if (instanceProperty is not null)
             {
@@ -405,10 +411,10 @@ public static partial class SemanticFacts
                     .Where(field =>
                         field.Name == name.Parts[^1].Text &&
                         !field.IsStatic)
-                    .Concat(knownFields.Where(field =>
-                        field.DeclaringTypeName == knownType.Name &&
-                        field.Name == name.Parts[^1].Text &&
-                        !field.IsStatic)))
+                    .Concat(FindFieldsByDeclaringType(knownFields, knownType.Name)
+                        .Where(field =>
+                            field.Name == name.Parts[^1].Text &&
+                            !field.IsStatic)))
                 .FirstOrDefault();
             if (instanceField is not null)
             {
@@ -448,9 +454,8 @@ public static partial class SemanticFacts
         MethodSymbol? currentMethod)
     {
         var qualifiedTarget = ParseQualifiedMethodTarget(name);
-        var candidates = knownMethods
+        var candidates = FindMethodsByName(knownMethods, qualifiedTarget.MethodName)
             .Where(method =>
-                method.Name == qualifiedTarget.MethodName &&
                 (qualifiedTarget.DeclaringTypeName is null || method.DeclaringTypeName == qualifiedTarget.DeclaringTypeName))
             .ToArray();
 

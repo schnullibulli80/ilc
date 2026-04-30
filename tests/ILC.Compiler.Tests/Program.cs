@@ -1150,7 +1150,12 @@ if (traceType is null ||
     failures.Add("Binder should expose the expected static System.Diagnostics.Trace facade.");
 }
 
-if (!binding.Compilation.GetAllConstants().Any(constant => constant.DeclaringTypeName == "Mode" && constant.Name == "Busy" && Equals(constant.Value, 1)))
+var bootstrapMethods = binding.Compilation.GetAllMethods();
+var bootstrapFields = binding.Compilation.GetAllFields();
+var bootstrapProperties = binding.Compilation.GetAllProperties();
+var bootstrapConstants = binding.Compilation.GetAllConstants();
+
+if (!bootstrapConstants.Any(constant => constant.DeclaringTypeName == "Mode" && constant.Name == "Busy" && Equals(constant.Value, 1)))
 {
     failures.Add("Binder should surface enum members as typed constants with sequential values.");
 }
@@ -1224,7 +1229,7 @@ else
     }
     else
     {
-        var lowerer = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilation.GetAllFields(), binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants());
+        var lowerer = new Lowerer(bootstrapMethods, bootstrapFields, binding.Compilation.Types, bootstrapProperties, bootstrapConstants);
         var declaredIr = lowerer.Lower(addMethod);
         if (declaredIr.Blocks.Count != 1)
         {
@@ -1268,7 +1273,7 @@ else
     }
     else
     {
-        var lowerer = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilation.GetAllFields(), binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants());
+        var lowerer = new Lowerer(bootstrapMethods, bootstrapFields, binding.Compilation.Types, bootstrapProperties, bootstrapConstants);
         var mainModule = new BytecodeEmitter().EmitModule(programType.Methods, programType.Fields, binding.Compilation.Types, lowerer);
         var mainBytecode = mainModule.Functions.First(function => function.Name == "Main");
         var callInstruction = mainBytecode.Instructions.FirstOrDefault(instruction => instruction.OpCode == OpCode.Call);
@@ -1303,7 +1308,7 @@ else
             failures.Add("Static Main lowering must not emit instance field access with receiver register 0.");
         }
 
-var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilation.GetAllFields(), binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants()).Lower(mainMethod);
+        var mainIr = new Lowerer(bootstrapMethods, bootstrapFields, binding.Compilation.Types, bootstrapProperties, bootstrapConstants).Lower(mainMethod);
         if (!mainIr.Blocks.SelectMany(block => block.Instructions).Any(instruction => instruction.OpCode == IrOpCode.BranchIfFalse))
         {
             failures.Add("Lowerer should emit conditional branches for while-statements.");
@@ -1750,7 +1755,7 @@ var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilatio
     }
     else
     {
-        var incrementIr = new Lowerer(programType.Methods, programType.Fields, binding.Compilation.Types, programType.Properties, binding.Compilation.GetAllConstants()).Lower(incrementMethod);
+        var incrementIr = new Lowerer(programType.Methods, programType.Fields, binding.Compilation.Types, programType.Properties, bootstrapConstants).Lower(incrementMethod);
         if (!incrementIr.Registers.Any(register => register.Name == "r0" && register.Type.Name == "Program"))
         {
             failures.Add("Instance methods should receive an implicit self register.");
@@ -1777,7 +1782,7 @@ var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilatio
     }
     else
     {
-        var currentIr = new Lowerer(programType.Methods, programType.Fields, binding.Compilation.Types, programType.Properties, binding.Compilation.GetAllConstants()).Lower(currentMethod);
+        var currentIr = new Lowerer(programType.Methods, programType.Fields, binding.Compilation.Types, programType.Properties, bootstrapConstants).Lower(currentMethod);
         if (!currentIr.Blocks.SelectMany(block => block.Instructions).Any(instruction => instruction.OpCode == IrOpCode.LoadField))
         {
             failures.Add("Instance field reads through self should lower to field load IR.");
@@ -1786,7 +1791,7 @@ var mainIr = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilatio
 }
 
 var method = binding.Compilation.Methods[0];
-var ir = new Lowerer(binding.Compilation.GetAllMethods(), binding.Compilation.GetAllFields(), binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants()).Lower(method);
+var ir = new Lowerer(bootstrapMethods, bootstrapFields, binding.Compilation.Types, bootstrapProperties, bootstrapConstants).Lower(method);
 if (ir.Blocks.Count != 1)
 {
     failures.Add("Lowerer should emit a single entry block.");
@@ -1805,7 +1810,9 @@ if (!bytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.Call)
 
 var allMethods = binding.Compilation.GetAllMethods();
 var allFields = binding.Compilation.GetAllFields();
-var module = new BytecodeEmitter().EmitModule(allMethods, allFields, binding.Compilation.Types, new Lowerer(allMethods, allFields, binding.Compilation.Types, binding.Compilation.GetAllProperties(), binding.Compilation.GetAllConstants()));
+var allProperties = binding.Compilation.GetAllProperties();
+var allConstants = binding.Compilation.GetAllConstants();
+var module = new BytecodeEmitter().EmitModule(allMethods, allFields, binding.Compilation.Types, new Lowerer(allMethods, allFields, binding.Compilation.Types, allProperties, allConstants));
 if (module.Functions.Count != allMethods.Count)
 {
     failures.Add("Module emission should include all bound methods from the merged bootstrap fixture.");
@@ -3403,8 +3410,12 @@ else
 
         var externProgram = externBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
         var externMain = externProgram.Methods.First(method => method.Name == "Main");
-        var externLowerer = new Lowerer(externBinding.Compilation.GetAllMethods(), externBinding.Compilation.GetAllFields(), externBinding.Compilation.Types, externBinding.Compilation.GetAllProperties(), externBinding.Compilation.GetAllConstants());
-        var externModule = new BytecodeEmitter().EmitModule(externBinding.Compilation.GetAllMethods(), externBinding.Compilation.GetAllFields(), externBinding.Compilation.Types, externLowerer);
+        var externMethods = externBinding.Compilation.GetAllMethods();
+        var externFields = externBinding.Compilation.GetAllFields();
+        var externProperties = externBinding.Compilation.GetAllProperties();
+        var externConstants = externBinding.Compilation.GetAllConstants();
+        var externLowerer = new Lowerer(externMethods, externFields, externBinding.Compilation.Types, externProperties, externConstants);
+        var externModule = new BytecodeEmitter().EmitModule(externMethods, externFields, externBinding.Compilation.Types, externLowerer);
         var importedWriteFunction = externModule.Functions.FirstOrDefault(function => function.Name == "Write");
         if (importedWriteFunction is null || importedWriteFunction.HostImportKind != HostImportKind.ConsoleWrite)
         {
@@ -4390,6 +4401,8 @@ else
 
     var dllImportMethods = dllImportBinding.Compilation.GetAllMethods().ToArray();
     var dllImportFields = dllImportBinding.Compilation.GetAllFields();
+    var dllImportProperties = dllImportBinding.Compilation.GetAllProperties();
+    var dllImportConstants = dllImportBinding.Compilation.GetAllConstants();
     var dllImportModule = new BytecodeEmitter().EmitModule(
         dllImportMethods,
         dllImportFields,
@@ -4398,8 +4411,8 @@ else
             dllImportMethods,
             dllImportFields,
             dllImportBinding.Compilation.Types,
-            dllImportBinding.Compilation.GetAllProperties(),
-            dllImportBinding.Compilation.GetAllConstants()));
+            dllImportProperties,
+            dllImportConstants));
     var emittedPuts = dllImportModule.Functions.FirstOrDefault(function => function.Name == "Puts");
     if (emittedPuts?.DllImport is null)
     {

@@ -17,22 +17,22 @@ public static partial class SemanticFacts
     {
         if (expression is null)
         {
-            return TypeSymbol.Integer;
+            return TypeSymbol.Unknown;
         }
 
         return expression switch
         {
             LiteralExpressionSyntax literal => InferLiteralType(literal),
-            SetLiteralExpressionSyntax setLiteral => InferSetLiteralType(setLiteral, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
+            SetLiteralExpressionSyntax setLiteral => InferSetLiteralType(setLiteral, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             RangeExpressionSyntax range => InferExpressionType(range.Start, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             ParenthesizedExpressionSyntax parenthesized => InferExpressionType(parenthesized.Expression, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             MatchAndPatternSyntax andPattern => andPattern.Patterns.Count > 0
                 ? InferExpressionType(andPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes)
-                : TypeSymbol.Integer,
+                : TypeSymbol.Unknown,
             MatchNotPatternSyntax notPattern => InferExpressionType(notPattern.Pattern, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             MatchOrPatternSyntax orPattern => orPattern.Patterns.Count > 0
                 ? InferExpressionType(orPattern.Patterns[0], localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes)
-                : TypeSymbol.Integer,
+                : TypeSymbol.Unknown,
             MatchRelationalPatternSyntax relational => InferExpressionType(relational.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             ProjectorExpressionSyntax projector => ResolveProjectorType(
                         projector,
@@ -64,24 +64,24 @@ public static partial class SemanticFacts
             ElementAccessExpressionSyntax elementAccess => GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             PostfixElementAccessExpressionSyntax elementAccess => GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             MemberAccessExpressionSyntax memberAccess => ResolveMemberAccess(memberAccess, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes).Type
-                ?? TypeSymbol.Integer,
+                ?? TypeSymbol.Unknown,
             NameExpressionSyntax name when localTypes.TryGetValue(name.Name.ToDisplayString(), out var localType) => localType,
             NameExpressionSyntax name => ResolveName(name.Name, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod).Type
-                ?? TypeSymbol.Integer,
-            AssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, out var assignmentType) => assignmentType,
-            AssignmentExpressionSyntax => TypeSymbol.Integer,
-            CompoundAssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, out var compoundAssignmentType) => compoundAssignmentType,
-            CompoundAssignmentExpressionSyntax => TypeSymbol.Integer,
+                ?? TypeSymbol.Unknown,
+            AssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes, out var assignmentType) => assignmentType,
+            AssignmentExpressionSyntax => TypeSymbol.Unknown,
+            CompoundAssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes, out var compoundAssignmentType) => compoundAssignmentType,
+            CompoundAssignmentExpressionSyntax => TypeSymbol.Unknown,
             UnaryExpressionSyntax unary => unary.OperatorToken.Kind == SyntaxKind.NotKeyword
                 ? InferExpressionType(unary.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes) == TypeSymbol.Boolean
                     ? TypeSymbol.Boolean
-                    : TypeSymbol.Integer
-                : TypeSymbol.Integer,
+                    : TypeSymbol.Unknown
+                : InferExpressionType(unary.Operand, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             BinaryExpressionSyntax binary => binary.OperatorToken.Kind is SyntaxKind.InKeyword or SyntaxKind.NotInKeyword
                 ? TypeSymbol.Boolean
                 : IsComparisonOperator(binary.OperatorToken.Kind)
                     ? TypeSymbol.Boolean
-                    : InferBinaryExpressionType(binary, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod),
+                    : InferBinaryExpressionType(binary, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             AsExpressionSyntax asExpression => ResolveTypeReferenceInGenericContext(asExpression.TypeName.ToDisplayString(), currentMethod, knownTypes ?? [])
                 ?? new TypeSymbol(asExpression.TypeName.ToDisplayString(), true),
             TypeTestExpressionSyntax => TypeSymbol.Boolean,
@@ -93,7 +93,7 @@ public static partial class SemanticFacts
                     method.Parameters.Count == call.Arguments.Count &&
                     method.IsStatic) is { } staticMethod
                     ? staticMethod.ReturnType
-                    : ResolveInvocation(call.Target, call.Arguments.Count, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)?.Method.ReturnType ?? TypeSymbol.Integer,
+                    : ResolveInvocation(call.Target, call.Arguments.Count, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod)?.Method.ReturnType ?? TypeSymbol.Unknown,
             QueryExpressionSyntax query => InferQueryExpressionType(query, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes ?? []),
             LambdaExpressionSyntax lambda => lambda.SignatureKeyword.Kind == SyntaxKind.FunctionKeyword && lambda.ReturnType is not null
                 ? ResolveTypeReferenceInGenericContext(lambda.ReturnType.ToDisplayString(), currentMethod, knownTypes ?? [])
@@ -116,8 +116,8 @@ public static partial class SemanticFacts
                     knownProperties ?? [],
                     currentMethod,
                     knownTypes)
-                : TypeSymbol.Integer,
-            _ => TypeSymbol.Integer
+                : TypeSymbol.Unknown,
+            _ => TypeSymbol.Unknown
         };
     }
 
@@ -145,7 +145,7 @@ public static partial class SemanticFacts
             return InferExpressionType(translated, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         }
 
-        return TypeSymbol.Integer;
+        return TypeSymbol.Unknown;
     }
 
     private static bool TryGetAssignmentTargetType(
@@ -155,6 +155,7 @@ public static partial class SemanticFacts
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes,
         out TypeSymbol type)
     {
         switch (target)
@@ -163,23 +164,23 @@ public static partial class SemanticFacts
                 type = localType;
                 return true;
             case NameExpressionSyntax name:
-                type = ResolvePropertyReference(name.Name, localTypes, knownFields, knownConstants, knownProperties, currentMethod)?.Type
-                    ?? ResolveConstantReference(name.Name, localTypes, knownFields, knownConstants, knownProperties, currentMethod)?.Type
+                type = ResolvePropertyReference(name.Name, localTypes, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)?.Type
+                    ?? ResolveConstantReference(name.Name, localTypes, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)?.Type
                     ?? ResolveFieldReference(name.Name, knownFields, currentMethod)?.Type
-                    ?? TypeSymbol.Integer;
+                    ?? TypeSymbol.Unknown;
                 return true;
             case MemberAccessExpressionSyntax memberAccess:
-                type = ResolveMemberAccess(memberAccess, localTypes, [], knownFields, knownConstants, knownProperties, currentMethod).Type
-                    ?? TypeSymbol.Integer;
+                type = ResolveMemberAccess(memberAccess, localTypes, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Type
+                    ?? TypeSymbol.Unknown;
                 return true;
             case ElementAccessExpressionSyntax elementAccess:
-                type = GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, knownFields, knownConstants, knownProperties, currentMethod);
+                type = GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 return true;
             case PostfixElementAccessExpressionSyntax elementAccess:
-                type = GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, [], knownFields, knownConstants, knownProperties, currentMethod);
+                type = GetIndexedElementType(elementAccess.Target, elementAccess.IndexExpressions, localTypes, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 return true;
             default:
-                type = TypeSymbol.Integer;
+                type = TypeSymbol.Unknown;
                 return false;
         }
     }
@@ -199,7 +200,7 @@ public static partial class SemanticFacts
             : ResolvePropertyReference(target, localTypes, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)?.Type
                 ?? ResolveConstantReference(target, localTypes, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)?.Type
                 ?? ResolveFieldReference(target, knownFields, currentMethod)?.Type
-                ?? new TypeSymbol("Integer[]", true);
+                ?? TypeSymbol.Unknown;
 
         var indexer = ResolveIndexerReference(target, localTypes, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (indexer is not null)
@@ -219,7 +220,7 @@ public static partial class SemanticFacts
 
         if (!IsArrayType(arrayType))
         {
-            return TypeSymbol.Integer;
+            return TypeSymbol.Unknown;
         }
 
         var elementTypeName = GetArrayElementTypeName(arrayType.Name);
@@ -262,7 +263,7 @@ public static partial class SemanticFacts
 
         if (!IsArrayType(targetType))
         {
-            return TypeSymbol.Integer;
+            return TypeSymbol.Unknown;
         }
 
         var elementTypeName = GetArrayElementTypeName(targetType.Name);

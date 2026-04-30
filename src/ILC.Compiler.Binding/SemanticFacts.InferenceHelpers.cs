@@ -22,17 +22,18 @@ public static partial class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes)
     {
         if (setLiteral.Elements.Count == 0)
         {
             return new TypeSymbol("set", false);
         }
 
-        var elementType = InferExpressionType(setLiteral.Elements[0], localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var elementType = InferExpressionType(setLiteral.Elements[0], localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         return IsEnumType(elementType)
             ? CreateSetType(elementType)
-            : TypeSymbol.Integer;
+            : TypeSymbol.Unknown;
     }
 
     private static TypeSymbol InferBinaryExpressionType(
@@ -42,10 +43,11 @@ public static partial class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol>? knownTypes)
     {
-        var leftType = InferExpressionType(binary.Left, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-        var rightType = InferExpressionType(binary.Right, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        var leftType = InferExpressionType(binary.Left, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var rightType = InferExpressionType(binary.Right, localTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (binary.OperatorToken.Kind == SyntaxKind.PlusToken &&
             leftType == TypeSymbol.String &&
             rightType == TypeSymbol.String)
@@ -70,10 +72,20 @@ public static partial class SemanticFacts
 
         if (binary.OperatorToken.Kind is SyntaxKind.ShlKeyword or SyntaxKind.ShrKeyword)
         {
-            return IsBuiltInIntegerType(leftType) ? leftType : TypeSymbol.Integer;
+            return IsBuiltInIntegerType(leftType) ? leftType : TypeSymbol.Unknown;
         }
 
         if (IsSetType(leftType) && IsSetType(rightType))
+        {
+            return leftType;
+        }
+
+        if (leftType == TypeSymbol.Unknown)
+        {
+            return rightType == TypeSymbol.Unknown ? TypeSymbol.Unknown : rightType;
+        }
+
+        if (rightType == TypeSymbol.Unknown)
         {
             return leftType;
         }

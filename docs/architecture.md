@@ -134,6 +134,30 @@ Architecturally, this is the most important correctness layer in the compiler. N
 
 The binder already carries some forward-looking preparation for future numeric expansion, including centralized built-in type resolution and a built-in integer-family model that can later host wider integer types.
 
+`CompilationUnitSymbol` also owns cached aggregate symbol views for methods, fields, properties, and constants. These replace repeated re-materialization of the same flattened symbol lists and provide lookup indexes by common keys such as member name and declaring type. Later compiler stages and tooling should prefer these cached views over rebuilding equivalent LINQ queries locally.
+
+#### Unknown-Type Policy
+
+The binder uses `TypeSymbol.Unknown` when expression type inference cannot establish a reliable type. This is intentionally different from earlier integer-biased fallbacks.
+
+`TypeSymbol.Unknown` is used for unresolved or semantically incomplete expression paths such as:
+
+- unresolved names, members, calls, assignment targets, or index targets
+- invalid or incomplete query rewrites
+- empty or incomplete pattern/type inference paths
+- expressions where the compiler has already emitted or will emit a more precise primary diagnostic
+
+The validation layer treats `Unknown` as an error-containment type. It should not normally produce secondary type mismatch diagnostics such as "expected Integer, got `<unknown>`" when the original problem is an unresolved symbol or unsupported access. This keeps diagnostics focused and avoids cascading errors.
+
+The policy is:
+
+- infer `Unknown` instead of guessing a built-in type when no trustworthy type is available
+- suppress follow-up diagnostics whose only purpose would be to complain about `Unknown`
+- still report the primary semantic error at the original unresolved or invalid construct
+- always pass the available `knownTypes` context through inference and resolution paths before falling back to `Unknown`
+
+This policy is especially important for tooling. The language server can surface the primary diagnostic and keep hover/completion behavior stable without being flooded by secondary type errors.
+
 ### 3.4 `ILC.Compiler.Lowering`
 
 This project translates bound language constructs into a simpler intermediate representation.
@@ -150,6 +174,8 @@ Current responsibilities include:
 - preparing explicit call frames and argument packing
 
 ILC’s lowering stage is intentionally substantial. This keeps the bytecode emitter simpler and makes runtime semantics easier to reason about.
+
+The IR data model remains in `IntermediateRepresentation.cs`. The `Lowerer` implementation is split into partial files by lowering responsibility (`Core`, `Statements`, `StatementExpressions`, `TypeConstruction`, `Expressions`, `Resolution`, and `WithRewrite`) so performance work and semantic cleanup can target a focused area without editing a monolithic lowering file.
 
 ### 3.5 `ILC.Compiler.Bytecode`
 

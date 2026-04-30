@@ -2,6 +2,7 @@ namespace ILC.Compiler.Binding;
 
 using ILC.Compiler.Core;
 using ILC.Compiler.Syntax;
+using System;
 
 public static partial class SemanticFacts
 {
@@ -15,200 +16,176 @@ public static partial class SemanticFacts
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
         MethodSymbol? currentMethod,
-        bool ignoreAccess = false)
+        bool ignoreAccess = false,
+        Func<string, IDisposable>? profiler = null)
     {
-        QualifiedNameSyntax? receiverTypeName = memberAccess.Receiver switch
+        QualifiedNameSyntax? receiverTypeName;
+        using (profiler?.Invoke("ResolveReceiverTypeName"))
         {
-            NameExpressionSyntax receiverName => receiverName.Name,
-            MemberAccessExpressionSyntax nestedReceiver => TryFlattenQualifiedTarget(nestedReceiver),
-            _ => null
-        };
-
-        if (receiverTypeName is not null &&
-            ResolveTypeReference(receiverTypeName.ToDisplayString(), knownTypes) is { } targetType)
-        {
-            if (TryResolveTypeIntrinsic(targetType, memberAccess.MemberName.Text, argumentCount) is { } typeIntrinsic)
+            receiverTypeName = memberAccess.Receiver switch
             {
-                return new InvocationResolution(typeIntrinsic);
+                NameExpressionSyntax receiverName => receiverName.Name,
+                MemberAccessExpressionSyntax nestedReceiver => TryFlattenQualifiedTarget(nestedReceiver),
+                _ => null
+            };
+        }
+
+        TypeSymbol? targetType = null;
+        using (profiler?.Invoke("ResolveStaticReceiverType"))
+        {
+            if (receiverTypeName is not null &&
+                !IsLocalQualifiedReceiver(receiverTypeName, locals))
+            {
+                targetType = ResolveTypeReference(receiverTypeName.ToDisplayString(), knownTypes);
+            }
+        }
+
+        if (targetType is not null)
+        {
+            using (profiler?.Invoke("ResolveTypeIntrinsic"))
+            {
+                if (TryResolveTypeIntrinsic(targetType, memberAccess.MemberName.Text, argumentCount) is { } typeIntrinsic)
+                {
+                    return new InvocationResolution(typeIntrinsic);
+                }
             }
 
-            var staticMethod =
-                (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(candidate =>
-                    candidate.DeclaringTypeName == targetType.Name &&
-                    candidate.Name == memberAccess.MemberName.Text &&
-                    SupportsArgumentCount(candidate, argumentCount) &&
-                    candidate.IsStatic)
-                ?? knownMethods.FirstOrDefault(candidate =>
-                    candidate.DeclaringTypeName == targetType.Name &&
-                    candidate.Name == memberAccess.MemberName.Text &&
-                    SupportsArgumentCount(candidate, argumentCount) &&
-                    candidate.IsStatic);
-            if (staticMethod is not null)
+            using (profiler?.Invoke("ResolveStaticMethod"))
             {
-                return new InvocationResolution(staticMethod);
+                var staticMethod =
+                    (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(candidate =>
+                        candidate.DeclaringTypeName == targetType.Name &&
+                        candidate.Name == memberAccess.MemberName.Text &&
+                        SupportsArgumentCount(candidate, argumentCount) &&
+                        candidate.IsStatic)
+                    ?? FindMethodsByDeclaringType(knownMethods, targetType.Name)
+                        .FirstOrDefault(candidate =>
+                            candidate.Name == memberAccess.MemberName.Text &&
+                            SupportsArgumentCount(candidate, argumentCount) &&
+                            candidate.IsStatic);
+                if (staticMethod is not null)
+                {
+                    return new InvocationResolution(staticMethod);
+                }
             }
 
             return null;
         }
 
-        var receiverType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-        if (TryResolveIntrinsic(receiverType, memberAccess.MemberName.Text, argumentCount) is { } intrinsic)
+        TypeSymbol receiverType;
+        using (profiler?.Invoke("InferReceiverType"))
         {
-            return new InvocationResolution(intrinsic, receiverType, true);
+            receiverType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         }
 
-        var method = GetReceiverTypeHierarchy(receiverType, knownTypes)
-            .SelectMany(knownType => knownType.Methods
-                .Where(candidate =>
-                    candidate.Name == memberAccess.MemberName.Text &&
-                    SupportsArgumentCount(candidate, argumentCount) &&
-                    (!ignoreAccess || !candidate.IsStatic))
-                .Concat(knownMethods.Where(candidate =>
-                    candidate.DeclaringTypeName == knownType.Name &&
-                    candidate.Name == memberAccess.MemberName.Text &&
-                    SupportsArgumentCount(candidate, argumentCount) &&
-                    (!ignoreAccess || !candidate.IsStatic))))
-            .FirstOrDefault(candidate => !ignoreAccess ? !candidate.IsStatic : true);
+        using (profiler?.Invoke("ResolveInstanceIntrinsic"))
+        {
+            if (TryResolveIntrinsic(receiverType, memberAccess.MemberName.Text, argumentCount) is { } intrinsic)
+            {
+                return new InvocationResolution(intrinsic, receiverType, true);
+            }
+        }
+
+        MethodSymbol? method;
+        using (profiler?.Invoke("ResolveInstanceMethod"))
+        {
+            method = GetReceiverTypeHierarchy(receiverType, knownTypes)
+                .SelectMany(knownType => knownType.Methods
+                    .Where(candidate =>
+                        candidate.Name == memberAccess.MemberName.Text &&
+                        SupportsArgumentCount(candidate, argumentCount) &&
+                        (!ignoreAccess || !candidate.IsStatic))
+                    .Concat(FindMethodsByDeclaringType(knownMethods, knownType.Name)
+                        .Where(candidate =>
+                            candidate.Name == memberAccess.MemberName.Text &&
+                            SupportsArgumentCount(candidate, argumentCount) &&
+                            (!ignoreAccess || !candidate.IsStatic))))
+                .FirstOrDefault(candidate => !ignoreAccess ? !candidate.IsStatic : true);
+        }
+
         if (method is null)
         {
             return null;
         }
 
+        bool isVirtual;
+        using (profiler?.Invoke("ComputeDispatchKind"))
+        {
+            isVirtual = method.IsVirtual ||
+                method.IsOverride ||
+                ResolveTypeReference(receiverType.Name, knownTypes) is NamedTypeSymbol { IsInterface: true };
+        }
+
         return new InvocationResolution(
             method,
             receiverType,
-            method.IsVirtual ||
-            method.IsOverride ||
-            ResolveTypeReference(receiverType.Name, knownTypes) is NamedTypeSymbol { IsInterface: true });
+            isVirtual);
     }
 
-    private static MethodSymbol? TryResolveIntrinsic(TypeSymbol receiverType, string name, int argumentCount)
-    {
-        if (receiverType == TypeSymbol.String)
-        {
-            return TryResolveStringIntrinsic(name, argumentCount);
-        }
+    private sealed record IntrinsicMethodSignature(
+        TypeSymbol DeclaringType,
+        string Name,
+        TypeSymbol ReturnType,
+        bool IsStatic,
+        IReadOnlyList<ParameterSymbol> Parameters);
 
-        if (receiverType == TypeSymbol.Integer && argumentCount == 0 && name == "ToString")
-        {
-            return new MethodSymbol("ToString", TypeSymbol.String, [], TypeSymbol.Integer.Name, false, null, false, true);
-        }
+    private static readonly IReadOnlyList<IntrinsicMethodSignature> InstanceIntrinsicSignatures =
+    [
+        new(TypeSymbol.Integer, "ToString", TypeSymbol.String, false, []),
+        new(TypeSymbol.String, "ToUpper", TypeSymbol.String, false, []),
+        new(TypeSymbol.String, "ToLower", TypeSymbol.String, false, []),
+        new(TypeSymbol.String, "Trim", TypeSymbol.String, false, []),
+        new(TypeSymbol.String, "TrimStart", TypeSymbol.String, false, []),
+        new(TypeSymbol.String, "TrimEnd", TypeSymbol.String, false, []),
+        new(TypeSymbol.String, "Substring", TypeSymbol.String, false, [new ParameterSymbol("start", TypeSymbol.Integer), new ParameterSymbol("length", TypeSymbol.Integer)]),
+        new(TypeSymbol.String, "Replace", TypeSymbol.String, false, [new ParameterSymbol("oldValue", TypeSymbol.String), new ParameterSymbol("newValue", TypeSymbol.String)]),
+        new(TypeSymbol.String, "Insert", TypeSymbol.String, false, [new ParameterSymbol("index", TypeSymbol.Integer), new ParameterSymbol("value", TypeSymbol.String)]),
+        new(TypeSymbol.String, "Remove", TypeSymbol.String, false, [new ParameterSymbol("index", TypeSymbol.Integer), new ParameterSymbol("length", TypeSymbol.Integer)]),
+        new(TypeSymbol.String, "StartsWith", TypeSymbol.Boolean, false, [new ParameterSymbol("value", TypeSymbol.String)]),
+        new(TypeSymbol.String, "EndsWith", TypeSymbol.Boolean, false, [new ParameterSymbol("value", TypeSymbol.String)]),
+        new(TypeSymbol.String, "Contains", TypeSymbol.Boolean, false, [new ParameterSymbol("value", TypeSymbol.String)]),
+        new(TypeSymbol.String, "IndexOf", TypeSymbol.Integer, false, [new ParameterSymbol("value", TypeSymbol.String)]),
+        new(TypeSymbol.String, "LastIndexOf", TypeSymbol.Integer, false, [new ParameterSymbol("value", TypeSymbol.String)])
+    ];
 
-        return null;
-    }
+    private static readonly IReadOnlyList<IntrinsicMethodSignature> TypeIntrinsicSignatures =
+    [
+        new(TypeSymbol.Integer, "Parse", TypeSymbol.Integer, true, [new ParameterSymbol("value", TypeSymbol.String)]),
+        new(TypeSymbol.Integer, "TryParse", TypeSymbol.Boolean, true, [new ParameterSymbol("value", TypeSymbol.String), new ParameterSymbol("result", TypeSymbol.Integer, ParameterPassingKind.Out)])
+    ];
 
-    private static MethodSymbol? TryResolveTypeIntrinsic(TypeSymbol targetType, string name, int argumentCount)
-    {
-        if (targetType == TypeSymbol.Integer && name == "Parse" && argumentCount == 1)
-        {
-            return new MethodSymbol(
-                "Parse",
-                TypeSymbol.Integer,
-                [new ParameterSymbol("value", TypeSymbol.String)],
-                TypeSymbol.Integer.Name,
-                true,
-                null,
-                false,
-                true);
-        }
+    private static MethodSymbol? TryResolveIntrinsic(TypeSymbol receiverType, string name, int argumentCount) =>
+        InstanceIntrinsicSignatures
+            .Where(signature => IntrinsicSignatureMatches(signature, receiverType, name, argumentCount))
+            .Select(CreateIntrinsicMethod)
+            .FirstOrDefault();
 
-        if (targetType == TypeSymbol.Integer && name == "TryParse" && argumentCount == 2)
-        {
-            return new MethodSymbol(
-                "TryParse",
-                TypeSymbol.Boolean,
-                [new ParameterSymbol("value", TypeSymbol.String), new ParameterSymbol("result", TypeSymbol.Integer, ParameterPassingKind.Out)],
-                TypeSymbol.Integer.Name,
-                true,
-                null,
-                false,
-                true);
-        }
+    private static MethodSymbol? TryResolveTypeIntrinsic(TypeSymbol targetType, string name, int argumentCount) =>
+        TypeIntrinsicSignatures
+            .Where(signature => IntrinsicSignatureMatches(signature, targetType, name, argumentCount))
+            .Select(CreateIntrinsicMethod)
+            .FirstOrDefault();
 
-        return null;
-    }
+    private static bool IntrinsicSignatureMatches(IntrinsicMethodSignature signature, TypeSymbol declaringType, string name, int argumentCount) =>
+        signature.DeclaringType == declaringType &&
+        signature.Name == name &&
+        signature.Parameters.Count == argumentCount;
 
-    private static MethodSymbol? TryResolveStringIntrinsic(string name, int argumentCount)
-    {
-        if (argumentCount == 0)
-        {
-            return name switch
-            {
-                "ToUpper" => new MethodSymbol("ToUpper", TypeSymbol.String, [], TypeSymbol.String.Name, false, null, false, true),
-                "ToLower" => new MethodSymbol("ToLower", TypeSymbol.String, [], TypeSymbol.String.Name, false, null, false, true),
-                "Trim" => new MethodSymbol("Trim", TypeSymbol.String, [], TypeSymbol.String.Name, false, null, false, true),
-                "TrimStart" => new MethodSymbol("TrimStart", TypeSymbol.String, [], TypeSymbol.String.Name, false, null, false, true),
-                "TrimEnd" => new MethodSymbol("TrimEnd", TypeSymbol.String, [], TypeSymbol.String.Name, false, null, false, true),
-                _ => null
-            };
-        }
+    private static MethodSymbol CreateIntrinsicMethod(IntrinsicMethodSignature signature) =>
+        new(
+            signature.Name,
+            signature.ReturnType,
+            signature.Parameters,
+            signature.DeclaringType.Name,
+            signature.IsStatic,
+            null,
+            false,
+            true);
 
-        if (name == "Substring" && argumentCount == 2)
-        {
-            return new MethodSymbol(
-                "Substring",
-                TypeSymbol.String,
-                [new ParameterSymbol("start", TypeSymbol.Integer), new ParameterSymbol("length", TypeSymbol.Integer)],
-                TypeSymbol.String.Name,
-                false,
-                null,
-                false,
-                true);
-        }
-
-        if (name == "Replace" && argumentCount == 2)
-        {
-            return new MethodSymbol(
-                "Replace",
-                TypeSymbol.String,
-                [new ParameterSymbol("oldValue", TypeSymbol.String), new ParameterSymbol("newValue", TypeSymbol.String)],
-                TypeSymbol.String.Name,
-                false,
-                null,
-                false,
-                true);
-        }
-
-        if (name == "Insert" && argumentCount == 2)
-        {
-            return new MethodSymbol(
-                "Insert",
-                TypeSymbol.String,
-                [new ParameterSymbol("index", TypeSymbol.Integer), new ParameterSymbol("value", TypeSymbol.String)],
-                TypeSymbol.String.Name,
-                false,
-                null,
-                false,
-                true);
-        }
-
-        if (name == "Remove" && argumentCount == 2)
-        {
-            return new MethodSymbol(
-                "Remove",
-                TypeSymbol.String,
-                [new ParameterSymbol("index", TypeSymbol.Integer), new ParameterSymbol("length", TypeSymbol.Integer)],
-                TypeSymbol.String.Name,
-                false,
-                null,
-                false,
-                true);
-        }
-
-        if (argumentCount != 1)
-        {
-            return null;
-        }
-
-        return name switch
-        {
-            "StartsWith" => new MethodSymbol("StartsWith", TypeSymbol.Boolean, [new ParameterSymbol("value", TypeSymbol.String)], TypeSymbol.String.Name, false, null, false, true),
-            "EndsWith" => new MethodSymbol("EndsWith", TypeSymbol.Boolean, [new ParameterSymbol("value", TypeSymbol.String)], TypeSymbol.String.Name, false, null, false, true),
-            "Contains" => new MethodSymbol("Contains", TypeSymbol.Boolean, [new ParameterSymbol("value", TypeSymbol.String)], TypeSymbol.String.Name, false, null, false, true),
-            "IndexOf" => new MethodSymbol("IndexOf", TypeSymbol.Integer, [new ParameterSymbol("value", TypeSymbol.String)], TypeSymbol.String.Name, false, null, false, true),
-            "LastIndexOf" => new MethodSymbol("LastIndexOf", TypeSymbol.Integer, [new ParameterSymbol("value", TypeSymbol.String)], TypeSymbol.String.Name, false, null, false, true),
-            _ => null
-        };
-    }
+    private static bool IsLocalQualifiedReceiver(
+        QualifiedNameSyntax receiverTypeName,
+        IReadOnlyDictionary<string, TypeSymbol> locals) =>
+        receiverTypeName.Parts.Count > 0 &&
+        locals.ContainsKey(receiverTypeName.Parts[0].Text);
 
 }

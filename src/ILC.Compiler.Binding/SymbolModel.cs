@@ -5,8 +5,78 @@ using ILC.Compiler.Syntax;
 
 public abstract record Symbol(string Name);
 
+internal interface IIndexedSymbolList<TSymbol> : IReadOnlyList<TSymbol>
+    where TSymbol : Symbol
+{
+    IReadOnlyDictionary<string, IReadOnlyList<TSymbol>> ByName { get; }
+
+    IReadOnlyDictionary<string, IReadOnlyList<TSymbol>> ByDeclaringType { get; }
+}
+
+internal sealed class IndexedSymbolList<TSymbol>(
+    IReadOnlyList<TSymbol> symbols,
+    Func<TSymbol, string?> getDeclaringType) : IIndexedSymbolList<TSymbol>
+    where TSymbol : Symbol
+{
+    private IReadOnlyDictionary<string, IReadOnlyList<TSymbol>>? byName;
+    private IReadOnlyDictionary<string, IReadOnlyList<TSymbol>>? byDeclaringType;
+
+    public IReadOnlyDictionary<string, IReadOnlyList<TSymbol>> ByName =>
+        byName ??= BuildLookup(symbols, symbol => symbol.Name);
+
+    public IReadOnlyDictionary<string, IReadOnlyList<TSymbol>> ByDeclaringType =>
+        byDeclaringType ??= BuildLookup(symbols, getDeclaringType);
+
+    public int Count => symbols.Count;
+
+    public TSymbol this[int index] => symbols[index];
+
+    public IEnumerator<TSymbol> GetEnumerator() => symbols.GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<TSymbol>> BuildLookup(
+        IEnumerable<TSymbol> symbols,
+        Func<TSymbol, string?> getKey)
+    {
+        var lookup = new Dictionary<string, IReadOnlyList<TSymbol>>(StringComparer.Ordinal);
+        foreach (var group in symbols
+            .Select(symbol => (Symbol: symbol, Key: getKey(symbol)))
+            .Where(item => !string.IsNullOrEmpty(item.Key))
+            .GroupBy(item => item.Key!, item => item.Symbol, StringComparer.Ordinal))
+        {
+            lookup[group.Key] = group.ToArray();
+        }
+
+        return lookup;
+    }
+}
+
+public static class SymbolLists
+{
+    public static IReadOnlyList<TypeSymbol> CreateTypes(IEnumerable<TypeSymbol> symbols)
+    {
+        var indexedTypes = new IndexedSymbolList<TypeSymbol>(symbols as IReadOnlyList<TypeSymbol> ?? symbols.ToArray(), _ => null);
+        _ = indexedTypes.ByName;
+        return indexedTypes;
+    }
+
+    public static IReadOnlyList<MethodSymbol> CreateMethods(IEnumerable<MethodSymbol> symbols) =>
+        new IndexedSymbolList<MethodSymbol>(symbols as IReadOnlyList<MethodSymbol> ?? symbols.ToArray(), method => method.DeclaringTypeName);
+
+    public static IReadOnlyList<FieldSymbol> CreateFields(IEnumerable<FieldSymbol> symbols) =>
+        new IndexedSymbolList<FieldSymbol>(symbols as IReadOnlyList<FieldSymbol> ?? symbols.ToArray(), field => field.DeclaringTypeName);
+
+    public static IReadOnlyList<PropertySymbol> CreateProperties(IEnumerable<PropertySymbol> symbols) =>
+        new IndexedSymbolList<PropertySymbol>(symbols as IReadOnlyList<PropertySymbol> ?? symbols.ToArray(), property => property.DeclaringTypeName);
+
+    public static IReadOnlyList<ConstantSymbol> CreateConstants(IEnumerable<ConstantSymbol> symbols) =>
+        new IndexedSymbolList<ConstantSymbol>(symbols as IReadOnlyList<ConstantSymbol> ?? symbols.ToArray(), constant => constant.DeclaringTypeName);
+}
+
 public record TypeSymbol(string Name, bool IsReferenceType) : Symbol(Name)
 {
+    public static readonly TypeSymbol Unknown = new("<unknown>", false);
     public static readonly TypeSymbol Object = new("Object", true);
     public static readonly TypeSymbol Void = new("Void", false);
     public static readonly TypeSymbol Boolean = new("Boolean", false);
@@ -193,35 +263,82 @@ public sealed record CompilationUnitSymbol(
     IReadOnlyList<GlobalVariableSymbol> Globals,
     MethodSymbol? EntryPoint)
 {
+    private IReadOnlyList<MethodSymbol>? allMethods;
+    private IReadOnlyList<FieldSymbol>? allFields;
+    private IReadOnlyList<PropertySymbol>? allProperties;
+    private IReadOnlyList<ConstantSymbol>? allConstants;
+    private IReadOnlyDictionary<string, IReadOnlyList<MethodSymbol>>? methodsByName;
+    private IReadOnlyDictionary<string, IReadOnlyList<MethodSymbol>>? methodsByDeclaringType;
+    private IReadOnlyDictionary<string, IReadOnlyList<FieldSymbol>>? fieldsByDeclaringType;
+    private IReadOnlyDictionary<string, IReadOnlyList<PropertySymbol>>? propertiesByDeclaringType;
+    private IReadOnlyDictionary<string, IReadOnlyList<ConstantSymbol>>? constantsByDeclaringType;
+
     public IReadOnlyList<MethodSymbol> GetAllMethods() =>
-        [
+        allMethods ??= new IndexedSymbolList<MethodSymbol>([
             .. Methods,
-            .. Types.OfType<NamedTypeSymbol>()
-                .Where(type => !SemanticFacts.IsOpenGenericDefinition(type))
-                .SelectMany(type => type.Methods)
-        ];
+            .. GetConcreteNamedTypes().SelectMany(type => type.Methods)
+        ], method => method.DeclaringTypeName);
 
     public IReadOnlyList<FieldSymbol> GetAllFields() =>
-        [
-            .. Types.OfType<NamedTypeSymbol>()
-                .Where(type => !SemanticFacts.IsOpenGenericDefinition(type))
-                .SelectMany(type => type.Fields)
-        ];
+        allFields ??= new IndexedSymbolList<FieldSymbol>([
+            .. GetConcreteNamedTypes().SelectMany(type => type.Fields)
+        ], field => field.DeclaringTypeName);
 
     public IReadOnlyList<PropertySymbol> GetAllProperties() =>
-        [
-            .. Types.OfType<NamedTypeSymbol>()
-                .Where(type => !SemanticFacts.IsOpenGenericDefinition(type))
-                .SelectMany(type => type.Properties)
-        ];
+        allProperties ??= new IndexedSymbolList<PropertySymbol>([
+            .. GetConcreteNamedTypes().SelectMany(type => type.Properties)
+        ], property => property.DeclaringTypeName);
 
     public IReadOnlyList<ConstantSymbol> GetAllConstants() =>
-        [
+        allConstants ??= new IndexedSymbolList<ConstantSymbol>([
             .. Constants,
-            .. Types.OfType<NamedTypeSymbol>()
-                .Where(type => !SemanticFacts.IsOpenGenericDefinition(type))
-                .SelectMany(type => type.Constants)
-        ];
+            .. GetConcreteNamedTypes().SelectMany(type => type.Constants)
+        ], constant => constant.DeclaringTypeName);
+
+    public IReadOnlyDictionary<string, IReadOnlyList<MethodSymbol>> GetMethodsByName() =>
+        methodsByName ??= GetAllMethods() is IIndexedSymbolList<MethodSymbol> indexedMethods
+            ? indexedMethods.ByName
+            : BuildLookup(GetAllMethods(), method => method.Name);
+
+    public IReadOnlyDictionary<string, IReadOnlyList<MethodSymbol>> GetMethodsByDeclaringType() =>
+        methodsByDeclaringType ??= GetAllMethods() is IIndexedSymbolList<MethodSymbol> indexedMethods
+            ? indexedMethods.ByDeclaringType
+            : BuildLookup(GetAllMethods(), method => method.DeclaringTypeName);
+
+    public IReadOnlyDictionary<string, IReadOnlyList<FieldSymbol>> GetFieldsByDeclaringType() =>
+        fieldsByDeclaringType ??= GetAllFields() is IIndexedSymbolList<FieldSymbol> indexedFields
+            ? indexedFields.ByDeclaringType
+            : BuildLookup(GetAllFields(), field => field.DeclaringTypeName);
+
+    public IReadOnlyDictionary<string, IReadOnlyList<PropertySymbol>> GetPropertiesByDeclaringType() =>
+        propertiesByDeclaringType ??= GetAllProperties() is IIndexedSymbolList<PropertySymbol> indexedProperties
+            ? indexedProperties.ByDeclaringType
+            : BuildLookup(GetAllProperties(), property => property.DeclaringTypeName);
+
+    public IReadOnlyDictionary<string, IReadOnlyList<ConstantSymbol>> GetConstantsByDeclaringType() =>
+        constantsByDeclaringType ??= GetAllConstants() is IIndexedSymbolList<ConstantSymbol> indexedConstants
+            ? indexedConstants.ByDeclaringType
+            : BuildLookup(GetAllConstants(), constant => constant.DeclaringTypeName);
+
+    private IEnumerable<NamedTypeSymbol> GetConcreteNamedTypes() =>
+        Types.OfType<NamedTypeSymbol>()
+            .Where(type => !SemanticFacts.IsOpenGenericDefinition(type));
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<TSymbol>> BuildLookup<TSymbol>(
+        IEnumerable<TSymbol> symbols,
+        Func<TSymbol, string?> getKey)
+    {
+        var lookup = new Dictionary<string, IReadOnlyList<TSymbol>>(StringComparer.Ordinal);
+        foreach (var group in symbols
+            .Select(symbol => (Symbol: symbol, Key: getKey(symbol)))
+            .Where(item => !string.IsNullOrEmpty(item.Key))
+            .GroupBy(item => item.Key!, item => item.Symbol, StringComparer.Ordinal))
+        {
+            lookup[group.Key] = group.ToArray();
+        }
+
+        return lookup;
+    }
 }
 
 public sealed record GlobalVariableSymbol(

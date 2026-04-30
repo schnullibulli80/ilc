@@ -5,6 +5,9 @@ using ILC.Compiler.Syntax;
 
 public static partial class SemanticFacts
 {
+    public static bool IsUnknownType(TypeSymbol type) =>
+        type == TypeSymbol.Unknown;
+
     public static bool IsArrayType(TypeSymbol type)
     {
         var openBracketIndex = type.Name.LastIndexOf('[');

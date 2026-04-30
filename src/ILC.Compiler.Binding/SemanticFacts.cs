@@ -20,7 +20,7 @@ public static partial class SemanticFacts
     }
 
     private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
-        knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name) ??
+        FindTypesByName(knownTypes, type.Name).OfType<NamedTypeSymbol>().FirstOrDefault() ??
         (ResolveTypeReference(type.Name, knownTypes) as NamedTypeSymbol) ??
         (type as NamedTypeSymbol);
 

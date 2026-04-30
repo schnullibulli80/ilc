@@ -130,13 +130,11 @@ public sealed partial class Binder
             propertyDeclaration.SetterBody?.SemicolonToken ?? propertyDeclaration.SemicolonToken);
     }
 
-    private static FieldSymbol BindPropertyFieldReference(QualifiedNameSyntax target, string declaringTypeName, IReadOnlyList<FieldSymbol> fields)
+    private static FieldSymbol? BindPropertyFieldReference(QualifiedNameSyntax target, string declaringTypeName, IReadOnlyList<FieldSymbol> fields)
     {
         var fieldName = target.Parts[^1].Text;
-        var resolvedField = fields.FirstOrDefault(field =>
+        return fields.FirstOrDefault(field =>
             field.DeclaringTypeName == declaringTypeName &&
             field.Name == fieldName);
-
-        return resolvedField ?? new FieldSymbol(fieldName, TypeSymbol.Integer, declaringTypeName, false, null);
     }
 }

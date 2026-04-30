@@ -13,6 +13,11 @@ public static partial class SemanticFacts
             return elementType is not null ? CreateSetType(elementType) : null;
         }
 
+        if (TryResolveExactTypeReference(displayName, knownTypes) is { } exactType)
+        {
+            return exactType;
+        }
+
         if (TryParseConstructedTypeReference(displayName, out var genericTypeName, out var genericArgumentNames))
         {
             var resolvedArguments = genericArgumentNames
@@ -26,7 +31,7 @@ public static partial class SemanticFacts
             var simpleTypeName = genericTypeName.Contains('.')
                 ? genericTypeName[(genericTypeName.LastIndexOf('.') + 1)..]
                 : genericTypeName;
-            var definition = knownTypes
+            var definition = FindTypesByName(knownTypes, simpleTypeName)
                 .OfType<NamedTypeSymbol>()
                 .Where(type => type.Name == simpleTypeName && type.GenericArity == resolvedArguments.Length)
                 .OrderByDescending(GetGenericDefinitionRichness)
@@ -44,7 +49,7 @@ public static partial class SemanticFacts
             : displayName;
 
         return TryResolveBuiltInType(typeName)
-            ?? knownTypes.FirstOrDefault(type => type.Name == typeName);
+            ?? FindTypesByName(knownTypes, typeName).FirstOrDefault();
     }
 
     public static TypeSymbol? ResolveTypeReferenceInGenericContext(
@@ -196,7 +201,7 @@ public static partial class SemanticFacts
             var simpleTypeName = genericTypeName.Contains('.')
                 ? genericTypeName[(genericTypeName.LastIndexOf('.') + 1)..]
                 : genericTypeName;
-            var definition = knownTypes
+            var definition = FindTypesByName(knownTypes, simpleTypeName)
                 .OfType<NamedTypeSymbol>()
                 .FirstOrDefault(type => type.Name == simpleTypeName && type.GenericArity == resolvedArguments.Length);
             if (definition is null)
@@ -208,6 +213,39 @@ public static partial class SemanticFacts
         }
 
         return ResolveTypeReference(displayName, knownTypes);
+    }
+
+    private static IEnumerable<TypeSymbol> FindTypesByName(
+        IEnumerable<TypeSymbol> knownTypes,
+        string typeName) =>
+        knownTypes is IIndexedSymbolList<TypeSymbol> indexedTypes &&
+        indexedTypes.ByName.TryGetValue(typeName, out var types)
+            ? types
+            : knownTypes.Where(type => type.Name == typeName);
+
+    private static TypeSymbol? TryResolveExactTypeReference(
+        string displayName,
+        IEnumerable<TypeSymbol> knownTypes)
+    {
+        var lookupName = GetTypeLookupName(displayName);
+        return string.IsNullOrWhiteSpace(lookupName)
+            ? null
+            : FindTypesByName(knownTypes, lookupName).FirstOrDefault();
+    }
+
+    private static string GetTypeLookupName(string displayName)
+    {
+        if (TryParseConstructedTypeReference(displayName, out var genericTypeName, out var genericArgumentNames))
+        {
+            var simpleGenericTypeName = genericTypeName.Contains('.')
+                ? genericTypeName[(genericTypeName.LastIndexOf('.') + 1)..]
+                : genericTypeName;
+            return $"{simpleGenericTypeName}<{string.Join(", ", genericArgumentNames)}>";
+        }
+
+        return displayName.Contains('.')
+            ? displayName[(displayName.LastIndexOf('.') + 1)..]
+            : displayName;
     }
 
     private static IReadOnlyList<string> SplitGenericArgumentNames(string value)

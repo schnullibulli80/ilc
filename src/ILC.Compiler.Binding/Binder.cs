@@ -274,7 +274,7 @@ public sealed partial class Binder
 
         var symbol = new CompilationUnitSymbol(
             syntaxTree.Root.Namespace?.Name.ToDisplayString(),
-            [.. TypeSymbol.BuiltInScalarTypes, .. declaredTypes],
+            SymbolLists.CreateTypes([.. TypeSymbol.BuiltInScalarTypes, .. declaredTypes]),
             methods,
             topLevelConstants,
             globals,

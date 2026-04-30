@@ -3,14 +3,23 @@ using ILC.Compiler.Bytecode;
 using ILC.Compiler.Core;
 using ILC.Compiler.Lowering;
 using ILC.Compiler.Syntax;
+using System.Diagnostics;
 using System.Text;
 
 var debugEnabled = args.Contains("--debug", StringComparer.Ordinal);
-var positionalArgs = args.Where(argument => !string.Equals(argument, "--debug", StringComparison.Ordinal)).ToArray();
+var timingsEnabled = args.Contains("--timings", StringComparer.Ordinal);
+var loweringProfileEnabled = args.Contains("--profile-lowering", StringComparer.Ordinal);
+var positionalArgs = args
+    .Where(argument =>
+        !string.Equals(argument, "--debug", StringComparison.Ordinal) &&
+        !string.Equals(argument, "--timings", StringComparison.Ordinal) &&
+        !string.Equals(argument, "--profile-lowering", StringComparison.Ordinal))
+    .ToArray();
+var timing = new CompilationTiming();
 
 if (positionalArgs.Length == 0)
 {
-    Console.Error.WriteLine("usage: ilc [--debug] <main-source-file> [additional-source-files...]");
+    Console.Error.WriteLine("usage: ilc [--debug] [--timings] [--profile-lowering] <main-source-file> [additional-source-files...]");
     return 1;
 }
 
@@ -21,8 +30,8 @@ if (!File.Exists(sourcePath))
     return 2;
 }
 
-var sourceText = await File.ReadAllTextAsync(sourcePath);
-var syntaxTree = SyntaxTree.Parse(sourceText);
+var sourceText = await timing.MeasureAsync("read source", () => File.ReadAllTextAsync(sourcePath));
+var syntaxTree = timing.Measure("parse source", () => SyntaxTree.Parse(sourceText));
 var sourceInputs = new List<(string Path, string Text, SyntaxTree Tree)>
 {
     (sourcePath, sourceText, syntaxTree)
@@ -42,8 +51,8 @@ if (positionalArgs.Length > 1)
             return 2;
         }
 
-        var importedText = await File.ReadAllTextAsync(importedPath);
-        var importedTree = SyntaxTree.Parse(importedText);
+        var importedText = await timing.MeasureAsync("read imports", () => File.ReadAllTextAsync(importedPath));
+        var importedTree = timing.Measure("parse imports", () => SyntaxTree.Parse(importedText));
         sourceInputs.Add((importedPath, importedText, importedTree));
         var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
         if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
@@ -53,8 +62,9 @@ if (positionalArgs.Length > 1)
     }
 }
 
-var mergedSyntaxTree = SyntaxTree.Merge(syntaxTree, importedSyntaxTrees);
-var bindingResult = new Binder().Bind(mergedSyntaxTree);
+var mergedSyntaxTree = timing.Measure("merge syntax trees", () => SyntaxTree.Merge(syntaxTree, importedSyntaxTrees));
+var bindingResult = timing.Measure("bind symbols", () => new Binder().Bind(mergedSyntaxTree));
+var timingDetailsEnabled = debugEnabled || timingsEnabled || loweringProfileEnabled;
 var syntaxDumpPath = Path.ChangeExtension(sourcePath, ".syntax.txt");
 var bindingDumpPath = Path.ChangeExtension(sourcePath, ".binding.txt");
 var symbolsDumpPath = Path.ChangeExtension(sourcePath, ".symbols.txt");
@@ -65,152 +75,175 @@ var listingPath = Path.ChangeExtension(sourcePath, ".listing.txt");
 
 if (debugEnabled)
 {
-    await File.WriteAllTextAsync(
-        syntaxDumpPath,
-        BuildSyntaxDump(
-            sourcePath,
-            syntaxTree,
-            importedSyntaxTrees,
-            mergedSyntaxTree));
-
-    await File.WriteAllTextAsync(
-        bindingDumpPath,
-        BuildBindingDump(
-            sourcePath,
-            bindingResult));
-
-    await File.WriteAllTextAsync(
-        symbolsDumpPath,
-        BuildSymbolDump(
-            sourcePath,
-            bindingResult));
-}
-
-if (bindingResult.Diagnostics.Count > 0)
-{
-    foreach (var diagnostic in bindingResult.Diagnostics)
+    await timing.MeasureAsync("write syntax/binding/symbol dumps", async () =>
     {
-        WriteDiagnostic(sourcePath, sourceText, diagnostic);
-    }
+        await File.WriteAllTextAsync(
+            syntaxDumpPath,
+            BuildSyntaxDump(
+                sourcePath,
+                syntaxTree,
+                importedSyntaxTrees,
+                mergedSyntaxTree));
+
+        await File.WriteAllTextAsync(
+            bindingDumpPath,
+            BuildBindingDump(
+                sourcePath,
+                bindingResult));
+
+        await File.WriteAllTextAsync(
+            symbolsDumpPath,
+            BuildSymbolDump(
+                sourcePath,
+                bindingResult));
+    });
 }
 
-var declaredMethods = bindingResult.Compilation.Types
-    .OfType<NamedTypeSymbol>()
-    .Where(type => !SemanticFacts.IsOpenGenericDefinition(type))
-    .SelectMany(type => type.Methods)
-    .ToArray();
-var declaredFields = bindingResult.Compilation.GetAllFields();
-var declaredProperties = bindingResult.Compilation.GetAllProperties();
+timing.Measure("report diagnostics", () =>
+{
+    if (bindingResult.Diagnostics.Count > 0)
+    {
+        foreach (var diagnostic in bindingResult.Diagnostics)
+        {
+            WriteDiagnostic(sourcePath, sourceText, diagnostic);
+        }
+    }
+});
 
-var moduleMethods = bindingResult.Compilation.Methods.Concat(declaredMethods).ToArray();
+var (declaredMethods, declaredFields, declaredProperties, declaredConstants) = timing.Measure("collect symbols", () => (
+    bindingResult.Compilation.GetAllMethods(),
+    bindingResult.Compilation.GetAllFields(),
+    bindingResult.Compilation.GetAllProperties(),
+    bindingResult.Compilation.GetAllConstants()));
+
+var moduleMethods = declaredMethods;
 if (bindingResult.HasErrors)
 {
+    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)} in {timing.FormatTotal()}");
     if (debugEnabled)
     {
-        Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
         Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
         Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
         Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
         Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
-        Console.WriteLine($"declared methods: {declaredMethods.Length}");
+        Console.WriteLine($"declared methods: {declaredMethods.Count}");
         Console.WriteLine($"declared fields: {declaredFields.Count}");
         Console.WriteLine("module functions: 0");
         Console.WriteLine("entry point: <none>");
+        timing.WriteTimings(Console.Out);
+    }
+    else if (timingDetailsEnabled)
+    {
+        timing.WriteTimings(Console.Out);
     }
 
     return 1;
 }
 
-if (moduleMethods.Length > 0)
+if (moduleMethods.Count > 0)
 {
-    var reachableClosure = ReachableCompilationBuilder.Build(
+    var loweringProfiler = loweringProfileEnabled ? new LoweringProfiler() : null;
+    var reachableClosure = timing.Measure("reachability", () => ReachableCompilationBuilder.Build(
         bindingResult.Compilation.EntryPoint is null ? moduleMethods : [bindingResult.Compilation.EntryPoint],
         moduleMethods,
         declaredFields,
         bindingResult.Compilation.Types,
         declaredProperties,
-        bindingResult.Compilation.GetAllConstants());
+        declaredConstants,
+        loweringProfiler));
     var closure = reachableClosure!;
-    var knownFields = declaredFields
-        .Concat(closure.Fields)
-        .GroupBy(field => $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}", StringComparer.Ordinal)
-        .Select(group => group.First())
-        .ToArray();
-    var knownTypes = bindingResult.Compilation.Types
-        .Concat(closure.Types)
-        .GroupBy(
-            type => type is NamedTypeSymbol namedType
-                ? $"{namedType.Name}`{namedType.GenericArity}:{type.Name}"
-                : type.Name,
-            StringComparer.Ordinal)
-        .Select(group => group
-            .OrderByDescending(type => type is NamedTypeSymbol namedType
-                ? (namedType.Methods?.Count ?? 0) +
-                  (namedType.Fields?.Count ?? 0) +
-                  (namedType.Properties?.Count ?? 0) +
-                  (namedType.InterfaceTypes?.Count ?? 0) +
-                  (namedType.TypeArguments?.Count ?? 0)
-                : 0)
-            .First())
-        .ToArray();
-    var knownProperties = declaredProperties
-        .Concat(closure.Properties)
-        .GroupBy(property => $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}", StringComparer.Ordinal)
-        .Select(group => group.First())
-        .ToArray();
-    var lowerer = new Lowerer(
+    var (knownFields, knownTypes, knownProperties) = timing.Measure("prepare closure symbols", () =>
+    {
+        var closureFields = SymbolLists.CreateFields(
+            declaredFields
+                .Concat(closure.Fields)
+                .GroupBy(field => $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}", StringComparer.Ordinal)
+                .Select(group => group.First()));
+        var closureTypes = SymbolLists.CreateTypes(
+            bindingResult.Compilation.Types
+                .Concat(closure.Types)
+                .GroupBy(
+                    type => type is NamedTypeSymbol namedType
+                        ? $"{namedType.Name}`{namedType.GenericArity}:{type.Name}"
+                        : type.Name,
+                    StringComparer.Ordinal)
+                .Select(group => group
+                    .OrderByDescending(type => type is NamedTypeSymbol namedType
+                        ? (namedType.Methods?.Count ?? 0) +
+                          (namedType.Fields?.Count ?? 0) +
+                          (namedType.Properties?.Count ?? 0) +
+                          (namedType.InterfaceTypes?.Count ?? 0) +
+                          (namedType.TypeArguments?.Count ?? 0)
+                        : 0)
+                    .First()));
+        var closureProperties = SymbolLists.CreateProperties(
+            declaredProperties
+                .Concat(closure.Properties)
+                .GroupBy(property => $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}", StringComparer.Ordinal)
+                .Select(group => group.First()));
+
+        return (closureFields, closureTypes, closureProperties);
+    });
+    var lowerer = timing.Measure("create lowerer", () => new Lowerer(
         moduleMethods,
         knownFields,
         knownTypes,
         knownProperties,
-        bindingResult.Compilation.GetAllConstants());
+        declaredConstants));
     if (debugEnabled)
     {
-        await File.WriteAllTextAsync(
+        await timing.MeasureAsync("write ir dump", () => File.WriteAllTextAsync(
             irDumpPath,
             BuildIrDump(
                 sourcePath,
                 closure.Methods,
-                lowerer));
+                lowerer)));
     }
 
-    var module = new BytecodeEmitter().EmitModule(closure.Methods, closure.Fields, closure.Types, lowerer);
-    var ilbImage = new IlbSerializer().Serialize(module, closure.Methods, closure.Fields, closure.Types, bindingResult.Compilation.EntryPoint);
-    var functionCodeOffsets = BuildFunctionCodeOffsets(module.Functions);
-    await File.WriteAllBytesAsync(ilbPath, ilbImage.Bytes);
+    var module = timing.Measure("lower and emit bytecode", () => new BytecodeEmitter().EmitModule(closure.Methods, closure.Fields, closure.Types, lowerer));
+    var ilbImage = timing.Measure("serialize ilb", () => new IlbSerializer().Serialize(module, closure.Methods, closure.Fields, closure.Types, bindingResult.Compilation.EntryPoint));
+    var functionCodeOffsets = timing.Measure("build code offsets", () => BuildFunctionCodeOffsets(module.Functions));
+    await timing.MeasureAsync("write ilb", () => File.WriteAllBytesAsync(ilbPath, ilbImage.Bytes));
     var entryPoint = bindingResult.Compilation.EntryPoint;
-    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
+
+    if (debugEnabled)
+    {
+        await timing.MeasureAsync("write listing/debug symbols", async () =>
+        {
+            await File.WriteAllTextAsync(
+                listingPath,
+                BuildListing(
+                    sourcePath,
+                    mergedSyntaxTree,
+                    bindingResult,
+                    closure.Methods,
+                    closure.Fields,
+                    module,
+                    functionCodeOffsets,
+                    ilbImage,
+                    entryPoint));
+
+            await File.WriteAllTextAsync(
+                ildbgPath,
+                BuildDebugSymbols(
+                    sourcePath,
+                    closure.Methods,
+                    module,
+                    lowerer,
+                    sourceInputs));
+        });
+    }
+
+    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)} in {timing.FormatTotal()}");
     Console.WriteLine($"ilb file: {Path.GetFileName(ilbPath)}");
 
     if (debugEnabled)
     {
-        await File.WriteAllTextAsync(
-            listingPath,
-            BuildListing(
-                sourcePath,
-                mergedSyntaxTree,
-                bindingResult,
-                closure.Methods,
-                closure.Fields,
-                module,
-                functionCodeOffsets,
-                ilbImage,
-                entryPoint));
-
-        await File.WriteAllTextAsync(
-            ildbgPath,
-            BuildDebugSymbols(
-                sourcePath,
-                closure.Methods,
-                module,
-                lowerer,
-                sourceInputs));
-
         Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
         Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
         Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
         Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
-        Console.WriteLine($"declared methods: {declaredMethods.Length}");
+        Console.WriteLine($"declared methods: {declaredMethods.Count}");
         Console.WriteLine($"declared fields: {declaredFields.Count}");
         Console.WriteLine($"module functions: {module.Functions.Count}");
         Console.WriteLine($"module array-shapes: {module.ArrayShapes.Count}");
@@ -222,6 +255,8 @@ if (moduleMethods.Length > 0)
         Console.WriteLine($"ir dump: {Path.GetFileName(irDumpPath)}");
         Console.WriteLine($"debug symbols: {Path.GetFileName(ildbgPath)}");
         Console.WriteLine($"entry point: {FormatMethod(entryPoint)}");
+        WriteReachabilityStats(Console.Out, closure.Stats);
+        timing.WriteTimings(Console.Out);
 
         foreach (var shape in module.ArrayShapes)
         {
@@ -247,20 +282,30 @@ if (moduleMethods.Length > 0)
             }
         }
     }
+    else if (timingDetailsEnabled)
+    {
+        WriteReachabilityStats(Console.Out, closure.Stats);
+        timing.WriteTimings(Console.Out);
+    }
 }
 else
 {
-    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)}");
+    Console.WriteLine($"compiled {Path.GetFileName(sourcePath)} in {timing.FormatTotal()}");
     if (debugEnabled)
     {
         Console.WriteLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
         Console.WriteLine($"members: {mergedSyntaxTree.Root.Members.Count}");
         Console.WriteLine($"globals: {bindingResult.Compilation.Globals.Count}");
         Console.WriteLine($"declared types: {bindingResult.Compilation.Types.OfType<NamedTypeSymbol>().Count()}");
-        Console.WriteLine($"declared methods: {declaredMethods.Length}");
+        Console.WriteLine($"declared methods: {declaredMethods.Count}");
         Console.WriteLine($"declared fields: {declaredFields.Count}");
         Console.WriteLine("module functions: 0");
         Console.WriteLine("entry point: <none>");
+        timing.WriteTimings(Console.Out);
+    }
+    else if (timingDetailsEnabled)
+    {
+        timing.WriteTimings(Console.Out);
     }
 }
 
@@ -272,6 +317,143 @@ static string FormatMethod(MethodSymbol? method) =>
         : method.DeclaringTypeName is null
             ? method.Name
             : $"{method.DeclaringTypeName}.{method.Name}";
+
+static void WriteReachabilityStats(TextWriter writer, ReachabilityStats stats)
+{
+    writer.WriteLine(
+        "reachability: roots={0} declaredMethods={1} declaredFields={2} declaredProperties={3} declaredTypes={4}",
+        stats.RootMethods,
+        stats.DeclaredMethods,
+        stats.DeclaredFields,
+        stats.DeclaredProperties,
+        stats.DeclaredTypes);
+    writer.WriteLine(
+        "reachability: methods enqueued={0} processed={1} lowered={2} cacheHits={3} replacements={4}",
+        stats.MethodsEnqueued,
+        stats.MethodsProcessed,
+        stats.MethodsLowered,
+        stats.MethodCacheHits,
+        stats.MethodReplacements);
+    writer.WriteLine(
+        "reachability: methodsByReason root={0} directCall={1} methodConstant={2} propertyAccessor={3} nativeCallback={4} declaringType={5} typeMember={6} interfaceDispatch={7}",
+        stats.RootMethodsEnqueued,
+        stats.DirectCallMethodsEnqueued,
+        stats.MethodConstantMethodsEnqueued,
+        stats.PropertyAccessorMethodsEnqueued,
+        stats.NativeCallbackMethodsEnqueued,
+        stats.DeclaringTypeMethodsEnqueued,
+        stats.TypeMemberMethodsEnqueued,
+        stats.InterfaceDispatchMethodsEnqueued);
+    writer.WriteLine(
+        "reachability: dependencies instructions={0} typeReferenceCacheHits={1} typeReferenceCacheMisses={2} fieldsAdded={3} propertiesAdded={4} fieldsPreseeded={5} propertiesPreseeded={6} typesAddedOrReplaced={7} typesPreseededOrReplaced={8}",
+        stats.InstructionDependenciesVisited,
+        stats.TypeReferenceCacheHits,
+        stats.TypeReferenceCacheMisses,
+        stats.FieldsAdded,
+        stats.PropertiesAdded,
+        stats.FieldsPreseeded,
+        stats.PropertiesPreseeded,
+        stats.TypesAddedOrReplaced,
+        stats.TypesPreseededOrReplaced);
+    writer.WriteLine(
+        "reachability: expansions declaringTypes={0} typeMembers={1} interfaceDispatch={2}",
+        stats.DeclaringTypeExpansions,
+        stats.TypeMemberExpansions,
+        stats.InterfaceDispatchExpansions);
+    writer.WriteLine(
+        "reachability: lowerer rebuilds={0} cacheInvalidationRequests={1} cacheInvalidations={2}",
+        stats.LowererRebuilds,
+        stats.LowererCacheInvalidationRequests,
+        stats.LowererCacheInvalidations);
+    writer.WriteLine(
+        "reachability: lowerer invalidationRequestsByReason field={0} property={1} type={2}",
+        stats.LowererFieldInvalidationRequests,
+        stats.LowererPropertyInvalidationRequests,
+        stats.LowererTypeInvalidationRequests);
+    writer.WriteLine(
+        "reachability: lowerer invalidationsByReason field={0} property={1} type={2}",
+        stats.LowererFieldInvalidations,
+        stats.LowererPropertyInvalidations,
+        stats.LowererTypeInvalidations);
+    writer.WriteLine(
+        "reachability: lowerer closedGenericTypeInvalidationsSuppressed={0}",
+        stats.LowererClosedGenericTypeInvalidationsSuppressed);
+    writer.WriteLine(
+        "reachability: timings seedDeclaredTypes={0} preseedTypeSurfaces={1} seedGlobalFields={2} seedGlobalProperties={3} seedRootMethods={4} lowererBuild={5} methodLowering={6} dependencyScan={7} handlerScan={8}",
+        FormatReachabilityDuration(stats.SeedDeclaredTypesTime),
+        FormatReachabilityDuration(stats.PreseedTypeSurfacesTime),
+        FormatReachabilityDuration(stats.SeedGlobalFieldsTime),
+        FormatReachabilityDuration(stats.SeedGlobalPropertiesTime),
+        FormatReachabilityDuration(stats.SeedRootMethodsTime),
+        FormatReachabilityDuration(stats.LowererBuildTime),
+        FormatReachabilityDuration(stats.MethodLoweringTime),
+        FormatReachabilityDuration(stats.DependencyScanTime),
+        FormatReachabilityDuration(stats.HandlerScanTime));
+    WriteReachabilityCounterLine(writer, "fieldInvalidationNames", stats.LowererFieldInvalidationNames);
+    WriteReachabilityCounterLine(writer, "propertyInvalidationNames", stats.LowererPropertyInvalidationNames);
+    WriteReachabilityCounterLine(writer, "typeInvalidationNames", stats.LowererTypeInvalidationNames);
+    WriteReachabilityDurationCounterLine(writer, "methodLoweringDurations", stats.MethodLoweringDurations);
+    WriteReachabilityDurationCounterLine(writer, "dependencyScanDurations", stats.DependencyScanDurations);
+    WriteLoweringProfile(writer, stats.LoweringProfile);
+}
+
+static string FormatReachabilityDuration(TimeSpan elapsed) =>
+    elapsed.TotalSeconds >= 1
+        ? $"{elapsed.TotalSeconds:F3}s"
+        : $"{elapsed.TotalMilliseconds:F1}ms";
+
+static void WriteReachabilityCounterLine(TextWriter writer, string name, IReadOnlyList<ReachabilityCounter> counters)
+{
+    if (counters.Count == 0)
+    {
+        return;
+    }
+
+    writer.WriteLine(
+        "reachability: lowerer {0} {1}",
+        name,
+        string.Join(
+            " ",
+            counters
+                .Take(16)
+                .Select(counter => $"{counter.Name}={counter.Count}")));
+}
+
+static void WriteReachabilityDurationCounterLine(TextWriter writer, string name, IReadOnlyList<ReachabilityDurationCounter> counters)
+{
+    if (counters.Count == 0)
+    {
+        return;
+    }
+
+    writer.WriteLine(
+        "reachability: lowerer {0} {1}",
+        name,
+        string.Join(
+            " | ",
+            counters
+                .Take(16)
+                .Select(counter => $"{counter.Name}={FormatReachabilityDuration(counter.Elapsed)}#{counter.Count}")));
+}
+
+static void WriteLoweringProfile(TextWriter writer, IReadOnlyList<LoweringProfileEntry> entries)
+{
+    if (entries.Count == 0)
+    {
+        return;
+    }
+
+    writer.WriteLine("lowering-profile: top hierarchical scopes");
+    foreach (var entry in entries.Take(32))
+    {
+        writer.WriteLine(
+            "lowering-profile: {0} total={1} max={2} count={3}",
+            entry.Path,
+            FormatReachabilityDuration(entry.Elapsed),
+            FormatReachabilityDuration(entry.MaxElapsed),
+            entry.Count);
+    }
+}
 
 static string BuildListing(
     string sourcePath,
@@ -517,16 +699,20 @@ static string BuildBindingDump(
     BindingResult bindingResult)
 {
     var builder = new StringBuilder();
+    var methods = bindingResult.Compilation.GetAllMethods();
+    var fields = bindingResult.Compilation.GetAllFields();
+    var properties = bindingResult.Compilation.GetAllProperties();
+    var constants = bindingResult.Compilation.GetAllConstants();
     builder.AppendLine($"source: {Path.GetFileName(sourcePath)}");
     builder.AppendLine($"namespace: {bindingResult.Compilation.Namespace ?? "<global>"}");
     builder.AppendLine($"has-errors: {bindingResult.HasErrors}");
     builder.AppendLine($"diagnostics: {bindingResult.Diagnostics.Count}");
     builder.AppendLine($"globals: {bindingResult.Compilation.Globals.Count}");
     builder.AppendLine($"types: {bindingResult.Compilation.Types.Count}");
-    builder.AppendLine($"methods: {bindingResult.Compilation.GetAllMethods().Count}");
-    builder.AppendLine($"fields: {bindingResult.Compilation.GetAllFields().Count}");
-    builder.AppendLine($"properties: {bindingResult.Compilation.GetAllProperties().Count}");
-    builder.AppendLine($"constants: {bindingResult.Compilation.GetAllConstants().Count}");
+    builder.AppendLine($"methods: {methods.Count}");
+    builder.AppendLine($"fields: {fields.Count}");
+    builder.AppendLine($"properties: {properties.Count}");
+    builder.AppendLine($"constants: {constants.Count}");
     builder.AppendLine($"entry-point: {FormatMethod(bindingResult.Compilation.EntryPoint)}");
     builder.AppendLine();
 
@@ -1017,3 +1203,102 @@ static (int Line, int Column) GetPositionInfo(string sourceText, int position)
 }
 
 static string ExpandTabs(string text) => text.Replace("\t", "    ");
+
+sealed class CompilationTiming
+{
+    private readonly Stopwatch total = Stopwatch.StartNew();
+    private readonly List<TimingEntry> entries = [];
+
+    public T Measure<T>(string name, Func<T> action)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            stopwatch.Stop();
+            Add(name, stopwatch.Elapsed);
+        }
+    }
+
+    public void Measure(string name, Action action)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            action();
+        }
+        finally
+        {
+            stopwatch.Stop();
+            Add(name, stopwatch.Elapsed);
+        }
+    }
+
+    public async Task<T> MeasureAsync<T>(string name, Func<Task<T>> action)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            return await action();
+        }
+        finally
+        {
+            stopwatch.Stop();
+            Add(name, stopwatch.Elapsed);
+        }
+    }
+
+    public async Task MeasureAsync(string name, Func<Task> action)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            stopwatch.Stop();
+            Add(name, stopwatch.Elapsed);
+        }
+    }
+
+    public string FormatTotal() => FormatDuration(total.Elapsed);
+
+    public void WriteTimings(TextWriter writer)
+    {
+        foreach (var entry in entries)
+        {
+            writer.WriteLine($"timing: {entry.Name}: {FormatDuration(entry.Elapsed)} count={entry.Count}");
+        }
+
+        writer.WriteLine($"timing: total: {FormatDuration(total.Elapsed)}");
+    }
+
+    private void Add(string name, TimeSpan elapsed)
+    {
+        for (var index = 0; index < entries.Count; index++)
+        {
+            if (string.Equals(entries[index].Name, name, StringComparison.Ordinal))
+            {
+                entries[index] = entries[index] with
+                {
+                    Count = entries[index].Count + 1,
+                    Elapsed = entries[index].Elapsed + elapsed
+                };
+                return;
+            }
+        }
+
+        entries.Add(new TimingEntry(name, 1, elapsed));
+    }
+
+    private static string FormatDuration(TimeSpan elapsed) =>
+        elapsed.TotalSeconds >= 1
+            ? $"{elapsed.TotalSeconds:F3}s"
+            : $"{elapsed.TotalMilliseconds:F1}ms";
+
+    private sealed record TimingEntry(string Name, int Count, TimeSpan Elapsed);
+}

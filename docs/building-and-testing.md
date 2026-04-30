@@ -155,6 +155,15 @@ If no display server is available, the script falls back to `QT_QPA_PLATFORM=off
 
 ## Benchmark and profiling workflow
 
+Use the compiler performance script when compiler pipeline changes need timing:
+
+```bash
+./scripts/run-compiler-performance.sh
+```
+
+It measures `compiler-bootstrap.ilc` and `ui-qtquick-demo.ilc`, writes the summary to `tmp/compiler-performance.log`, and stores per-run logs in `tmp/`.
+The script uses `--timings` for phase-level compiler timings and reachability counters without generating the heavier `--debug` dump artifacts. For deeper Lowerer hotspots, run the compiler CLI with `--profile-lowering`; it emits `lowering-profile:` hierarchical scopes for method lowering without requiring full debug dumps.
+
 Use the benchmark script when performance checks are needed:
 
 ```bash

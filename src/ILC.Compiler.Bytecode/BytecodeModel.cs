@@ -2,6 +2,7 @@ namespace ILC.Compiler.Bytecode;
 
 using ILC.Compiler.Binding;
 using ILC.Compiler.Lowering;
+using System.Diagnostics;
 
 public enum OpCode : byte
 {
@@ -123,24 +124,105 @@ public sealed record ReachableCompilationClosure(
     IReadOnlyList<MethodSymbol> Methods,
     IReadOnlyList<FieldSymbol> Fields,
     IReadOnlyList<TypeSymbol> Types,
-    IReadOnlyList<PropertySymbol> Properties);
+    IReadOnlyList<PropertySymbol> Properties,
+    ReachabilityStats Stats);
+
+public sealed record ReachabilityCounter(string Name, int Count);
+public sealed record ReachabilityDurationCounter(string Name, TimeSpan Elapsed, int Count);
+
+public sealed record ReachabilityStats(
+    int RootMethods,
+    int DeclaredMethods,
+    int DeclaredFields,
+    int DeclaredProperties,
+    int DeclaredTypes,
+    int MethodsEnqueued,
+    int RootMethodsEnqueued,
+    int DirectCallMethodsEnqueued,
+    int MethodConstantMethodsEnqueued,
+    int PropertyAccessorMethodsEnqueued,
+    int NativeCallbackMethodsEnqueued,
+    int DeclaringTypeMethodsEnqueued,
+    int TypeMemberMethodsEnqueued,
+    int InterfaceDispatchMethodsEnqueued,
+    int MethodsProcessed,
+    int MethodsLowered,
+    int MethodCacheHits,
+    int MethodReplacements,
+    int InstructionDependenciesVisited,
+    int TypeReferenceCacheHits,
+    int TypeReferenceCacheMisses,
+    int FieldsAdded,
+    int PropertiesAdded,
+    int FieldsPreseeded,
+    int PropertiesPreseeded,
+    int TypesAddedOrReplaced,
+    int TypesPreseededOrReplaced,
+    int DeclaringTypeExpansions,
+    int TypeMemberExpansions,
+    int InterfaceDispatchExpansions,
+    int LowererRebuilds,
+    int LowererCacheInvalidationRequests,
+    int LowererCacheInvalidations,
+    int LowererFieldInvalidationRequests,
+    int LowererPropertyInvalidationRequests,
+    int LowererTypeInvalidationRequests,
+    int LowererFieldInvalidations,
+    int LowererPropertyInvalidations,
+    int LowererTypeInvalidations,
+    int LowererClosedGenericTypeInvalidationsSuppressed,
+    TimeSpan SeedDeclaredTypesTime,
+    TimeSpan PreseedTypeSurfacesTime,
+    TimeSpan SeedGlobalFieldsTime,
+    TimeSpan SeedGlobalPropertiesTime,
+    TimeSpan SeedRootMethodsTime,
+    TimeSpan LowererBuildTime,
+    TimeSpan MethodLoweringTime,
+    TimeSpan DependencyScanTime,
+    TimeSpan HandlerScanTime,
+    IReadOnlyList<ReachabilityDurationCounter> MethodLoweringDurations,
+    IReadOnlyList<ReachabilityDurationCounter> DependencyScanDurations,
+    IReadOnlyList<LoweringProfileEntry> LoweringProfile,
+    IReadOnlyList<ReachabilityCounter> LowererFieldInvalidationNames,
+    IReadOnlyList<ReachabilityCounter> LowererPropertyInvalidationNames,
+    IReadOnlyList<ReachabilityCounter> LowererTypeInvalidationNames);
 
 public static class ReachableCompilationBuilder
 {
+    private enum LowererInvalidationReason
+    {
+        Field,
+        Property,
+        Type
+    }
+
+    private enum MethodReachabilityReason
+    {
+        Root,
+        DirectCall,
+        MethodConstant,
+        PropertyAccessor,
+        NativeCallback,
+        DeclaringType,
+        TypeMember,
+        InterfaceDispatch
+    }
+
     public static ReachableCompilationClosure Build(
         IEnumerable<MethodSymbol> rootMethods,
         IEnumerable<MethodSymbol> methods,
         IEnumerable<FieldSymbol> fields,
         IEnumerable<TypeSymbol> types,
         IEnumerable<PropertySymbol> properties,
-        IEnumerable<ConstantSymbol>? constants = null)
+        IEnumerable<ConstantSymbol>? constants = null,
+        LoweringProfiler? loweringProfiler = null)
     {
         var rootMethodList = rootMethods.ToArray();
-        var allMethods = methods.ToArray();
-        var allFields = fields.ToArray();
-        var allProperties = properties.ToArray();
+        var allMethods = SymbolLists.CreateMethods(methods);
+        var allFields = SymbolLists.CreateFields(fields);
+        var allProperties = SymbolLists.CreateProperties(properties);
         var declaredTypes = types.ToArray();
-        var constantList = constants?.ToArray() ?? [];
+        var constantList = SymbolLists.CreateConstants(constants ?? []);
         var methodMap = new Dictionary<string, MethodSymbol>(StringComparer.Ordinal);
         var fieldMap = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var typeMap = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
@@ -148,23 +230,188 @@ public static class ReachableCompilationBuilder
         var expandedTypeMembers = new HashSet<string>(StringComparer.Ordinal);
         var expandedDeclaringTypeMembers = new HashSet<string>(StringComparer.Ordinal);
         var expandedInterfaceDispatchMembers = new HashSet<string>(StringComparer.Ordinal);
+        var preseededTypeMembers = new HashSet<string>(StringComparer.Ordinal);
+        var irCache = new Dictionary<string, IrFunction>(StringComparer.Ordinal);
+        var processedMethodDependencies = new HashSet<string>(StringComparer.Ordinal);
+        var pendingMethodKeys = new Queue<string>();
+        IReadOnlyList<FieldSymbol>? knownFieldsCache = null;
+        TypeSymbol[]? knownTypesCache = null;
+        IReadOnlyList<PropertySymbol>? knownPropertiesCache = null;
+        Lowerer? lowererCache = null;
+        var methodsEnqueued = 0;
+        var rootMethodsEnqueued = 0;
+        var directCallMethodsEnqueued = 0;
+        var methodConstantMethodsEnqueued = 0;
+        var propertyAccessorMethodsEnqueued = 0;
+        var nativeCallbackMethodsEnqueued = 0;
+        var declaringTypeMethodsEnqueued = 0;
+        var typeMemberMethodsEnqueued = 0;
+        var interfaceDispatchMethodsEnqueued = 0;
+        var methodsProcessed = 0;
+        var methodsLowered = 0;
+        var methodCacheHits = 0;
+        var methodReplacements = 0;
+        var instructionDependenciesVisited = 0;
+        var typeReferenceCacheHits = 0;
+        var typeReferenceCacheMisses = 0;
+        var fieldsAdded = 0;
+        var propertiesAdded = 0;
+        var fieldsPreseeded = 0;
+        var propertiesPreseeded = 0;
+        var typesAddedOrReplaced = 0;
+        var typesPreseededOrReplaced = 0;
+        var declaringTypeExpansions = 0;
+        var typeMemberExpansions = 0;
+        var interfaceDispatchExpansions = 0;
+        var lowererRebuilds = 0;
+        var lowererCacheInvalidationRequests = 0;
+        var lowererCacheInvalidations = 0;
+        var lowererFieldInvalidationRequests = 0;
+        var lowererPropertyInvalidationRequests = 0;
+        var lowererTypeInvalidationRequests = 0;
+        var lowererFieldInvalidations = 0;
+        var lowererPropertyInvalidations = 0;
+        var lowererTypeInvalidations = 0;
+        var lowererClosedGenericTypeInvalidationsSuppressed = 0;
+        var lowererFieldInvalidationNames = new Dictionary<string, int>(StringComparer.Ordinal);
+        var lowererPropertyInvalidationNames = new Dictionary<string, int>(StringComparer.Ordinal);
+        var lowererTypeInvalidationNames = new Dictionary<string, int>(StringComparer.Ordinal);
+        var methodLoweringDurations = new Dictionary<string, (TimeSpan Elapsed, int Count)>(StringComparer.Ordinal);
+        var dependencyScanDurations = new Dictionary<string, (TimeSpan Elapsed, int Count)>(StringComparer.Ordinal);
+        var typeReferenceCache = new Dictionary<string, TypeSymbol?>(StringComparer.Ordinal);
+        TypeSymbol[]? typeResolutionCandidatesCache = null;
+        var seedDeclaredTypesTime = TimeSpan.Zero;
+        var preseedTypeSurfacesTime = TimeSpan.Zero;
+        var seedGlobalFieldsTime = TimeSpan.Zero;
+        var seedGlobalPropertiesTime = TimeSpan.Zero;
+        var seedRootMethodsTime = TimeSpan.Zero;
+        var lowererBuildTime = TimeSpan.Zero;
+        var methodLoweringTime = TimeSpan.Zero;
+        var dependencyScanTime = TimeSpan.Zero;
+        var handlerScanTime = TimeSpan.Zero;
 
-        foreach (var type in declaredTypes)
+        AddElapsed(ref seedDeclaredTypesTime, () =>
         {
-            AddOrPreferRicherType(typeMap, type);
+            foreach (var type in declaredTypes)
+            {
+                AddOrPreferRicherType(typeMap, type);
+            }
+        });
+
+        AddElapsed(ref preseedTypeSurfacesTime, PreseedTypeSurfaces);
+
+        AddElapsed(ref seedGlobalFieldsTime, () =>
+        {
+            foreach (var field in allFields)
+            {
+                AddField(field);
+            }
+        });
+
+        AddElapsed(ref seedGlobalPropertiesTime, () =>
+        {
+            foreach (var property in allProperties)
+            {
+                AddProperty(property, includeAccessors: false);
+            }
+        });
+
+        AddElapsed(ref seedRootMethodsTime, () =>
+        {
+            foreach (var method in rootMethodList)
+            {
+                AddMethod(method, MethodReachabilityReason.Root);
+            }
+        });
+
+        while (pendingMethodKeys.Count > 0)
+        {
+            var methodKey = pendingMethodKeys.Dequeue();
+            if (!methodMap.TryGetValue(methodKey, out var method) ||
+                !processedMethodDependencies.Add(methodKey))
+            {
+                continue;
+            }
+
+            methodsProcessed++;
+            var lowerer = GetLowerer();
+            if (!irCache.TryGetValue(methodKey, out var ir))
+            {
+                try
+                {
+                    IrFunction? lowered = null;
+                    AddElapsed(
+                        ref methodLoweringTime,
+                        elapsed => IncrementDuration(methodLoweringDurations, FormatMethodDiagnostic(method), elapsed),
+                        () => lowered = lowerer.Lower(method));
+                    ir = lowered!;
+                    irCache[methodKey] = ir;
+                    methodsLowered++;
+                }
+                catch (Exception ex) when (IsEnumerablePipelineMethod(method))
+                {
+                    var candidates = methodMap.Values
+                        .Where(candidate => candidate.Name == method.Name)
+                        .OrderBy(candidate => candidate.DeclaringTypeName, StringComparer.Ordinal)
+                        .ThenBy(candidate => candidate.Parameters.Count)
+                        .Select(FormatMethodDiagnostic)
+                        .ToArray();
+                    throw new InvalidOperationException(
+                        $"Reachability lowering failed for enumerable pipeline method. current={FormatMethodDiagnostic(method)} candidates=[{string.Join(" | ", candidates)}] inner={ex.Message}",
+                        ex);
+                }
+            }
+            else
+            {
+                methodCacheHits++;
+            }
+
+            AddElapsed(
+                ref dependencyScanTime,
+                elapsed => IncrementDuration(dependencyScanDurations, FormatMethodDiagnostic(method), elapsed),
+                () =>
+                {
+                    foreach (var block in ir.Blocks)
+                    {
+                        foreach (var instruction in block.Instructions)
+                        {
+                            instructionDependenciesVisited++;
+                            AddInstructionDependencies(instruction);
+                        }
+                    }
+                });
+
+            AddElapsed(ref handlerScanTime, () =>
+            {
+                foreach (var handler in ir.ExceptionHandlers)
+                {
+                    AddTypeByName(handler.CatchTypeName, includeMembers: false);
+                }
+            });
         }
 
-        var changed = true;
-        while (changed)
+        Lowerer GetLowerer()
         {
-            changed = false;
-            var knownMethods = methodMap.Values.ToArray();
-            var knownFields = allFields
-                .Concat(fieldMap.Values)
-                .GroupBy(field => GetFieldKey(field), StringComparer.Ordinal)
-                .Select(group => group.First())
-                .ToArray();
-            var knownTypes = declaredTypes
+            if (lowererCache is not null)
+            {
+                return lowererCache;
+            }
+
+            lowererRebuilds++;
+            AddElapsed(ref lowererBuildTime, () =>
+                lowererCache = new Lowerer(allMethods, GetKnownFields(), GetKnownTypes(), GetKnownProperties(), constantList, loweringProfiler));
+            return lowererCache;
+        }
+
+        IReadOnlyList<FieldSymbol> GetKnownFields() =>
+            knownFieldsCache ??= SymbolLists.CreateFields(
+                allFields
+                    .Concat(fieldMap.Values)
+                    .GroupBy(field => GetFieldKey(field), StringComparer.Ordinal)
+                    .Select(group => group.First()));
+
+        TypeSymbol[] GetKnownTypes() =>
+            knownTypesCache ??= declaredTypes
                 .Concat(typeMap.Values)
                 .GroupBy(GetTypeIdentityKey, StringComparer.Ordinal)
                 .Select(group => group
@@ -177,364 +424,617 @@ public static class ReachableCompilationBuilder
                         : 0)
                     .First())
                 .ToArray();
-            var knownProperties = allProperties
-                .Concat(propertyMap.Values)
-                .GroupBy(property => $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}", StringComparer.Ordinal)
-                .Select(group => group.First())
+
+        TypeSymbol[] GetTypeResolutionCandidates() =>
+            typeResolutionCandidatesCache ??= typeMap.Values
+                .Concat(declaredTypes)
+                .GroupBy(GetTypeIdentityKey, StringComparer.Ordinal)
+                .Select(group => group
+                    .OrderByDescending(type => type is NamedTypeSymbol namedType
+                        ? (namedType.Methods?.Count ?? 0) +
+                          (namedType.Fields?.Count ?? 0) +
+                          (namedType.Properties?.Count ?? 0) +
+                          (namedType.InterfaceTypes?.Count ?? 0) +
+                          (namedType.TypeArguments?.Count ?? 0)
+                        : 0)
+                    .First())
                 .ToArray();
-            var lowerer = new Lowerer(allMethods, knownFields, knownTypes, knownProperties, constantList);
 
-            foreach (var method in knownMethods)
+        IReadOnlyList<PropertySymbol> GetKnownProperties() =>
+            knownPropertiesCache ??= SymbolLists.CreateProperties(
+                allProperties
+                    .Concat(propertyMap.Values)
+                    .GroupBy(property => $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}", StringComparer.Ordinal)
+                    .Select(group => group.First()));
+
+        void PreseedTypeSurfaces()
+        {
+            foreach (var method in allMethods)
             {
-                IrFunction ir;
-                try
-                {
-                    ir = lowerer.Lower(method);
-                }
-                catch (Exception ex) when (IsEnumerablePipelineMethod(method))
-                {
-                    var candidates = knownMethods
-                        .Where(candidate => candidate.Name == method.Name)
-                        .OrderBy(candidate => candidate.DeclaringTypeName, StringComparer.Ordinal)
-                        .ThenBy(candidate => candidate.Parameters.Count)
-                        .Select(FormatMethodDiagnostic)
-                        .ToArray();
-                    throw new InvalidOperationException(
-                        $"Reachability lowering failed for enumerable pipeline method. current={FormatMethodDiagnostic(method)} candidates=[{string.Join(" | ", candidates)}] inner={ex.Message}",
-                        ex);
-                }
-                foreach (var instruction in ir.Blocks.SelectMany(block => block.Instructions))
-                {
-                    AddInstructionDependencies(instruction);
-                }
-
-                foreach (var handler in ir.ExceptionHandlers)
-                {
-                    AddTypeByName(handler.CatchTypeName, includeMembers: false);
-                }
-            }
-
-            void MarkChanged() => changed = true;
-
-            void AddInstructionDependencies(IrInstruction instruction)
-            {
-                switch (instruction.OpCode)
-                {
-                    case IrOpCode.NewObject:
-                        AddTypeByName((string)instruction.Operand!, includeMembers: false);
-                        break;
-                    case IrOpCode.NewArray:
-                    {
-                        var newArrayTarget = (IrNewArrayTarget)instruction.Operand!;
-                        AddTypeByName(newArrayTarget.ElementTypeName, includeMembers: false);
-                        break;
-                    }
-                    case IrOpCode.Call:
-                    case IrOpCode.CallVirtual:
-                    {
-                        var callTarget = (IrCallTarget)instruction.Operand!;
-                        AddMethod(callTarget.Method);
-                        if (callTarget.Receiver is not null)
-                        {
-                            AddType(callTarget.Receiver.Type, includeMembers: false);
-                        }
-
-                        foreach (var argument in callTarget.Arguments)
-                        {
-                            AddType(argument.Type, includeMembers: false);
-                        }
-
-                        break;
-                    }
-                    case IrOpCode.LoadConstant when instruction.Operand is MethodSymbol methodOperand:
-                        AddMethod(methodOperand);
-                        break;
-                    case IrOpCode.LoadField:
-                    case IrOpCode.LoadStaticField:
-                    case IrOpCode.StoreField:
-                    case IrOpCode.StoreStaticField:
-                    {
-                        var fieldTarget = (IrFieldTarget)instruction.Operand!;
-                        AddField(fieldTarget.Field);
-                        if (fieldTarget.Receiver is not null)
-                        {
-                            AddType(fieldTarget.Receiver.Type, includeMembers: false);
-                        }
-
-                        break;
-                    }
-                    case IrOpCode.TypeIsReference:
-                    case IrOpCode.AsReference:
-                    {
-                        var typeCheckTarget = (IrTypeCheckTarget)instruction.Operand!;
-                        AddTypeByName(typeCheckTarget.TypeName, includeMembers: false);
-                        AddType(typeCheckTarget.Value.Type, includeMembers: false);
-                        break;
-                    }
-                }
-            }
-
-            void AddMethod(MethodSymbol? method)
-            {
-                if (method is null)
-                {
-                    return;
-                }
-
-                method = NormalizeMethod(method);
-
-                var key = GetMethodKey(method);
-                if (!methodMap.TryGetValue(key, out var existingMethod))
-                {
-                    methodMap[key] = method;
-                    MarkChanged();
-                }
-                else if (IsRicherMethod(method, existingMethod))
-                {
-                    methodMap[key] = method;
-                    MarkChanged();
-                }
-
-                AddType(method.ReturnType, includeMembers: false);
+                PreseedType(method.ReturnType);
+                PreseedTypeByName(method.DeclaringTypeName);
                 foreach (var parameter in method.Parameters)
                 {
-                    AddType(parameter.Type, includeMembers: false);
-                }
-
-                AddTypeByName(method.DeclaringTypeName, includeMembers: false);
-                if (!string.IsNullOrEmpty(method.DeclaringTypeName) &&
-                    SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, [.. typeMap.Values, .. declaredTypes]) is NamedTypeSymbol declaringType)
-                {
-                    AddInterfaceDispatchMethods(declaringType);
-
-                    if (!expandedDeclaringTypeMembers.Add(method.DeclaringTypeName))
-                    {
-                        return;
-                    }
-
-                    foreach (var declaringField in declaringType.Fields ?? [])
-                    {
-                        AddField(declaringField);
-                    }
-
-                    foreach (var declaringProperty in declaringType.Properties ?? [])
-                    {
-                        AddProperty(declaringProperty);
-                    }
-
-                    if (method.DeclaringTypeName.Contains('<', StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-
-                    foreach (var siblingMethod in declaringType.Methods ?? [])
-                    {
-                        var siblingKey = GetMethodKey(siblingMethod);
-                        if (!methodMap.ContainsKey(siblingKey))
-                        {
-                            methodMap[siblingKey] = siblingMethod;
-                            MarkChanged();
-                        }
-                    }
+                    PreseedType(parameter.Type);
                 }
             }
 
-            MethodSymbol NormalizeMethod(MethodSymbol method)
+            foreach (var field in allFields)
             {
-                if (string.IsNullOrWhiteSpace(method.DeclaringTypeName))
-                {
-                    return method;
-                }
-
-                if (SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, [.. typeMap.Values, .. declaredTypes]) is not NamedTypeSymbol declaringType)
-                {
-                    return method;
-                }
-
-                var normalized = declaringType.Methods.FirstOrDefault(candidate =>
-                    candidate.Name == method.Name &&
-                    candidate.IsConstructor == method.IsConstructor &&
-                    candidate.IsStatic == method.IsStatic &&
-                    candidate.Parameters.Count == method.Parameters.Count);
-                return normalized ?? method;
+                PreseedType(field.Type);
+                PreseedTypeByName(field.DeclaringTypeName);
             }
 
-            void AddInterfaceDispatchMethods(NamedTypeSymbol concreteType)
+            foreach (var property in allProperties)
             {
-                if (!IsRuntimeConcreteType(concreteType) ||
-                    !expandedInterfaceDispatchMembers.Add(concreteType.Name))
-                {
-                    return;
-                }
-
-                var namedTypeLookup = declaredTypes
-                    .Concat(typeMap.Values)
-                    .OfType<NamedTypeSymbol>()
-                    .GroupBy(type => type.Name, StringComparer.Ordinal)
-                    .ToDictionary(
-                        group => group.Key,
-                        group => group
-                            .OrderByDescending(type =>
-                                (type.Methods?.Count ?? 0) +
-                                (type.Fields?.Count ?? 0) +
-                                (type.Properties?.Count ?? 0) +
-                                (type.InterfaceTypes?.Count ?? 0) +
-                                (type.TypeArguments?.Count ?? 0))
-                            .First(),
-                        StringComparer.Ordinal);
-
-                foreach (var interfaceType in GetImplementedInterfaces(concreteType, namedTypeLookup))
-                {
-                    AddType(interfaceType, includeMembers: false);
-
-                    foreach (var interfaceMethod in interfaceType.Methods.Where(candidate => !candidate.IsConstructor))
-                    {
-                        AddMethod(interfaceMethod);
-                        var implementationMethod = FindInterfaceImplementation(concreteType, interfaceMethod, namedTypeLookup);
-                        AddMethod(implementationMethod);
-                    }
-                }
-            }
-
-            void AddField(FieldSymbol? field)
-            {
-                if (field is null)
-                {
-                    return;
-                }
-
-                var key = GetFieldKey(field);
-                if (!fieldMap.ContainsKey(key))
-                {
-                    fieldMap[key] = field;
-                    MarkChanged();
-                }
-
-                AddType(field.Type, includeMembers: false);
-                AddTypeByName(field.DeclaringTypeName, includeMembers: false);
-            }
-
-            void AddProperty(PropertySymbol? property)
-            {
-                if (property is null)
-                {
-                    return;
-                }
-
-                var key = $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}";
-                if (!propertyMap.ContainsKey(key))
-                {
-                    propertyMap[key] = property;
-                    MarkChanged();
-                }
-
-                AddType(property.Type, includeMembers: false);
+                PreseedType(property.Type);
+                PreseedTypeByName(property.DeclaringTypeName);
                 if (property.IndexParameter is not null)
                 {
-                    AddType(property.IndexParameter.Type, includeMembers: false);
-                }
-
-                AddField(property.ReadField);
-                AddField(property.WriteField);
-                AddMethod(property.GetterMethod);
-                AddMethod(property.SetterMethod);
-                AddTypeByName(property.DeclaringTypeName, includeMembers: false);
-            }
-
-            void AddTypeByName(string? typeName, bool includeMembers)
-            {
-                if (string.IsNullOrWhiteSpace(typeName))
-                {
-                    return;
-                }
-
-                if (typeMap.TryGetValue(typeName, out var existing))
-                {
-                    AddType(existing, includeMembers);
-                    return;
-                }
-
-                var resolvedType = SemanticFacts.ResolveTypeReference(typeName, [.. typeMap.Values, .. declaredTypes]);
-                if (resolvedType is not null)
-                {
-                    AddType(resolvedType, includeMembers);
+                    PreseedType(property.IndexParameter.Type);
                 }
             }
+        }
 
-            void AddType(TypeSymbol? type, bool includeMembers)
+        void PreseedTypeByName(string? typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
             {
-                if (type is null)
+                return;
+            }
+
+            if (typeMap.TryGetValue(typeName, out var existing))
+            {
+                PreseedType(existing);
+                return;
+            }
+
+            var resolvedType = ResolveTypeReferenceCached(typeName);
+            PreseedType(resolvedType);
+        }
+
+        void PreseedType(TypeSymbol? type)
+        {
+            if (type is null)
+            {
+                return;
+            }
+
+            var existingType = typeMap.GetValueOrDefault(type.Name);
+            AddOrPreferRicherType(typeMap, type);
+            if (!ReferenceEquals(existingType, typeMap[type.Name]))
+            {
+                typesPreseededOrReplaced++;
+                InvalidateTypeResolutionCache();
+            }
+
+            if (type is not NamedTypeSymbol namedType)
+            {
+                return;
+            }
+
+            PreseedType(namedType.BaseType);
+            foreach (var interfaceType in namedType.InterfaceTypes ?? [])
+            {
+                PreseedType(interfaceType);
+            }
+
+            foreach (var typeArgument in namedType.TypeArguments ?? [])
+            {
+                PreseedType(typeArgument);
+            }
+
+            if (SemanticFacts.IsOpenGenericDefinition(namedType) ||
+                !preseededTypeMembers.Add(namedType.Name))
+            {
+                return;
+            }
+
+            foreach (var field in namedType.Fields ?? [])
+            {
+                PreseedField(field);
+            }
+
+            foreach (var property in namedType.Properties ?? [])
+            {
+                PreseedProperty(property);
+            }
+        }
+
+        void PreseedField(FieldSymbol? field)
+        {
+            if (field is null)
+            {
+                return;
+            }
+
+            var key = GetFieldKey(field);
+            if (!fieldMap.ContainsKey(key))
+            {
+                fieldMap[key] = field;
+                fieldsPreseeded++;
+            }
+
+            PreseedType(field.Type);
+            PreseedTypeByName(field.DeclaringTypeName);
+        }
+
+        void PreseedProperty(PropertySymbol? property)
+        {
+            if (property is null)
+            {
+                return;
+            }
+
+            var key = GetPropertyKey(property);
+            if (!propertyMap.ContainsKey(key))
+            {
+                propertyMap[key] = property;
+                propertiesPreseeded++;
+            }
+
+            PreseedType(property.Type);
+            if (property.IndexParameter is not null)
+            {
+                PreseedType(property.IndexParameter.Type);
+            }
+
+            PreseedField(property.ReadField);
+            PreseedField(property.WriteField);
+            PreseedTypeByName(property.DeclaringTypeName);
+        }
+
+        void InvalidateLowererCache(LowererInvalidationReason reason, string? subjectName = null)
+        {
+            lowererCacheInvalidationRequests++;
+            CountLowererInvalidationRequest(reason);
+            if (knownFieldsCache is null &&
+                knownTypesCache is null &&
+                knownPropertiesCache is null &&
+                lowererCache is null)
+            {
+                return;
+            }
+
+            lowererCacheInvalidations++;
+            CountLowererInvalidation(reason, subjectName);
+            knownFieldsCache = null;
+            knownTypesCache = null;
+            knownPropertiesCache = null;
+            lowererCache = null;
+        }
+
+        void InvalidateTypeResolutionCache()
+        {
+            typeReferenceCache.Clear();
+            typeResolutionCandidatesCache = null;
+        }
+
+        void CountLowererInvalidationRequest(LowererInvalidationReason reason)
+        {
+            switch (reason)
+            {
+                case LowererInvalidationReason.Field:
+                    lowererFieldInvalidationRequests++;
+                    break;
+                case LowererInvalidationReason.Property:
+                    lowererPropertyInvalidationRequests++;
+                    break;
+                case LowererInvalidationReason.Type:
+                    lowererTypeInvalidationRequests++;
+                    break;
+            }
+        }
+
+        void CountLowererInvalidation(LowererInvalidationReason reason, string? subjectName)
+        {
+            switch (reason)
+            {
+                case LowererInvalidationReason.Field:
+                    lowererFieldInvalidations++;
+                    IncrementCounter(lowererFieldInvalidationNames, subjectName);
+                    break;
+                case LowererInvalidationReason.Property:
+                    lowererPropertyInvalidations++;
+                    IncrementCounter(lowererPropertyInvalidationNames, subjectName);
+                    break;
+                case LowererInvalidationReason.Type:
+                    lowererTypeInvalidations++;
+                    IncrementCounter(lowererTypeInvalidationNames, subjectName);
+                    break;
+            }
+        }
+
+        void AddInstructionDependencies(IrInstruction instruction)
+        {
+            switch (instruction.OpCode)
+            {
+                case IrOpCode.NewObject:
+                    AddTypeByName((string)instruction.Operand!, includeMembers: false);
+                    break;
+                case IrOpCode.NewArray:
+                {
+                    var newArrayTarget = (IrNewArrayTarget)instruction.Operand!;
+                    AddTypeByName(newArrayTarget.ElementTypeName, includeMembers: false);
+                    break;
+                }
+                case IrOpCode.Call:
+                case IrOpCode.CallVirtual:
+                {
+                    var callTarget = (IrCallTarget)instruction.Operand!;
+                    AddMethod(callTarget.Method, MethodReachabilityReason.DirectCall);
+                    if (callTarget.Receiver is not null)
+                    {
+                        AddType(callTarget.Receiver.Type, includeMembers: false);
+                    }
+
+                    foreach (var argument in callTarget.Arguments)
+                    {
+                        AddType(argument.Type, includeMembers: false);
+                    }
+
+                    break;
+                }
+                case IrOpCode.LoadConstant when instruction.Operand is MethodSymbol methodOperand:
+                    AddMethod(methodOperand, MethodReachabilityReason.MethodConstant);
+                    break;
+                case IrOpCode.LoadField:
+                case IrOpCode.LoadStaticField:
+                case IrOpCode.StoreField:
+                case IrOpCode.StoreStaticField:
+                {
+                    var fieldTarget = (IrFieldTarget)instruction.Operand!;
+                    AddField(fieldTarget.Field);
+                    if (fieldTarget.Receiver is not null)
+                    {
+                        AddType(fieldTarget.Receiver.Type, includeMembers: false);
+                    }
+
+                    break;
+                }
+                case IrOpCode.TypeIsReference:
+                case IrOpCode.AsReference:
+                {
+                    var typeCheckTarget = (IrTypeCheckTarget)instruction.Operand!;
+                    AddTypeByName(typeCheckTarget.TypeName, includeMembers: false);
+                    AddType(typeCheckTarget.Value.Type, includeMembers: false);
+                    break;
+                }
+            }
+        }
+
+        void AddMethod(MethodSymbol? method, MethodReachabilityReason reason)
+        {
+            if (method is null)
+            {
+                return;
+            }
+
+            method = NormalizeMethod(method);
+
+            var key = GetMethodKey(method);
+            if (!methodMap.TryGetValue(key, out var existingMethod))
+            {
+                methodMap[key] = method;
+                pendingMethodKeys.Enqueue(key);
+                methodsEnqueued++;
+                CountMethodEnqueue(reason);
+            }
+            else if (IsRicherMethod(method, existingMethod))
+            {
+                methodMap[key] = method;
+                irCache.Remove(key);
+                processedMethodDependencies.Remove(key);
+                pendingMethodKeys.Enqueue(key);
+                methodsEnqueued++;
+                CountMethodEnqueue(reason);
+                methodReplacements++;
+            }
+
+            AddType(method.ReturnType, includeMembers: false);
+            foreach (var parameter in method.Parameters)
+            {
+                AddType(parameter.Type, includeMembers: false);
+            }
+
+            AddNativeCallbackDelegateInvokeMethods(method);
+            AddTypeByName(method.DeclaringTypeName, includeMembers: false);
+            if (!string.IsNullOrEmpty(method.DeclaringTypeName) &&
+                ResolveTypeReferenceCached(method.DeclaringTypeName) is NamedTypeSymbol declaringType)
+            {
+                AddInterfaceDispatchMethods(declaringType);
+
+                if (!expandedDeclaringTypeMembers.Add(method.DeclaringTypeName))
                 {
                     return;
                 }
 
-                var hadType = typeMap.TryGetValue(type.Name, out var existingType);
-                AddOrPreferRicherType(typeMap, type);
-                if (!hadType || !ReferenceEquals(typeMap[type.Name], existingType))
+                foreach (var declaringField in declaringType.Fields ?? [])
                 {
-                    MarkChanged();
+                    AddField(declaringField);
                 }
 
-                if (type is not NamedTypeSymbol namedType)
+                foreach (var declaringProperty in declaringType.Properties ?? [])
                 {
-                    return;
+                    AddProperty(declaringProperty, includeAccessors: false);
                 }
 
-                if (namedType.BaseType is not null)
+                declaringTypeExpansions++;
+            }
+        }
+
+        void CountMethodEnqueue(MethodReachabilityReason reason)
+        {
+            switch (reason)
+            {
+                case MethodReachabilityReason.Root:
+                    rootMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.DirectCall:
+                    directCallMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.MethodConstant:
+                    methodConstantMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.PropertyAccessor:
+                    propertyAccessorMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.NativeCallback:
+                    nativeCallbackMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.DeclaringType:
+                    declaringTypeMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.TypeMember:
+                    typeMemberMethodsEnqueued++;
+                    break;
+                case MethodReachabilityReason.InterfaceDispatch:
+                    interfaceDispatchMethodsEnqueued++;
+                    break;
+            }
+        }
+
+        MethodSymbol NormalizeMethod(MethodSymbol method)
+        {
+            if (string.IsNullOrWhiteSpace(method.DeclaringTypeName))
+            {
+                return method;
+            }
+
+            if (ResolveTypeReferenceCached(method.DeclaringTypeName) is not NamedTypeSymbol declaringType)
+            {
+                return method;
+            }
+
+            var normalized = declaringType.Methods.FirstOrDefault(candidate =>
+                candidate.Name == method.Name &&
+                candidate.IsConstructor == method.IsConstructor &&
+                candidate.IsStatic == method.IsStatic &&
+                candidate.Parameters.Count == method.Parameters.Count);
+            return normalized ?? method;
+        }
+
+        void AddNativeCallbackDelegateInvokeMethods(MethodSymbol method)
+        {
+            if (method.DllImport is null)
+            {
+                return;
+            }
+
+            foreach (var parameter in method.Parameters)
+            {
+                if (ResolveNativeCallbackDelegateType(parameter.Type) is not { } delegateType)
                 {
-                    AddType(namedType.BaseType, includeMembers: false);
+                    continue;
                 }
 
-                foreach (var interfaceType in namedType.InterfaceTypes ?? [])
+                var invokeMethod = delegateType.Methods.FirstOrDefault(candidate =>
+                    candidate.Name == "Invoke" &&
+                    !candidate.IsStatic &&
+                    !candidate.IsConstructor);
+                AddMethod(invokeMethod, MethodReachabilityReason.NativeCallback);
+            }
+        }
+
+        NamedTypeSymbol? ResolveNativeCallbackDelegateType(TypeSymbol type)
+        {
+            if (type is NamedTypeSymbol { IsDelegate: true } namedType)
+            {
+                return namedType;
+            }
+
+            return ResolveTypeReferenceCached(type.Name) is NamedTypeSymbol { IsDelegate: true } resolvedType
+                ? resolvedType
+                : null;
+        }
+
+        void AddInterfaceDispatchMethods(NamedTypeSymbol concreteType)
+        {
+            if (!IsRuntimeConcreteType(concreteType) ||
+                !expandedInterfaceDispatchMembers.Add(concreteType.Name))
+            {
+                return;
+            }
+
+            interfaceDispatchExpansions++;
+            var namedTypeLookup = declaredTypes
+                .Concat(typeMap.Values)
+                .OfType<NamedTypeSymbol>()
+                .GroupBy(type => type.Name, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderByDescending(type =>
+                            (type.Methods?.Count ?? 0) +
+                            (type.Fields?.Count ?? 0) +
+                            (type.Properties?.Count ?? 0) +
+                            (type.InterfaceTypes?.Count ?? 0) +
+                            (type.TypeArguments?.Count ?? 0))
+                        .First(),
+                    StringComparer.Ordinal);
+
+            foreach (var interfaceType in GetImplementedInterfaces(concreteType, namedTypeLookup))
+            {
+                AddType(interfaceType, includeMembers: false);
+
+                foreach (var interfaceMethod in interfaceType.Methods.Where(candidate => !candidate.IsConstructor))
                 {
-                    AddType(interfaceType, includeMembers: false);
+                    AddMethod(interfaceMethod, MethodReachabilityReason.InterfaceDispatch);
+                    var implementationMethod = FindInterfaceImplementation(concreteType, interfaceMethod, namedTypeLookup);
+                    AddMethod(implementationMethod, MethodReachabilityReason.InterfaceDispatch);
                 }
+            }
+        }
 
-                foreach (var typeArgument in namedType.TypeArguments ?? [])
+        void AddField(FieldSymbol? field)
+        {
+            if (field is null)
+            {
+                return;
+            }
+
+            var key = GetFieldKey(field);
+            if (!fieldMap.ContainsKey(key))
+            {
+                fieldMap[key] = field;
+                fieldsAdded++;
+                InvalidateLowererCache(LowererInvalidationReason.Field, field.DeclaringTypeName ?? "<global>");
+            }
+
+            AddType(field.Type, includeMembers: false);
+            AddTypeByName(field.DeclaringTypeName, includeMembers: false);
+        }
+
+        void AddProperty(PropertySymbol? property, bool includeAccessors = true)
+        {
+            if (property is null)
+            {
+                return;
+            }
+
+            var key = GetPropertyKey(property);
+            if (!propertyMap.ContainsKey(key))
+            {
+                propertyMap[key] = property;
+                propertiesAdded++;
+                InvalidateLowererCache(LowererInvalidationReason.Property, property.DeclaringTypeName ?? "<global>");
+            }
+
+            AddType(property.Type, includeMembers: false);
+            if (property.IndexParameter is not null)
+            {
+                AddType(property.IndexParameter.Type, includeMembers: false);
+            }
+
+            AddField(property.ReadField);
+            AddField(property.WriteField);
+            if (includeAccessors)
+            {
+                AddMethod(property.GetterMethod, MethodReachabilityReason.PropertyAccessor);
+                AddMethod(property.SetterMethod, MethodReachabilityReason.PropertyAccessor);
+            }
+
+            AddTypeByName(property.DeclaringTypeName, includeMembers: false);
+        }
+
+        void AddTypeByName(string? typeName, bool includeMembers)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+            {
+                return;
+            }
+
+            if (typeMap.TryGetValue(typeName, out var existing))
+            {
+                AddType(existing, includeMembers);
+                return;
+            }
+
+            var resolvedType = ResolveTypeReferenceCached(typeName);
+            if (resolvedType is not null)
+            {
+                AddType(resolvedType, includeMembers);
+            }
+        }
+
+        TypeSymbol? ResolveTypeReferenceCached(string typeName)
+        {
+            if (typeReferenceCache.TryGetValue(typeName, out var cachedType))
+            {
+                typeReferenceCacheHits++;
+                return cachedType;
+            }
+
+            typeReferenceCacheMisses++;
+            var resolvedType = SemanticFacts.ResolveTypeReference(typeName, GetTypeResolutionCandidates());
+            typeReferenceCache[typeName] = resolvedType;
+            return resolvedType;
+        }
+
+        void AddType(TypeSymbol? type, bool includeMembers)
+        {
+            if (type is null)
+            {
+                return;
+            }
+
+            var existingType = typeMap.GetValueOrDefault(type.Name);
+            AddOrPreferRicherType(typeMap, type);
+            if (!ReferenceEquals(existingType, typeMap[type.Name]))
+            {
+                typesAddedOrReplaced++;
+                InvalidateTypeResolutionCache();
+                if (ShouldInvalidateLowererForTypeChange(typeMap[type.Name]))
                 {
-                    AddType(typeArgument, includeMembers: false);
+                    InvalidateLowererCache(LowererInvalidationReason.Type, type.Name);
                 }
-
-                AddInterfaceDispatchMethods(namedType);
-
-                if (!includeMembers || SemanticFacts.IsOpenGenericDefinition(namedType) || !expandedTypeMembers.Add(namedType.Name))
+                else
                 {
-                    return;
-                }
-
-                MarkChanged();
-                foreach (var field in namedType.Fields ?? [])
-                {
-                    AddField(field);
-                }
-
-                foreach (var property in namedType.Properties ?? [])
-                {
-                    AddProperty(property);
-                }
-
-                foreach (var method in namedType.Methods ?? [])
-                {
-                    AddMethod(method);
+                    lowererClosedGenericTypeInvalidationsSuppressed++;
                 }
             }
 
-            if (methodMap.Count == 0 && fieldMap.Count == 0 && propertyMap.Count == 0)
+            if (type is not NamedTypeSymbol namedType)
             {
-                foreach (var field in allFields)
-                {
-                    AddField(field);
-                }
+                return;
+            }
 
-                foreach (var property in allProperties)
-                {
-                    AddProperty(property);
-                }
+            if (namedType.BaseType is not null)
+            {
+                AddType(namedType.BaseType, includeMembers: false);
+            }
 
-                foreach (var method in rootMethodList)
-                {
-                    AddMethod(method);
-                }
+            foreach (var interfaceType in namedType.InterfaceTypes ?? [])
+            {
+                AddType(interfaceType, includeMembers: false);
+            }
+
+            foreach (var typeArgument in namedType.TypeArguments ?? [])
+            {
+                AddType(typeArgument, includeMembers: false);
+            }
+
+            AddInterfaceDispatchMethods(namedType);
+
+            if (!includeMembers || SemanticFacts.IsOpenGenericDefinition(namedType) || !expandedTypeMembers.Add(namedType.Name))
+            {
+                return;
+            }
+
+            typeMemberExpansions++;
+            foreach (var field in namedType.Fields ?? [])
+            {
+                AddField(field);
+            }
+
+            foreach (var property in namedType.Properties ?? [])
+            {
+                AddProperty(property);
+            }
+
+            foreach (var method in namedType.Methods ?? [])
+            {
+                AddMethod(method, MethodReachabilityReason.TypeMember);
             }
         }
 
@@ -542,8 +1042,196 @@ public static class ReachableCompilationBuilder
             methodMap.Values.ToArray(),
             fieldMap.Values.ToArray(),
             typeMap.Values.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray(),
-            propertyMap.Values.ToArray());
+            propertyMap.Values.ToArray(),
+            new ReachabilityStats(
+                rootMethodList.Length,
+                allMethods.Count,
+                allFields.Count,
+                allProperties.Count,
+                declaredTypes.Length,
+                methodsEnqueued,
+                rootMethodsEnqueued,
+                directCallMethodsEnqueued,
+                methodConstantMethodsEnqueued,
+                propertyAccessorMethodsEnqueued,
+                nativeCallbackMethodsEnqueued,
+                declaringTypeMethodsEnqueued,
+                typeMemberMethodsEnqueued,
+                interfaceDispatchMethodsEnqueued,
+                methodsProcessed,
+                methodsLowered,
+                methodCacheHits,
+                methodReplacements,
+                instructionDependenciesVisited,
+                typeReferenceCacheHits,
+                typeReferenceCacheMisses,
+                fieldsAdded,
+                propertiesAdded,
+                fieldsPreseeded,
+                propertiesPreseeded,
+                typesAddedOrReplaced,
+                typesPreseededOrReplaced,
+                declaringTypeExpansions,
+                typeMemberExpansions,
+                interfaceDispatchExpansions,
+                lowererRebuilds,
+                lowererCacheInvalidationRequests,
+                lowererCacheInvalidations,
+                lowererFieldInvalidationRequests,
+                lowererPropertyInvalidationRequests,
+                lowererTypeInvalidationRequests,
+                lowererFieldInvalidations,
+                lowererPropertyInvalidations,
+                lowererTypeInvalidations,
+                lowererClosedGenericTypeInvalidationsSuppressed,
+                seedDeclaredTypesTime,
+                preseedTypeSurfacesTime,
+                seedGlobalFieldsTime,
+                seedGlobalPropertiesTime,
+                seedRootMethodsTime,
+                lowererBuildTime,
+                methodLoweringTime,
+                dependencyScanTime,
+                handlerScanTime,
+                BuildReachabilityDurationCounters(methodLoweringDurations),
+                BuildReachabilityDurationCounters(dependencyScanDurations),
+                loweringProfiler?.Snapshot() ?? [],
+                BuildReachabilityCounters(lowererFieldInvalidationNames),
+                BuildReachabilityCounters(lowererPropertyInvalidationNames),
+                BuildReachabilityCounters(lowererTypeInvalidationNames)));
     }
+
+    private static IReadOnlyList<ReachabilityCounter> BuildReachabilityCounters(Dictionary<string, int> counters) =>
+        counters
+            .OrderByDescending(pair => pair.Value)
+            .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => new ReachabilityCounter(pair.Key, pair.Value))
+            .ToArray();
+
+    private static IReadOnlyList<ReachabilityDurationCounter> BuildReachabilityDurationCounters(Dictionary<string, (TimeSpan Elapsed, int Count)> counters) =>
+        counters
+            .OrderByDescending(pair => pair.Value.Elapsed)
+            .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => new ReachabilityDurationCounter(pair.Key, pair.Value.Elapsed, pair.Value.Count))
+            .ToArray();
+
+    private static void AddElapsed(ref TimeSpan accumulator, Action action)
+    {
+        var startedAt = Stopwatch.GetTimestamp();
+        try
+        {
+            action();
+        }
+        finally
+        {
+            accumulator += Stopwatch.GetElapsedTime(startedAt);
+        }
+    }
+
+    private static void AddElapsed(ref TimeSpan accumulator, Action<TimeSpan> afterElapsed, Action action)
+    {
+        var startedAt = Stopwatch.GetTimestamp();
+        try
+        {
+            action();
+        }
+        finally
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startedAt);
+            accumulator += elapsed;
+            afterElapsed(elapsed);
+        }
+    }
+
+    private static void IncrementCounter(Dictionary<string, int> counters, string? subjectName)
+    {
+        if (string.IsNullOrWhiteSpace(subjectName))
+        {
+            return;
+        }
+
+        counters[subjectName] = counters.GetValueOrDefault(subjectName) + 1;
+    }
+
+    private static void IncrementDuration(Dictionary<string, (TimeSpan Elapsed, int Count)> counters, string name, TimeSpan elapsed)
+    {
+        var existing = counters.GetValueOrDefault(name);
+        counters[name] = (existing.Elapsed + elapsed, existing.Count + 1);
+    }
+
+    private static bool ShouldInvalidateLowererForTypeChange(TypeSymbol type) =>
+        !IsClosedConstructedGenericType(type);
+
+    private static bool IsClosedConstructedGenericType(TypeSymbol type)
+    {
+        if (type is NamedTypeSymbol { GenericDefinition: not null, TypeArguments.Count: > 0 } namedType)
+        {
+            return namedType.TypeArguments.All(IsClosedTypeArgument);
+        }
+
+        if (!TryParseConstructedTypeName(type.Name, out var genericArgumentNames))
+        {
+            return false;
+        }
+
+        return genericArgumentNames.All(argumentName =>
+            SemanticFacts.ResolveTypeReference(argumentName, []) is not TypeParameterSymbol &&
+            !IsLikelyTypeParameterName(argumentName));
+    }
+
+    private static bool IsClosedTypeArgument(TypeSymbol type) =>
+        type is not TypeParameterSymbol &&
+        (!TryParseConstructedTypeName(type.Name, out var genericArgumentNames) ||
+         genericArgumentNames.All(argumentName => !IsLikelyTypeParameterName(argumentName)));
+
+    private static bool TryParseConstructedTypeName(string displayName, out IReadOnlyList<string> genericArgumentNames)
+    {
+        genericArgumentNames = [];
+        var lessThanIndex = displayName.IndexOf('<');
+        if (lessThanIndex <= 0 || !displayName.EndsWith(">", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        genericArgumentNames = SplitConstructedTypeArguments(displayName[(lessThanIndex + 1)..^1]);
+        return genericArgumentNames.Count > 0;
+    }
+
+    private static IReadOnlyList<string> SplitConstructedTypeArguments(string value)
+    {
+        var arguments = new List<string>();
+        var start = 0;
+        var depth = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            switch (value[index])
+            {
+                case '<':
+                    depth++;
+                    break;
+                case '>':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    arguments.Add(value[start..index].Trim());
+                    start = index + 1;
+                    break;
+            }
+        }
+
+        var finalArgument = value[start..].Trim();
+        if (!string.IsNullOrEmpty(finalArgument))
+        {
+            arguments.Add(finalArgument);
+        }
+
+        return arguments;
+    }
+
+    private static bool IsLikelyTypeParameterName(string typeName) =>
+        typeName.Length >= 1 &&
+        typeName[0] == 'T' &&
+        typeName.All(character => char.IsLetterOrDigit(character) || character == '_');
 
     private static string GetMethodKey(MethodSymbol method) =>
         $"{method.DeclaringTypeName ?? "<global>"}::{method.Name}({string.Join(",", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}";
@@ -563,6 +1251,9 @@ public static class ReachableCompilationBuilder
 
     private static string GetFieldKey(FieldSymbol field) =>
         $"{field.DeclaringTypeName ?? "<global>"}::{field.Name}";
+
+    private static string GetPropertyKey(PropertySymbol property) =>
+        $"{property.DeclaringTypeName ?? "<global>"}::{property.Name}";
 
     private static void AddOrPreferRicherType(IDictionary<string, TypeSymbol> types, TypeSymbol candidate)
     {

@@ -2,6 +2,7 @@ namespace ILC.Compiler.Binding;
 
 using ILC.Compiler.Core;
 using ILC.Compiler.Syntax;
+using System;
 
 public static partial class SemanticFacts
 {
@@ -109,7 +110,7 @@ public static partial class SemanticFacts
                 return new BoundWriteTarget(
                     BoundWriteTargetKind.ElementAccess,
                     GetExpressionDisplayName(target),
-                    InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                    InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
                     null,
                     null,
                     null,
@@ -324,24 +325,61 @@ public static partial class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        Func<string, IDisposable>? profiler = null)
     {
-        var invocation = ResolveInvocation(call.Target, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-        if (invocation?.Method is not null)
+        InvocationResolution? invocation;
+        using (profiler?.Invoke("ResolveInvocation"))
         {
-            return CreateBoundCall(call, invocation, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+            invocation = ResolveInvocation(
+                call.Target,
+                call.Arguments.Count,
+                locals,
+                knownTypes,
+                knownMethods,
+                knownFields,
+                knownConstants,
+                knownProperties,
+                currentMethod,
+                profiler is null ? null : name => profiler($"ResolveInvocation.{name}"));
         }
 
-        var qualifiedTarget = TryFlattenQualifiedTarget(call.Target);
+        if (invocation?.Method is not null)
+        {
+            using var createProfile = profiler?.Invoke("CreateBoundCall");
+            return CreateBoundCall(call, invocation, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, profiler);
+        }
+
+        QualifiedNameSyntax? qualifiedTarget;
+        using (profiler?.Invoke("FlattenQualifiedTarget"))
+        {
+            qualifiedTarget = TryFlattenQualifiedTarget(call.Target);
+        }
+
         if (qualifiedTarget is null)
         {
             return null;
         }
 
-        invocation = ResolveInvocation(qualifiedTarget, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+        using (profiler?.Invoke("ResolveFlattenedInvocation"))
+        {
+            invocation = ResolveInvocation(
+                qualifiedTarget,
+                call.Arguments.Count,
+                locals,
+                knownTypes,
+                knownMethods,
+                knownFields,
+                knownConstants,
+                knownProperties,
+                currentMethod,
+                profiler is null ? null : name => profiler($"ResolveFlattenedInvocation.{name}"));
+        }
+
         if (invocation?.Method is not null)
         {
-            return CreateBoundCall(call, invocation, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+            using var createProfile = profiler?.Invoke("CreateFlattenedBoundCall");
+            return CreateBoundCall(call, invocation, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, profiler);
         }
 
         return null;
@@ -622,39 +660,53 @@ public static partial class SemanticFacts
         IEnumerable<FieldSymbol> knownFields,
         IEnumerable<ConstantSymbol> knownConstants,
         IEnumerable<PropertySymbol> knownProperties,
-        MethodSymbol? currentMethod)
+        MethodSymbol? currentMethod,
+        Func<string, IDisposable>? profiler = null)
     {
-        var normalizedMethod = NormalizeBoundInvocationMethod(invocation.Method, knownTypes);
+        MethodSymbol normalizedMethod;
+        using (profiler?.Invoke("CreateBoundCall.NormalizeMethod"))
+        {
+            normalizedMethod = NormalizeBoundInvocationMethod(invocation.Method, knownTypes);
+        }
+
         invocation = invocation with { Method = normalizedMethod };
 
-        var isExplicitInvokeMemberAccess =
-            call.Target is MemberAccessExpressionSyntax { MemberName.Text: "Invoke" };
-        var isDirectDelegateInvoke =
-            !isExplicitInvokeMemberAccess &&
-            invocation.Method.DeclaringTypeName is not null &&
-            ResolveTypeReference(invocation.Method.DeclaringTypeName, knownTypes) is NamedTypeSymbol { IsDelegate: true } &&
-            invocation.Method.Name == "Invoke" &&
-            !invocation.Method.IsStatic;
+        bool isDirectDelegateInvoke;
+        using (profiler?.Invoke("CreateBoundCall.DetectDelegateInvoke"))
+        {
+            var isExplicitInvokeMemberAccess =
+                call.Target is MemberAccessExpressionSyntax { MemberName.Text: "Invoke" };
+            isDirectDelegateInvoke =
+                !isExplicitInvokeMemberAccess &&
+                invocation.Method.Name == "Invoke" &&
+                !invocation.Method.IsStatic &&
+                invocation.Method.DeclaringTypeName is not null &&
+                ResolveTypeReference(invocation.Method.DeclaringTypeName, knownTypes) is NamedTypeSymbol { IsDelegate: true };
+        }
 
-        var receiver = invocation.Method.IsStatic
-            ? null
-            : isDirectDelegateInvoke
-                ? BindReceiver(call.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
-                : call.Target switch
-            {
-                MemberAccessExpressionSyntax memberAccess => BindReceiver(memberAccess.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
-                NameExpressionSyntax nameExpression when nameExpression.Name.Parts.Count > 1 => BindReceiver(
-                    new QualifiedNameSyntax(nameExpression.Name.Parts.Take(nameExpression.Name.Parts.Count - 1).ToArray()),
-                    locals,
-                    knownFields,
-                    knownConstants,
-                    knownProperties,
-                    currentMethod,
-                    knownTypes),
-                _ => currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic
-                    ? new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self")
-                    : null
-            };
+        BoundReceiver? receiver;
+        using (profiler?.Invoke("CreateBoundCall.BindReceiver"))
+        {
+            receiver = invocation.Method.IsStatic
+                ? null
+                : isDirectDelegateInvoke
+                    ? BindKnownReceiver(call.Target, invocation.ReceiverType, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                    : call.Target switch
+                {
+                    MemberAccessExpressionSyntax memberAccess => BindKnownReceiver(memberAccess.Receiver, invocation.ReceiverType, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                    NameExpressionSyntax nameExpression when nameExpression.Name.Parts.Count > 1 => BindReceiver(
+                        new QualifiedNameSyntax(nameExpression.Name.Parts.Take(nameExpression.Name.Parts.Count - 1).ToArray()),
+                        locals,
+                        knownFields,
+                        knownConstants,
+                        knownProperties,
+                        currentMethod,
+                        knownTypes),
+                    _ => currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic
+                        ? new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self")
+                        : null
+                };
+        }
 
         var kind = invocation.Method.IsConstructor
             ? BoundCallKind.Constructor
@@ -664,28 +716,56 @@ public static partial class SemanticFacts
                     ? BoundCallKind.Virtual
                     : BoundCallKind.Direct;
 
-        var argumentTypes = call.Arguments
-            .Select(argument => InferExpressionType(argument.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod))
-            .ToArray();
-
         return new BoundCall(
             kind,
             GetExpressionDisplayName(call.Target),
             invocation.Method,
             invocation.Method.ReturnType,
             receiver,
-            argumentTypes,
-            call);
+            SourceExpression: call);
+    }
+
+    private static BoundReceiver? BindKnownReceiver(
+        ExpressionSyntax receiver,
+        TypeSymbol? receiverType,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IEnumerable<MethodSymbol> knownMethods,
+        IEnumerable<FieldSymbol> knownFields,
+        IEnumerable<ConstantSymbol> knownConstants,
+        IEnumerable<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        if (receiver is NameExpressionSyntax nameExpression && nameExpression.Name.Parts.Count == 1)
+        {
+            var displayName = nameExpression.Name.ToDisplayString();
+            if (displayName == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+            {
+                return new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self");
+            }
+
+            if (locals.TryGetValue(displayName, out var localType))
+            {
+                return new BoundReceiver(BoundReceiverKind.Local, localType, LocalName: displayName);
+            }
+
+            if (ResolveTypeReference(displayName, knownTypes) is { } targetType)
+            {
+                return new BoundReceiver(BoundReceiverKind.Type, targetType, TargetType: targetType);
+            }
+        }
+
+        if (receiverType is not null)
+        {
+            return new BoundReceiver(BoundReceiverKind.Expression, receiverType, SourceExpression: receiver);
+        }
+
+        return BindReceiver(receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
     }
 
     private static MethodSymbol NormalizeBoundInvocationMethod(MethodSymbol method, IReadOnlyList<TypeSymbol> knownTypes)
     {
         if (string.IsNullOrWhiteSpace(method.DeclaringTypeName))
-        {
-            return method;
-        }
-
-        if (ResolveTypeReference(method.DeclaringTypeName, knownTypes) is not NamedTypeSymbol declaringType)
         {
             return method;
         }
@@ -696,6 +776,19 @@ public static partial class SemanticFacts
             type.Name.EndsWith("<T>", StringComparison.Ordinal)
                 ? 1
                 : 0;
+
+        var openGenericMarkerCount =
+            CountOpenGenericMarkers(method.ReturnType) +
+            method.Parameters.Sum(parameter => CountOpenGenericMarkers(parameter.Type));
+        if (openGenericMarkerCount == 0)
+        {
+            return method;
+        }
+
+        if (ResolveTypeReference(method.DeclaringTypeName, knownTypes) is not NamedTypeSymbol declaringType)
+        {
+            return method;
+        }
 
         var normalized = declaringType.Methods
             .Where(candidate =>

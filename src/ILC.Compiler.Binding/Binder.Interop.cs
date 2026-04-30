@@ -388,6 +388,58 @@ public sealed partial class Binder
     private static bool IsDllImportAttribute(AttributeSyntax attribute) =>
         string.Equals(attribute.Name.Parts[^1].Text, "DllImport", StringComparison.Ordinal);
 
+    private sealed record HostImportSignature(
+        HostImportKind Kind,
+        string DeclaringTypeName,
+        string MethodName,
+        string ReturnTypeName,
+        IReadOnlyList<string> ParameterTypeNames);
+
+    private static readonly IReadOnlyList<HostImportSignature> HostImportSignatures =
+    [
+        new(HostImportKind.ConsoleWrite, "Console", "Write", "Void", ["String"]),
+        new(HostImportKind.ConsoleWriteLine, "Console", "WriteLine", "Void", ["String"]),
+        new(HostImportKind.ConsoleReadLine, "Console", "ReadLine", "String", []),
+        new(HostImportKind.EnvironmentGetCommandLineArgs, "Environment", "GetCommandLineArgsCore", "String[]", []),
+        new(HostImportKind.EnvironmentGetCurrentDirectory, "Environment", "GetCurrentDirectoryCore", "String", []),
+        new(HostImportKind.EnvironmentGetUserName, "Environment", "GetUserNameCore", "String", []),
+        new(HostImportKind.EnvironmentGetMachineName, "Environment", "GetMachineNameCore", "String", []),
+        new(HostImportKind.EnvironmentGetHomeDirectory, "Environment", "GetHomeDirectoryCore", "String", []),
+        new(HostImportKind.EnvironmentGetTempDirectory, "Environment", "GetTempDirectoryCore", "String", []),
+        new(HostImportKind.EnvironmentGetEnvironmentVariable, "Environment", "GetEnvironmentVariableCore", "String", ["String"]),
+        new(HostImportKind.EnvironmentSetEnvironmentVariable, "Environment", "SetEnvironmentVariableCore", "Void", ["String", "String"]),
+        new(HostImportKind.ClockGetMonotonicMillisecondsText, "Clock", "GetMonotonicMillisecondsTextCore", "String", []),
+        new(HostImportKind.ClockGetWallMillisecondsText, "Clock", "GetWallMillisecondsTextCore", "String", []),
+        new(HostImportKind.ClockGetWallDateTimeText, "Clock", "GetWallDateTimeTextCore", "String", []),
+        new(HostImportKind.ExceptionGetCurrentStackTrace, "Exception", "GetCurrentStackTraceCore", "String[]", []),
+        new(HostImportKind.FileExists, "File", "ExistsCore", "Boolean", ["String"]),
+        new(HostImportKind.FileReadAllText, "File", "ReadAllTextCore", "String", ["String"]),
+        new(HostImportKind.FileWriteAllText, "File", "WriteAllTextCore", "Void", ["String", "String"]),
+        new(HostImportKind.FileAppendAllText, "File", "AppendAllTextCore", "Void", ["String", "String"]),
+        new(HostImportKind.PathCombine, "Path", "CombineCore", "String", ["String", "String"]),
+        new(HostImportKind.PathGetFileName, "Path", "GetFileNameCore", "String", ["String"]),
+        new(HostImportKind.PathGetDirectoryName, "Path", "GetDirectoryNameCore", "String", ["String"]),
+        new(HostImportKind.PathGetExtension, "Path", "GetExtensionCore", "String", ["String"]),
+        new(HostImportKind.TcpConnect, "TcpClient", "ConnectCore", "Integer", ["String", "Integer"]),
+        new(HostImportKind.TcpReadLine, "TcpClient", "ReadLineCore", "String", ["Integer"]),
+        new(HostImportKind.TcpWriteLine, "TcpClient", "WriteLineCore", "Void", ["Integer", "String"]),
+        new(HostImportKind.TcpClose, "TcpClient", "CloseCore", "Void", ["Integer"]),
+        new(HostImportKind.HttpGetString, "HttpClient", "GetStringCore", "String", ["String"]),
+        new(HostImportKind.WebSocketConnect, "WebSocketClient", "ConnectCore", "Integer", ["String"]),
+        new(HostImportKind.WebSocketReceiveText, "WebSocketClient", "ReceiveTextCore", "String", ["Integer"]),
+        new(HostImportKind.WebSocketSendText, "WebSocketClient", "SendTextCore", "Void", ["Integer", "String"]),
+        new(HostImportKind.WebSocketClose, "WebSocketClient", "CloseCore", "Void", ["Integer"]),
+        new(HostImportKind.ThreadSleep, "Thread", "SleepCore", "Void", ["Integer"]),
+        new(HostImportKind.ThreadGetCurrentManagedId, "Thread", "GetCurrentManagedIdCore", "Integer", []),
+        new(HostImportKind.ThreadStartRunnable, "Thread", "StartCore", "Integer", ["IRunnable"]),
+        new(HostImportKind.ThreadJoin, "Thread", "JoinCore", "Void", ["Integer"]),
+        new(HostImportKind.ThreadIsAlive, "Thread", "IsAliveCore", "Boolean", ["Integer"]),
+        new(HostImportKind.MutexCreate, "Mutex", "CreateCore", "Integer", []),
+        new(HostImportKind.MutexWaitOne, "Mutex", "WaitOneCore", "Boolean", ["Integer"]),
+        new(HostImportKind.MutexRelease, "Mutex", "ReleaseCore", "Void", ["Integer"]),
+        new(HostImportKind.MutexClose, "Mutex", "CloseCore", "Void", ["Integer"])
+    ];
+
     private static HostImportKind ResolveHostImportKind(
         string methodName,
         TypeSymbol returnType,
@@ -396,367 +448,33 @@ public sealed partial class Binder
         bool isStatic,
         bool isExtern)
     {
-        if (!isExtern)
+        if (!isExtern || !isStatic || declaringTypeName is null)
         {
             return HostImportKind.None;
         }
 
-        if (declaringTypeName == "Console" && isStatic)
-        {
-            if (methodName == "Write" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.ConsoleWrite;
-            }
-
-            if (methodName == "WriteLine" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.ConsoleWriteLine;
-            }
-
-            if (methodName == "ReadLine" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.ConsoleReadLine;
-            }
-        }
-
-        if (declaringTypeName == "Environment" && isStatic)
-        {
-            if (methodName == "GetCommandLineArgsCore" &&
-                returnType.Name == $"{TypeSymbol.String.Name}[]" &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.EnvironmentGetCommandLineArgs;
-            }
-
-            if (methodName == "GetCurrentDirectoryCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.EnvironmentGetCurrentDirectory;
-            }
-
-            if (methodName == "GetUserNameCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.EnvironmentGetUserName;
-            }
-
-            if (methodName == "GetMachineNameCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.EnvironmentGetMachineName;
-            }
-
-            if (methodName == "GetHomeDirectoryCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.EnvironmentGetHomeDirectory;
-            }
-
-            if (methodName == "GetTempDirectoryCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.EnvironmentGetTempDirectory;
-            }
-
-            if (methodName == "GetEnvironmentVariableCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.EnvironmentGetEnvironmentVariable;
-            }
-
-            if (methodName == "SetEnvironmentVariableCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.String &&
-                parameters[1].Type == TypeSymbol.String)
-            {
-                return HostImportKind.EnvironmentSetEnvironmentVariable;
-            }
-        }
-
-        if (declaringTypeName == "Clock" && isStatic)
-        {
-            if (methodName == "GetMonotonicMillisecondsTextCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.ClockGetMonotonicMillisecondsText;
-            }
-
-            if (methodName == "GetWallMillisecondsTextCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.ClockGetWallMillisecondsText;
-            }
-
-            if (methodName == "GetWallDateTimeTextCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.ClockGetWallDateTimeText;
-            }
-        }
-
-        if (declaringTypeName == "Exception" && isStatic)
-        {
-            if (methodName == "GetCurrentStackTraceCore" &&
-                returnType.Name == $"{TypeSymbol.String.Name}[]" &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.ExceptionGetCurrentStackTrace;
-            }
-        }
-
-        if (declaringTypeName == "File" && isStatic)
-        {
-            if (methodName == "ExistsCore" &&
-                returnType == TypeSymbol.Boolean &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.FileExists;
-            }
-
-            if (methodName == "ReadAllTextCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.FileReadAllText;
-            }
-
-            if (methodName == "WriteAllTextCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.String &&
-                parameters[1].Type == TypeSymbol.String)
-            {
-                return HostImportKind.FileWriteAllText;
-            }
-
-            if (methodName == "AppendAllTextCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.String &&
-                parameters[1].Type == TypeSymbol.String)
-            {
-                return HostImportKind.FileAppendAllText;
-            }
-        }
-
-        if (declaringTypeName == "Path" && isStatic)
-        {
-            if (methodName == "CombineCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.String &&
-                parameters[1].Type == TypeSymbol.String)
-            {
-                return HostImportKind.PathCombine;
-            }
-
-            if (methodName == "GetFileNameCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.PathGetFileName;
-            }
-
-            if (methodName == "GetDirectoryNameCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.PathGetDirectoryName;
-            }
-
-            if (methodName == "GetExtensionCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.PathGetExtension;
-            }
-        }
-
-        if (declaringTypeName == "TcpClient" && isStatic)
-        {
-            if (methodName == "ConnectCore" &&
-                returnType == TypeSymbol.Integer &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.String &&
-                parameters[1].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.TcpConnect;
-            }
-
-            if (methodName == "ReadLineCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.TcpReadLine;
-            }
-
-            if (methodName == "WriteLineCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.Integer &&
-                parameters[1].Type == TypeSymbol.String)
-            {
-                return HostImportKind.TcpWriteLine;
-            }
-
-            if (methodName == "CloseCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.TcpClose;
-            }
-        }
-
-        if (declaringTypeName == "HttpClient" && isStatic)
-        {
-            if (methodName == "GetStringCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.HttpGetString;
-            }
-        }
-
-        if (declaringTypeName == "WebSocketClient" && isStatic)
-        {
-            if (methodName == "ConnectCore" &&
-                returnType == TypeSymbol.Integer &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.String)
-            {
-                return HostImportKind.WebSocketConnect;
-            }
-
-            if (methodName == "ReceiveTextCore" &&
-                returnType == TypeSymbol.String &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.WebSocketReceiveText;
-            }
-
-            if (methodName == "SendTextCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 2 &&
-                parameters[0].Type == TypeSymbol.Integer &&
-                parameters[1].Type == TypeSymbol.String)
-            {
-                return HostImportKind.WebSocketSendText;
-            }
-
-            if (methodName == "CloseCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.WebSocketClose;
-            }
-        }
-
-        if (declaringTypeName == "Thread" && isStatic)
-        {
-            if (methodName == "SleepCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.ThreadSleep;
-            }
-
-            if (methodName == "GetCurrentManagedIdCore" &&
-                returnType == TypeSymbol.Integer &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.ThreadGetCurrentManagedId;
-            }
-
-            if (methodName == "StartCore" &&
-                returnType == TypeSymbol.Integer &&
-                parameters.Count == 1 &&
-                parameters[0].Type.Name == "IRunnable")
-            {
-                return HostImportKind.ThreadStartRunnable;
-            }
-
-            if (methodName == "JoinCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.ThreadJoin;
-            }
-
-            if (methodName == "IsAliveCore" &&
-                returnType == TypeSymbol.Boolean &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.ThreadIsAlive;
-            }
-        }
-
-        if (declaringTypeName == "Mutex" && isStatic)
-        {
-            if (methodName == "CreateCore" &&
-                returnType == TypeSymbol.Integer &&
-                parameters.Count == 0)
-            {
-                return HostImportKind.MutexCreate;
-            }
-
-            if (methodName == "WaitOneCore" &&
-                returnType == TypeSymbol.Boolean &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.MutexWaitOne;
-            }
-
-            if (methodName == "ReleaseCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.MutexRelease;
-            }
-
-            if (methodName == "CloseCore" &&
-                returnType == TypeSymbol.Void &&
-                parameters.Count == 1 &&
-                parameters[0].Type == TypeSymbol.Integer)
-            {
-                return HostImportKind.MutexClose;
-            }
-        }
-
-        return HostImportKind.None;
+        return HostImportSignatures.FirstOrDefault(signature =>
+            signature.DeclaringTypeName == declaringTypeName &&
+            signature.MethodName == methodName &&
+            signature.ReturnTypeName == returnType.Name &&
+            HostImportParameterTypesMatch(signature.ParameterTypeNames, parameters))?.Kind ?? HostImportKind.None;
     }
 
+    private static bool HostImportParameterTypesMatch(IReadOnlyList<string> expectedTypeNames, IReadOnlyList<ParameterSymbol> parameters)
+    {
+        if (expectedTypeNames.Count != parameters.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < expectedTypeNames.Count; index++)
+        {
+            if (parameters[index].Type.Name != expectedTypeNames[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
