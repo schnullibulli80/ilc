@@ -2335,6 +2335,79 @@ else
     }
 }
 
+var genericReachabilityTree = SyntaxTree.Parse("""
+public class Box<T>
+begin
+  private var Value: T;
+
+  public property Item: T
+  begin
+    get
+    begin
+      return Value;
+    end;
+
+    set(value)
+    begin
+      Value := value;
+    end;
+  end;
+end;
+
+public class Program
+begin
+  public static function Main(): Integer;
+  begin
+    var box := new Box<Integer>();
+    box.Item := 41;
+    return box.Item + 1;
+  end;
+end;
+""");
+
+var genericReachabilityBinding = new Binder().Bind(genericReachabilityTree);
+if (genericReachabilityBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should accept closed generic construction with property accessor use. Actual: " +
+        string.Join(", ", genericReachabilityBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message)));
+}
+else
+{
+    var genericMain = genericReachabilityBinding.Compilation.EntryPoint;
+    if (genericMain is null)
+    {
+        failures.Add("Binder should resolve the generic reachability entry point.");
+    }
+    else
+    {
+        var genericClosure = ReachableCompilationBuilder.Build(
+            [genericMain],
+            genericReachabilityBinding.Compilation.GetAllMethods(),
+            genericReachabilityBinding.Compilation.GetAllFields(),
+            genericReachabilityBinding.Compilation.Types,
+            genericReachabilityBinding.Compilation.GetAllProperties(),
+            genericReachabilityBinding.Compilation.GetAllConstants());
+        if (debugEnabled)
+        {
+            Console.Error.WriteLine(
+                "debug.reachability.generic=" +
+                $"methods={genericClosure.Methods.Count},functions={genericClosure.Functions.Count},propertyAccessors={genericClosure.Stats.PropertyAccessorMethodsEnqueued},types=" +
+                string.Join("|", genericClosure.Types.Select(type => type.Name)) +
+                ",methodNames=" +
+                string.Join("|", genericClosure.Methods.Select(method => $"{method.DeclaringTypeName}.{method.Name}")));
+        }
+
+        if (!genericClosure.Types.Any(type => type.Name == "Box<Integer>") ||
+            !genericClosure.Methods.Any(method => method.Name == "get_Item") ||
+            !genericClosure.Methods.Any(method => method.Name == "set_Item") ||
+            genericClosure.Functions.Count != genericClosure.Methods.Count)
+        {
+            failures.Add("Reachability should retain closed generic types, property accessors and one lowered IR function per reachable method.");
+        }
+    }
+}
+
 var interfaceMethodDispatchTree = SyntaxTree.Parse("""
 public interface IWorker
 begin
@@ -2497,6 +2570,122 @@ var inheritedInterfaceDispatchBinding = new Binder().Bind(inheritedInterfaceDisp
 if (inheritedInterfaceDispatchBinding.HasErrors)
 {
     failures.Add($"Binder should allow inherited interface method and property dispatch through sub-interface receivers. Actual: {string.Join(", ", inheritedInterfaceDispatchBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message))}");
+}
+else
+{
+    var probeMethod = inheritedInterfaceDispatchBinding.Compilation.GetAllMethods()
+        .FirstOrDefault(method => method.Name == "Probe" && method.DeclaringTypeName == "Program");
+    if (probeMethod is null)
+    {
+        failures.Add("Binder should expose the inherited interface dispatch probe method.");
+    }
+    else
+    {
+        var interfaceDispatchClosure = ReachableCompilationBuilder.Build(
+            [probeMethod],
+            inheritedInterfaceDispatchBinding.Compilation.GetAllMethods(),
+            inheritedInterfaceDispatchBinding.Compilation.GetAllFields(),
+            inheritedInterfaceDispatchBinding.Compilation.Types,
+            inheritedInterfaceDispatchBinding.Compilation.GetAllProperties(),
+            inheritedInterfaceDispatchBinding.Compilation.GetAllConstants());
+        if (debugEnabled)
+        {
+            Console.Error.WriteLine(
+                "debug.reachability.interfaceDispatch=" +
+                $"methods={interfaceDispatchClosure.Methods.Count},functions={interfaceDispatchClosure.Functions.Count},interfaceDispatch={interfaceDispatchClosure.Stats.InterfaceDispatchMethodsEnqueued},methodNames=" +
+                string.Join("|", interfaceDispatchClosure.Methods.Select(method => $"{method.DeclaringTypeName}.{method.Name}")));
+        }
+
+        if (interfaceDispatchClosure.Stats.InterfaceDispatchMethodsEnqueued == 0 ||
+            !interfaceDispatchClosure.Methods.Any(method => method.Name == "Boost" && method.DeclaringTypeName == "IWorker") ||
+            !interfaceDispatchClosure.Methods.Any(method => method.Name == "Boost" && method.DeclaringTypeName == "Worker") ||
+            !interfaceDispatchClosure.Methods.Any(method => method.Name == "get_Name" && method.DeclaringTypeName == "Worker") ||
+            interfaceDispatchClosure.Functions.Count != interfaceDispatchClosure.Methods.Count)
+        {
+            failures.Add("Reachability should retain inherited interface dispatch methods, concrete implementations, property accessors and matching lowered IR functions.");
+        }
+    }
+}
+
+var resolverRegressionTree = SyntaxTree.Parse("""
+public class View
+begin
+end;
+
+public class StackPanel: View
+begin
+  public function ChildCount(): Integer;
+  begin
+    return 1;
+  end;
+end;
+
+public class Host
+begin
+  private var ContentValue: View;
+
+  public property Content: View
+  begin
+    get
+    begin
+      return ContentValue;
+    end;
+
+    set(value)
+    begin
+      ContentValue := value;
+    end;
+  end;
+
+  public function Probe(input: View): Integer;
+  begin
+    self.Content := input;
+    var panel := (self.Content as StackPanel);
+    var count := panel.ChildCount() + (self.Content as StackPanel).ChildCount();
+    return count;
+  end;
+end;
+""");
+
+var resolverRegressionBinding = new Binder().Bind(resolverRegressionTree);
+if (resolverRegressionBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should resolve local names, self property access and casted receiver member calls without false diagnostics. Actual: " +
+        string.Join(", ", resolverRegressionBinding.Diagnostics.Select(diagnostic => diagnostic.Id + ':' + diagnostic.Message)));
+}
+else
+{
+    var resolverProbe = resolverRegressionBinding.Compilation.GetAllMethods()
+        .FirstOrDefault(method => method.Name == "Probe" && method.DeclaringTypeName == "Host");
+    if (resolverProbe is null)
+    {
+        failures.Add("Binder should expose the resolver regression probe method.");
+    }
+    else
+    {
+        var resolverIr = new Lowerer(
+            resolverRegressionBinding.Compilation.GetAllMethods(),
+            resolverRegressionBinding.Compilation.GetAllFields(),
+            resolverRegressionBinding.Compilation.Types,
+            resolverRegressionBinding.Compilation.GetAllProperties(),
+            resolverRegressionBinding.Compilation.GetAllConstants()).Lower(resolverProbe);
+        var resolverInstructions = resolverIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+        if (debugEnabled)
+        {
+            Console.Error.WriteLine(
+                "debug.resolver.regression.ir=" +
+                string.Join("|", resolverInstructions.Select(instruction => instruction.OpCode.ToString())));
+        }
+
+        if (!resolverInstructions.Any(instruction => instruction.OpCode == IrOpCode.AsReference) ||
+            !resolverInstructions.Any(instruction =>
+                instruction.OpCode is IrOpCode.Call or IrOpCode.CallVirtual &&
+                (instruction.Operand is not IrCallTarget callTarget || callTarget.Method?.Name == "ChildCount")))
+        {
+            failures.Add("Lowerer should preserve casted receiver access and virtual calls after self/property resolver fast paths.");
+        }
+    }
 }
 
 var invalidInheritanceTree = SyntaxTree.Parse("""
@@ -3674,6 +3863,39 @@ else if (!capturingLambdaBinding.Compilation.Types.OfType<NamedTypeSymbol>().Any
 {
     failures.Add("Binder should synthesize closure types with capture fields for capturing lambdas.");
 }
+else
+{
+    var captureTestMethod = capturingLambdaBinding.Compilation.GetAllMethods()
+        .FirstOrDefault(method => method.Name == "Test" && method.DeclaringTypeName == "LambdaCaptureHost");
+    if (captureTestMethod is null)
+    {
+        failures.Add("Binder should expose the capturing lambda test method.");
+    }
+    else
+    {
+        var captureClosure = ReachableCompilationBuilder.Build(
+            [captureTestMethod],
+            capturingLambdaBinding.Compilation.GetAllMethods(),
+            capturingLambdaBinding.Compilation.GetAllFields(),
+            capturingLambdaBinding.Compilation.Types,
+            capturingLambdaBinding.Compilation.GetAllProperties(),
+            capturingLambdaBinding.Compilation.GetAllConstants());
+        if (debugEnabled)
+        {
+            Console.Error.WriteLine(
+                "debug.reachability.lambdaCapture=" +
+                $"methods={captureClosure.Methods.Count},functions={captureClosure.Functions.Count},types=" +
+                string.Join("|", captureClosure.Types.Select(type => type.Name)));
+        }
+
+        if (!captureClosure.Types.OfType<NamedTypeSymbol>().Any(type => type.Name.StartsWith("__LambdaClosure_", StringComparison.Ordinal)) ||
+            !captureClosure.Methods.Any(method => method.LambdaSource is not null && !method.IsStatic) ||
+            captureClosure.Functions.Count != captureClosure.Methods.Count)
+        {
+            failures.Add("Reachability should retain capturing lambda closure types, instance lambda bodies and matching lowered IR functions.");
+        }
+    }
+}
 
 var enumerablePipelineTree = SyntaxTree.Parse("""
 uses System.Collections;
@@ -4563,6 +4785,43 @@ else if (debugEnabled)
         $"{completionCallback.Name}(" +
         string.Join(", ", completionInvoke.Parameters.Select(parameter => $"{parameter.PassingKind}:{parameter.Type.Name}")) +
         $"):{completionInvoke.ReturnType.Name}");
+}
+
+if (!validDllImportAbiBinding.HasErrors)
+{
+    var openPoint = validDllImportAbiBinding.Compilation.GetAllMethods()
+        .FirstOrDefault(method => method.Name == "OpenPoint" && method.DeclaringTypeName == "Native");
+    if (openPoint is null)
+    {
+        failures.Add("Binder should expose the DllImport callback root method.");
+    }
+    else
+    {
+        var callbackClosure = ReachableCompilationBuilder.Build(
+            [openPoint],
+            validDllImportAbiBinding.Compilation.GetAllMethods(),
+            validDllImportAbiBinding.Compilation.GetAllFields(),
+            validDllImportAbiBinding.Compilation.Types,
+            validDllImportAbiBinding.Compilation.GetAllProperties(),
+            validDllImportAbiBinding.Compilation.GetAllConstants());
+        if (debugEnabled)
+        {
+            Console.Error.WriteLine(
+                "debug.reachability.nativeCallback=" +
+                $"methods={callbackClosure.Methods.Count},functions={callbackClosure.Functions.Count},nativeCallbacks={callbackClosure.Stats.NativeCallbackMethodsEnqueued},methodNames=" +
+                string.Join("|", callbackClosure.Methods.Select(method => $"{method.DeclaringTypeName}.{method.Name}:{method.HostImportKind}")));
+        }
+
+        if (callbackClosure.Stats.NativeCallbackMethodsEnqueued == 0 ||
+            !callbackClosure.Methods.Any(method =>
+                method.Name == "Invoke" &&
+                method.DeclaringTypeName == "CompletionCallback" &&
+                method.HostImportKind == HostImportKind.DelegateInvoke) ||
+            callbackClosure.Functions.Count != callbackClosure.Methods.Count)
+        {
+            failures.Add("Reachability should retain delegate Invoke methods passed through DllImport callback parameters.");
+        }
+    }
 }
 
 var validDllImportVoidCallbackTree = SyntaxTree.Parse("""
