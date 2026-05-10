@@ -113,13 +113,16 @@ public static partial class SemanticFacts
             return new MemberResolution(displayName);
         }
 
-        var receiverType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var receiverType = memberAccess.Receiver is NameExpressionSyntax receiverName
+            ? TryResolveValueReferenceType(receiverName.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
+                ?? InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
+            : InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (memberAccess.MemberName.Text == "Length" && HasLengthProperty(receiverType))
         {
             return new MemberResolution(displayName, TypeSymbol.Integer);
         }
 
-        var typeHierarchy = GetReceiverTypeHierarchy(receiverType, knownTypes ?? []);
+        var typeHierarchy = GetReceiverTypeHierarchy(receiverType, knownTypes ?? []).ToArray();
         var property = typeHierarchy
             .SelectMany(knownType => knownType.Properties
                 .Where(candidate =>

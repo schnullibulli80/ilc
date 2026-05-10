@@ -143,7 +143,7 @@ public sealed partial class Lowerer
                 TypeSymbol resolvedConstructedObjectType;
                 using (Profile("NewExpression.ResolveConstructedType"))
                 {
-                    resolvedConstructedObjectType = SemanticFacts.ResolveTypeReference(constructedObjectType.Name, _knownTypes) ?? constructedObjectType;
+                    resolvedConstructedObjectType = ResolveKnownTypeReference(constructedObjectType.Name) ?? constructedObjectType;
                 }
 
                 MethodSymbol? constructor;
@@ -166,7 +166,7 @@ public sealed partial class Lowerer
                 using (Profile("NewExpression.ResolveEffectiveType"))
                 {
                     effectiveConstructedObjectType = !string.IsNullOrWhiteSpace(constructor?.DeclaringTypeName)
-                        ? SemanticFacts.ResolveTypeReference(constructor.DeclaringTypeName!, _knownTypes) ?? new TypeSymbol(constructor.DeclaringTypeName!, true)
+                        ? ResolveKnownTypeReference(constructor.DeclaringTypeName!) ?? new TypeSymbol(constructor.DeclaringTypeName!, true)
                         : constructedObjectType;
                 }
 
@@ -303,6 +303,9 @@ public sealed partial class Lowerer
             case MemberAccessExpressionSyntax memberAccess when ResolveBoundRead(memberAccess, registerByName, currentMethod) is { } boundRead:
                 LowerBoundReadInto(boundRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
+            case NameExpressionSyntax name when registerByName.TryGetValue(name.Name.ToDisplayString(), out var localRegister):
+                instructions.Add(new IrInstruction(IrOpCode.Copy, destination, localRegister));
+                return;
             case NameExpressionSyntax name when ResolveBoundRead(name, registerByName, currentMethod) is { Kind: not BoundMemberReadKind.Local } boundRead:
                 LowerBoundReadInto(boundRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
@@ -384,12 +387,17 @@ public sealed partial class Lowerer
                     return;
                 }
 
-                if (TryLowerSetBinary(binary, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+                if (TryLowerSimpleStringConcatenation(binary, destination, localTypes, registerByName, arrayShapesByName, registers, instructions, currentMethod))
                 {
                     return;
                 }
 
                 if (TryLowerStringConcatenationChain(binary, destination, localTypes, registerByName, arrayShapesByName, registers, instructions, currentMethod))
+                {
+                    return;
+                }
+
+                if (TryLowerSetBinary(binary, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod))
                 {
                     return;
                 }
@@ -540,7 +548,7 @@ public sealed partial class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        var delegateType = SemanticFacts.ResolveTypeReference(destination.Type.Name, _knownTypes) as NamedTypeSymbol;
+        var delegateType = ResolveKnownTypeReference(destination.Type.Name) as NamedTypeSymbol;
         if (delegateType is not { IsDelegate: true })
         {
             return false;
@@ -666,7 +674,10 @@ public sealed partial class Lowerer
             return false;
         }
 
-        var delegateType = SemanticFacts.ResolveTypeReference(destination.Type.Name, _knownTypes) as NamedTypeSymbol;
+        using var profile = Profile("TryLowerDelegateLambdaInto");
+        var delegateType = Profiled(
+            "TryLowerDelegateLambdaInto.ResolveDelegateType",
+            () => ResolveKnownTypeReference(destination.Type.Name) as NamedTypeSymbol);
         if (delegateType is not { IsDelegate: true })
         {
             return false;
@@ -676,54 +687,25 @@ public sealed partial class Lowerer
             ReferenceEquals(left, right) ||
             string.Equals(left.Name, right.Name, StringComparison.Ordinal);
 
-        var targetMethod = _knownMethods.FirstOrDefault(method => method.LambdaSource is not null && method.LambdaSource.Equals(lambda));
-        if (targetMethod is null)
+        MethodSymbol? targetMethod;
+        using (Profile("TryLowerDelegateLambdaInto.ResolveTargetMethod"))
         {
-            var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
-            if (invokeMethod is not null)
+            if (!_lambdaMethodBySyntax.TryGetValue(lambda, out targetMethod))
             {
-                var matchingLambdaMethods = _knownMethods
-                    .Where(method =>
-                        method.LambdaSource is not null &&
-                        method.Parameters.Count == invokeMethod.Parameters.Count &&
-                        TypesMatch(method.ReturnType, invokeMethod.ReturnType))
-                    .Where(method => method.Parameters.Zip(invokeMethod.Parameters, (left, right) => TypesMatch(left.Type, right.Type)).All(matches => matches))
-                    .ToArray();
-                var bodyDisplayName = SemanticFacts.GetExpressionDisplayName(lambda.Body);
-                var exactBodyMatches = matchingLambdaMethods
-                    .Where(method => method.LambdaSource is not null && method.LambdaSource.Body.Equals(lambda.Body))
-                    .ToArray();
-                if (exactBodyMatches.Length > 0)
-                {
-                    targetMethod = exactBodyMatches[0];
-                }
-                else
-                {
-                    exactBodyMatches = matchingLambdaMethods
-                        .Where(method => method.LambdaSource is not null && SemanticFacts.GetExpressionDisplayName(method.LambdaSource.Body) == bodyDisplayName)
-                        .ToArray();
-                    if (exactBodyMatches.Length > 0)
-                    {
-                        targetMethod = exactBodyMatches[0];
-                    }
-                }
-
-                if (targetMethod is null && matchingLambdaMethods.Length > 0)
-                {
-                    targetMethod = matchingLambdaMethods[0];
-                }
+                targetMethod = ResolveLambdaTargetBySignature(lambda, delegateType, TypesMatch);
             }
         }
 
-        var constructor = delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2);
+        var constructor = Profiled(
+            "TryLowerDelegateLambdaInto.ResolveConstructor",
+            () => delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2));
         if (targetMethod is null || constructor is null)
         {
             if (currentMethod?.DeclaringTypeName == "Program" &&
                 currentMethod.Name == "Main")
             {
                 var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
-                var helperCandidates = _knownMethods
-                    .Where(method => method.LambdaSource is not null)
+                var helperCandidates = _knownLambdaMethods
                     .Select(method =>
                     {
                         var parameterTypes = string.Join(", ", method.Parameters.Select(parameter => parameter.Type.Name));
@@ -752,20 +734,23 @@ public sealed partial class Lowerer
             _knownTypes.FirstOrDefault(type => type.Name == targetMethod.DeclaringTypeName) is NamedTypeSymbol closureType &&
             closureType.Fields.Count > 0)
         {
-            targetObjectRegister = AllocateTemp(closureType, registers);
-            instructions.Add(new IrInstruction(IrOpCode.NewObject, targetObjectRegister, closureType.Name));
-            foreach (var captureField in closureType.Fields.Where(field => !field.IsStatic))
+            using (Profile("TryLowerDelegateLambdaInto.EmitClosure"))
             {
-                if (!registerByName.TryGetValue(captureField.Name, out var capturedRegister))
+                targetObjectRegister = AllocateTemp(closureType, registers);
+                instructions.Add(new IrInstruction(IrOpCode.NewObject, targetObjectRegister, closureType.Name));
+                foreach (var captureField in closureType.Fields.Where(field => !field.IsStatic))
                 {
-                    throw new InvalidOperationException(
-                        $"Cannot lower captured lambda field '{captureField.Name}' for lambda in '{currentMethod?.DeclaringTypeName}.{currentMethod?.Name}'.");
-                }
+                    if (!registerByName.TryGetValue(captureField.Name, out var capturedRegister))
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot lower captured lambda field '{captureField.Name}' for lambda in '{currentMethod?.DeclaringTypeName}.{currentMethod?.Name}'.");
+                    }
 
-                instructions.Add(new IrInstruction(
-                    IrOpCode.StoreField,
-                    capturedRegister,
-                    new IrFieldTarget(captureField, $"{closureType.Name}.{captureField.Name}", targetObjectRegister)));
+                    instructions.Add(new IrInstruction(
+                        IrOpCode.StoreField,
+                        capturedRegister,
+                        new IrFieldTarget(captureField, $"{closureType.Name}.{captureField.Name}", targetObjectRegister)));
+                }
             }
         }
         else
@@ -790,6 +775,44 @@ public sealed partial class Lowerer
         return true;
     }
 
+    private MethodSymbol? ResolveLambdaTargetBySignature(
+        LambdaExpressionSyntax lambda,
+        NamedTypeSymbol delegateType,
+        Func<TypeSymbol, TypeSymbol, bool> typesMatch)
+    {
+        using var profile = Profile("TryLowerDelegateLambdaInto.ResolveTargetFallback");
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        if (invokeMethod is null)
+        {
+            return null;
+        }
+
+        var matchingLambdaMethods = _knownLambdaMethods
+            .Where(method =>
+                method.Parameters.Count == invokeMethod.Parameters.Count &&
+                typesMatch(method.ReturnType, invokeMethod.ReturnType))
+            .Where(method => method.Parameters.Zip(invokeMethod.Parameters, (left, right) => typesMatch(left.Type, right.Type)).All(matches => matches))
+            .ToArray();
+        var exactBodyMatches = matchingLambdaMethods
+            .Where(method => method.LambdaSource is not null && method.LambdaSource.Body.Equals(lambda.Body))
+            .ToArray();
+        if (exactBodyMatches.Length > 0)
+        {
+            return exactBodyMatches[0];
+        }
+
+        var bodyDisplayName = SemanticFacts.GetExpressionDisplayName(lambda.Body);
+        exactBodyMatches = matchingLambdaMethods
+            .Where(method => method.LambdaSource is not null && SemanticFacts.GetExpressionDisplayName(method.LambdaSource.Body) == bodyDisplayName)
+            .ToArray();
+        if (exactBodyMatches.Length > 0)
+        {
+            return exactBodyMatches[0];
+        }
+
+        return matchingLambdaMethods.Length > 0 ? matchingLambdaMethods[0] : null;
+    }
+
     private PreparedCallFrame PrepareCallFrame(
         CallExpressionSyntax call,
         BoundCall boundCall,
@@ -801,21 +824,18 @@ public sealed partial class Lowerer
         MethodSymbol? currentMethod)
     {
         using var profile = Profile("PrepareCallFrame");
-        var hasByRef = Profiled(
-            "PrepareCallFrame.CheckByRef",
-            () => method.Parameters.Any(parameter =>
-                parameter.PassingKind == ParameterPassingKind.Out || parameter.PassingKind == ParameterPassingKind.Ref));
-        if (!hasByRef)
+        var parameterShape = GetCallParameterShape(method);
+        if (!parameterShape.HasByRef)
         {
             return new PreparedCallFrame(
                 Profiled(
                     "PrepareCallFrame.LowerNonByRefArguments",
-                    () => LowerCallArguments(call, method, registerByName, arrayShapesByName, registers, instructions, currentMethod)),
+                    () => LowerCallArguments(call, method, parameterShape, registerByName, arrayShapesByName, registers, instructions, currentMethod)),
                 []);
         }
 
-        var hasParams = method.Parameters.Count > 0 && method.Parameters[^1].PassingKind == ParameterPassingKind.Params;
-        var fixedParameterCount = hasParams ? method.Parameters.Count - 1 : method.Parameters.Count;
+        var hasParams = parameterShape.HasParams;
+        var fixedParameterCount = parameterShape.FixedParameterCount;
         var evaluatedArguments = new List<IrValue>();
         var copyBacks = new List<(ExpressionSyntax Target, IrValue Source)>();
 
@@ -904,9 +924,35 @@ public sealed partial class Lowerer
         return new PreparedCallFrame(packedArguments, copyBacks, packedReceiver);
     }
 
+    private CallParameterShape GetCallParameterShape(MethodSymbol method)
+    {
+        if (_callParameterShapeCache.TryGetValue(method, out var cached))
+        {
+            return cached;
+        }
+
+        var hasParams = method.Parameters.Count > 0 && method.Parameters[^1].PassingKind == ParameterPassingKind.Params;
+        var fixedParameterCount = hasParams ? method.Parameters.Count - 1 : method.Parameters.Count;
+        var hasByRef = false;
+        for (var index = 0; index < method.Parameters.Count; index++)
+        {
+            var passingKind = method.Parameters[index].PassingKind;
+            if (passingKind == ParameterPassingKind.Out || passingKind == ParameterPassingKind.Ref)
+            {
+                hasByRef = true;
+                break;
+            }
+        }
+
+        var shape = new CallParameterShape(hasByRef, hasParams, fixedParameterCount);
+        _callParameterShapeCache[method] = shape;
+        return shape;
+    }
+
     private List<IrValue> LowerCallArguments(
         CallExpressionSyntax call,
         MethodSymbol method,
+        CallParameterShape parameterShape,
         Dictionary<string, IrValue> registerByName,
         Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
         List<IrValue> registers,
@@ -915,9 +961,9 @@ public sealed partial class Lowerer
     {
         using var profile = Profile("LowerCallArguments");
         var argumentTemps = new List<IrValue>();
-        var localTypes = GetLocalTypes(registerByName);
-        var hasParams = method.Parameters.Count > 0 && method.Parameters[^1].PassingKind == ParameterPassingKind.Params;
-        var fixedParameterCount = hasParams ? method.Parameters.Count - 1 : method.Parameters.Count;
+        IReadOnlyDictionary<string, TypeSymbol>? localTypes = null;
+        var hasParams = parameterShape.HasParams;
+        var fixedParameterCount = parameterShape.FixedParameterCount;
 
         for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
         {
@@ -938,7 +984,14 @@ public sealed partial class Lowerer
             var argumentType = parameter?.Type ??
                 Profiled(
                     "LowerCallArguments.InferArgumentType",
-                    () => SemanticFacts.InferExpressionType(argument.Expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod));
+                    () => SemanticFacts.InferExpressionType(
+                        argument.Expression,
+                        localTypes ??= GetLocalTypes(registerByName),
+                        _knownMethods,
+                        _knownFields,
+                        _knownConstants,
+                        _knownProperties,
+                        currentMethod));
             var temp = AllocateTemp(argumentType, registers);
             argumentTemps.Add(temp);
             try
@@ -1054,13 +1107,28 @@ public sealed partial class Lowerer
     {
         if (declarator.TypeName is null)
         {
-            var inferredType = SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
-            return TryCloseTypeReferenceForCurrentMethod(inferredType, currentMethod, _knownTypes) ?? inferredType;
+            var simpleType = TypeSymbol.Unknown;
+            if (declarator.Initializer is not null &&
+                Profiled("BindLocalType.TryInferSimpleInitializer", () => TryInferSimpleLocalInitializerType(declarator.Initializer, localTypes, currentMethod, out simpleType)))
+            {
+                return simpleType;
+            }
+
+            var inferredType = Profiled(
+                "BindLocalType.InferInitializer",
+                () => SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes));
+            return Profiled(
+                "BindLocalType.CloseInferredType",
+                () => TryCloseTypeReferenceForCurrentMethod(inferredType, currentMethod, _knownTypes) ?? inferredType);
         }
 
-        var resolvedType = SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
-            ?? new TypeSymbol(declarator.TypeName.ToDisplayString(), true);
-        return TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType;
+        var declaredTypeName = declarator.TypeName.ToDisplayString();
+        var resolvedType = Profiled(
+            "BindLocalType.ResolveDeclaredType",
+            () => ResolveKnownTypeReference(declaredTypeName) ?? new TypeSymbol(declaredTypeName, true));
+        return Profiled(
+            "BindLocalType.CloseDeclaredType",
+            () => TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType);
     }
 
     private TypeSymbol BindSyntheticTopLevelType(
@@ -1070,13 +1138,452 @@ public sealed partial class Lowerer
     {
         if (declarator.TypeName is null)
         {
-            var inferredType = SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
-            return TryCloseTypeReferenceForCurrentMethod(inferredType, currentMethod, _knownTypes) ?? inferredType;
+            var simpleType = TypeSymbol.Unknown;
+            if (declarator.Initializer is not null &&
+                Profiled("BindSyntheticTopLevelType.TryInferSimpleInitializer", () => TryInferSimpleLocalInitializerType(declarator.Initializer, localTypes, currentMethod, out simpleType)))
+            {
+                return simpleType;
+            }
+
+            var inferredType = Profiled(
+                "BindSyntheticTopLevelType.InferInitializer",
+                () => SemanticFacts.InferExpressionType(declarator.Initializer, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes));
+            return Profiled(
+                "BindSyntheticTopLevelType.CloseInferredType",
+                () => TryCloseTypeReferenceForCurrentMethod(inferredType, currentMethod, _knownTypes) ?? inferredType);
         }
 
-        var resolvedType = SemanticFacts.ResolveTypeReference(declarator.TypeName.ToDisplayString(), _knownTypes)
-            ?? new TypeSymbol(declarator.TypeName.ToDisplayString(), true);
-        return TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType;
+        var declaredTypeName = declarator.TypeName.ToDisplayString();
+        var resolvedType = Profiled(
+            "BindSyntheticTopLevelType.ResolveDeclaredType",
+            () => ResolveKnownTypeReference(declaredTypeName) ?? new TypeSymbol(declaredTypeName, true));
+        return Profiled(
+            "BindSyntheticTopLevelType.CloseDeclaredType",
+            () => TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType);
+    }
+
+    private bool TryInferSimpleLocalInitializerType(
+        ExpressionSyntax expression,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        switch (expression)
+        {
+            case LiteralExpressionSyntax literal:
+                type = literal.LiteralToken.Kind switch
+                {
+                    SyntaxKind.TrueKeyword or SyntaxKind.FalseKeyword => TypeSymbol.Boolean,
+                    SyntaxKind.StringToken => TypeSymbol.String,
+                    SyntaxKind.NilKeyword => TypeSymbol.Nil,
+                    _ => TypeSymbol.Integer
+                };
+                return true;
+            case NameExpressionSyntax name when localTypes.TryGetValue(name.Name.ToDisplayString(), out var localType):
+                type = localType;
+                return true;
+            case NameExpressionSyntax name:
+            {
+                type = SemanticFacts.TryResolveValueReferenceType(
+                    name.Name,
+                    localTypes,
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod,
+                    _knownTypes) ?? TypeSymbol.Unknown;
+                return type != TypeSymbol.Unknown;
+            }
+            case MemberAccessExpressionSyntax memberAccess:
+            {
+                using var profile = Profile("SimpleType.MemberAccess");
+                if (TryFlattenValueQualifiedName(memberAccess) is { } qualifiedName)
+                {
+                    using var valueProfile = Profile("SimpleType.MemberAccess.ValueReference");
+                    type = SemanticFacts.TryResolveValueReferenceType(
+                        qualifiedName,
+                        localTypes,
+                        _knownFields,
+                        _knownConstants,
+                        _knownProperties,
+                        currentMethod,
+                        _knownTypes) ?? TypeSymbol.Unknown;
+                    if (type != TypeSymbol.Unknown)
+                    {
+                        return true;
+                    }
+                }
+
+                using var fallbackProfile = Profile("SimpleType.MemberAccess.ResolveMemberAccess");
+                type = SemanticFacts.ResolveMemberAccess(
+                    memberAccess,
+                    localTypes,
+                    _knownMethods,
+                    _knownFields,
+                    _knownConstants,
+                    _knownProperties,
+                    currentMethod,
+                    _knownTypes).Type ?? TypeSymbol.Unknown;
+                return type != TypeSymbol.Unknown;
+            }
+            case NewExpressionSyntax newExpression:
+            {
+                var displayName = newExpression.TypeName.ToDisplayString();
+                var resolvedType = ResolveKnownTypeReference(displayName) ?? new TypeSymbol(displayName, true);
+                type = TryCloseTypeReferenceForCurrentMethod(resolvedType, currentMethod, _knownTypes) ?? resolvedType;
+                return true;
+            }
+            case NewArrayExpressionSyntax newArray:
+            {
+                var displayName = $"{newArray.ElementTypeName.ToDisplayString()}{GetArrayTypeSuffix(newArray.LengthExpressions)}";
+                type = ResolveKnownTypeReference(displayName) ?? new TypeSymbol(displayName, true);
+                return true;
+            }
+            case SetLiteralExpressionSyntax setLiteral:
+                return TryInferSimpleSetLiteralType(setLiteral, localTypes, currentMethod, out type);
+            case RangeExpressionSyntax range:
+                return TryInferSimpleLocalInitializerType(range.Start, localTypes, currentMethod, out type);
+            case UnaryExpressionSyntax unary:
+                return TryInferSimpleUnaryType(unary, localTypes, currentMethod, out type);
+            case BinaryExpressionSyntax binary:
+                return TryInferSimpleBinaryType(binary, localTypes, currentMethod, out type);
+            case CallExpressionSyntax call:
+                return TryResolveSimpleCallExpressionType(call, localTypes, currentMethod, out type);
+            case ParenthesizedExpressionSyntax parenthesized:
+                return TryInferSimpleLocalInitializerType(parenthesized.Expression, localTypes, currentMethod, out type);
+            case TypeTestExpressionSyntax:
+                type = TypeSymbol.Boolean;
+                return true;
+            case ArrayLengthExpressionSyntax:
+                type = TypeSymbol.Integer;
+                return true;
+            case AsExpressionSyntax asExpression:
+                type = ResolveTypeTestTarget(asExpression.TypeName);
+                return true;
+            default:
+                type = TypeSymbol.Unknown;
+                return false;
+        }
+    }
+
+    private bool TryInferSimpleSetLiteralType(
+        SetLiteralExpressionSyntax setLiteral,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        if (setLiteral.Elements.Count == 0)
+        {
+            type = new TypeSymbol("set", false);
+            return true;
+        }
+
+        if (!TryInferSimpleLocalInitializerType(setLiteral.Elements[0], localTypes, currentMethod, out var elementType) ||
+            !SemanticFacts.IsEnumType(elementType))
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        type = SemanticFacts.CreateSetType(elementType);
+        return true;
+    }
+
+    private bool TryInferSimpleUnaryType(
+        UnaryExpressionSyntax unary,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        if (!TryInferSimpleLocalInitializerType(unary.Operand, localTypes, currentMethod, out var operandType))
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        if (unary.OperatorToken.Kind == SyntaxKind.NotKeyword)
+        {
+            type = operandType == TypeSymbol.Boolean ? TypeSymbol.Boolean : TypeSymbol.Unknown;
+            return type != TypeSymbol.Unknown;
+        }
+
+        type = operandType;
+        return true;
+    }
+
+    private bool TryInferSimpleBinaryType(
+        BinaryExpressionSyntax binary,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        if (binary.OperatorToken.Kind is SyntaxKind.InKeyword or SyntaxKind.NotInKeyword ||
+            IsComparisonOperator(binary.OperatorToken.Kind))
+        {
+            type = TypeSymbol.Boolean;
+            return true;
+        }
+
+        if (!TryInferSimpleLocalInitializerType(binary.Left, localTypes, currentMethod, out var leftType) ||
+            !TryInferSimpleLocalInitializerType(binary.Right, localTypes, currentMethod, out var rightType))
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        if (binary.OperatorToken.Kind == SyntaxKind.PlusToken &&
+            leftType == TypeSymbol.String &&
+            rightType == TypeSymbol.String)
+        {
+            type = TypeSymbol.String;
+            return true;
+        }
+
+        if (binary.OperatorToken.Kind == SyntaxKind.NullCoalescingToken)
+        {
+            if (leftType.IsReferenceType && leftType != TypeSymbol.Nil)
+            {
+                type = leftType;
+                return true;
+            }
+
+            if (rightType.IsReferenceType && rightType != TypeSymbol.Nil)
+            {
+                type = rightType;
+                return true;
+            }
+
+            type = leftType;
+            return true;
+        }
+
+        if (binary.OperatorToken.Kind is SyntaxKind.ShlKeyword or SyntaxKind.ShrKeyword)
+        {
+            type = SemanticFacts.IsBuiltInIntegerType(leftType) ? leftType : TypeSymbol.Unknown;
+            return type != TypeSymbol.Unknown;
+        }
+
+        if (SemanticFacts.IsSetType(leftType) && SemanticFacts.IsSetType(rightType))
+        {
+            type = leftType;
+            return true;
+        }
+
+        if (leftType == TypeSymbol.Unknown)
+        {
+            type = rightType == TypeSymbol.Unknown ? TypeSymbol.Unknown : rightType;
+            return type != TypeSymbol.Unknown;
+        }
+
+        type = rightType == TypeSymbol.Unknown ? leftType : TypeSymbol.Integer;
+        return true;
+    }
+
+    private static string GetArrayTypeSuffix(IReadOnlyList<ExpressionSyntax> lengthExpressions)
+    {
+        var literalTexts = lengthExpressions.Select(GetArrayLengthLiteralText).ToArray();
+        if (literalTexts.All(text => text is not null))
+        {
+            return $"[{string.Join(",", literalTexts!)}]";
+        }
+
+        return lengthExpressions.Count == 1
+            ? "[]"
+            : $"[{new string(',', lengthExpressions.Count - 1)}]";
+    }
+
+    private static string? GetArrayLengthLiteralText(ExpressionSyntax expression) =>
+        expression is LiteralExpressionSyntax literal && literal.LiteralToken.Kind == SyntaxKind.NumberToken
+            ? literal.LiteralToken.Text
+            : null;
+
+    private bool TryResolveSimpleCallExpressionType(
+        CallExpressionSyntax call,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        using var profile = Profile("SimpleType.CallExpression");
+        switch (call.Target)
+        {
+            case NameExpressionSyntax name when currentMethod?.DeclaringTypeName is not null:
+            {
+                using var nameProfile = Profile("SimpleType.CallExpression.CurrentTypeMethod");
+                var candidates = EnumerateKnownMethodsByDeclaringTypeName(
+                        currentMethod.DeclaringTypeName,
+                        name.Name.ToDisplayString(),
+                        currentMethod.IsStatic ? true : (bool?)null,
+                        call.Arguments.Count)
+                    .Where(method => !method.IsConstructor);
+                return TrySelectSimpleCallReturnType(candidates, currentMethod, out type);
+            }
+            case MemberAccessExpressionSyntax memberAccess:
+            {
+                if (TryResolveSimpleStaticCallExpressionType(memberAccess, call.Arguments.Count, localTypes, currentMethod, out type))
+                {
+                    return true;
+                }
+
+                return TryResolveSimpleInstanceCallExpressionType(memberAccess, call.Arguments.Count, localTypes, currentMethod, out type);
+            }
+            default:
+                type = TypeSymbol.Unknown;
+                return false;
+        }
+    }
+
+    private bool TryResolveSimpleStaticCallExpressionType(
+        MemberAccessExpressionSyntax memberAccess,
+        int argumentCount,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        using var profile = Profile("SimpleType.CallExpression.StaticMember");
+        if (memberAccess.Receiver is NameExpressionSyntax receiverName &&
+            localTypes.ContainsKey(receiverName.Name.ToDisplayString()))
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        if (TryFlattenValueQualifiedName(memberAccess.Receiver) is not { } staticReceiverName ||
+            ResolveKnownTypeReference(staticReceiverName.ToDisplayString()) is not NamedTypeSymbol receiverType)
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        var candidates = receiverType.Methods
+            .Where(method =>
+                method.IsStatic &&
+                method.Name == memberAccess.MemberName.Text &&
+                SemanticFacts.SupportsArgumentCount(method, argumentCount))
+            .Concat(EnumerateKnownMethodsByDeclaringTypeName(receiverType.Name, memberAccess.MemberName.Text, true, argumentCount));
+        return TrySelectSimpleCallReturnType(candidates, currentMethod, out type);
+    }
+
+    private bool TryResolveSimpleInstanceCallExpressionType(
+        MemberAccessExpressionSyntax memberAccess,
+        int argumentCount,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        using var profile = Profile("SimpleType.CallExpression.InstanceMember");
+        if (!TryInferSimpleLocalInitializerType(memberAccess.Receiver, localTypes, currentMethod, out var receiverType))
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        var candidates = EnumerateKnownReceiverTypeHierarchy(receiverType)
+            .SelectMany(knownType => knownType.Methods
+                .Where(method =>
+                    !method.IsStatic &&
+                    method.Name == memberAccess.MemberName.Text &&
+                    SemanticFacts.SupportsArgumentCount(method, argumentCount))
+                .Concat(EnumerateKnownMethodsByDeclaringTypeName(knownType.Name, memberAccess.MemberName.Text, false, argumentCount)));
+        return TrySelectSimpleCallReturnType(candidates, currentMethod, out type);
+    }
+
+    private IEnumerable<MethodSymbol> EnumerateKnownMethodsByDeclaringTypeName(
+        string declaringTypeName,
+        string methodName,
+        bool? isStatic,
+        int argumentCount)
+    {
+        if (isStatic is null)
+        {
+            foreach (var method in EnumerateKnownMethodsByDeclaringTypeName(declaringTypeName, methodName, true, argumentCount))
+            {
+                yield return method;
+            }
+
+            foreach (var method in EnumerateKnownMethodsByDeclaringTypeName(declaringTypeName, methodName, false, argumentCount))
+            {
+                yield return method;
+            }
+
+            yield break;
+        }
+
+        if (!_methodsByDeclaringTypeName.TryGetValue(new MethodLookupKey(declaringTypeName, methodName, isStatic.Value), out var methods))
+        {
+            yield break;
+        }
+
+        foreach (var method in methods)
+        {
+            if (SemanticFacts.SupportsArgumentCount(method, argumentCount))
+            {
+                yield return method;
+            }
+        }
+    }
+
+    private bool TrySelectSimpleCallReturnType(
+        IEnumerable<MethodSymbol> candidates,
+        MethodSymbol? currentMethod,
+        out TypeSymbol type)
+    {
+        TypeSymbol? returnType = null;
+        foreach (var candidate in candidates)
+        {
+            if (returnType is null)
+            {
+                returnType = candidate.ReturnType;
+                continue;
+            }
+
+            if (candidate.ReturnType != returnType)
+            {
+                type = TypeSymbol.Unknown;
+                return false;
+            }
+        }
+
+        if (returnType is null)
+        {
+            type = TypeSymbol.Unknown;
+            return false;
+        }
+
+        type = TryCloseTypeReferenceForCurrentMethod(returnType, currentMethod, _knownTypes) ?? returnType;
+        return true;
+    }
+
+    private IEnumerable<NamedTypeSymbol> EnumerateKnownReceiverTypeHierarchy(TypeSymbol receiverType)
+    {
+        var current = ResolveKnownTypeReference(receiverType.Name) as NamedTypeSymbol;
+        while (current is not null)
+        {
+            yield return current;
+            current = current.BaseType is null
+                ? null
+                : ResolveKnownTypeReference(current.BaseType.Name) as NamedTypeSymbol;
+        }
+    }
+
+    private static QualifiedNameSyntax? TryFlattenValueQualifiedName(ExpressionSyntax expression)
+    {
+        var parts = new Stack<SyntaxToken>();
+        ExpressionSyntax? current = expression;
+        while (current is MemberAccessExpressionSyntax memberAccess)
+        {
+            parts.Push(memberAccess.MemberName);
+            current = memberAccess.Receiver;
+        }
+
+        if (current is NameExpressionSyntax name)
+        {
+            for (var index = name.Name.Parts.Count - 1; index >= 0; index--)
+            {
+                parts.Push(name.Name.Parts[index]);
+            }
+        }
+
+        return parts.Count == 0 ? null : new QualifiedNameSyntax(parts.ToArray());
     }
 
     private IrValue AllocateTemp(TypeSymbol type, List<IrValue> registers)
@@ -1321,6 +1828,11 @@ public sealed partial class Lowerer
         IReadOnlyDictionary<string, TypeSymbol> localTypes,
         MethodSymbol? currentMethod)
     {
+        if (TryInferSimpleLocalInitializerType(expression, localTypes, currentMethod, out var simpleType))
+        {
+            return simpleType;
+        }
+
         if (expression is NameExpressionSyntax nameExpression)
         {
             var property = SemanticFacts.ResolvePropertyReference(
@@ -1360,7 +1872,7 @@ public sealed partial class Lowerer
             }
         }
 
-        var inferredType = SemanticFacts.InferExpressionType(expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+        var inferredType = SemanticFacts.InferExpressionType(expression, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
         return inferredType;
     }
 
@@ -1814,9 +2326,15 @@ public sealed partial class Lowerer
             return false;
         }
 
-        var localTypes = GetLocalTypes(registerByName);
-        var leftType = SemanticFacts.InferExpressionType(binary.Left, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
-        var rightType = SemanticFacts.InferExpressionType(binary.Right, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+        TypeSymbol leftType;
+        TypeSymbol rightType;
+        using (Profile("SetBinary.ResolveOperandTypes"))
+        {
+            var localTypes = GetLocalTypes(registerByName);
+            leftType = SemanticFacts.InferExpressionType(binary.Left, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+            rightType = SemanticFacts.InferExpressionType(binary.Right, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod);
+        }
+
         if (!SemanticFacts.IsSetType(leftType) || leftType != rightType)
         {
             return false;
@@ -1875,7 +2393,14 @@ public sealed partial class Lowerer
         {
             foreach (var operand in operands)
             {
-                var operandType = SemanticFacts.InferExpressionType(operand, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+                TypeSymbol operandType;
+                using (Profile("StringConcatChain.ValidateOperandType"))
+                {
+                    operandType = TryInferSimpleLocalInitializerType(operand, localTypes, currentMethod, out var simpleOperandType)
+                        ? simpleOperandType
+                        : SemanticFacts.InferExpressionType(operand, localTypes, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
+                }
+
                 if (operandType != TypeSymbol.String)
                 {
                     return false;
@@ -1920,6 +2445,35 @@ public sealed partial class Lowerer
 
             operands.Add(expression);
         }
+    }
+
+    private bool TryLowerSimpleStringConcatenation(
+        BinaryExpressionSyntax binary,
+        IrValue destination,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        if (binary.OperatorToken.Kind != SyntaxKind.PlusToken ||
+            destination.Type != TypeSymbol.String ||
+            !TryInferSimpleLocalInitializerType(binary.Left, localTypes, currentMethod, out var leftType) ||
+            !TryInferSimpleLocalInitializerType(binary.Right, localTypes, currentMethod, out var rightType) ||
+            leftType != TypeSymbol.String ||
+            rightType != TypeSymbol.String)
+        {
+            return false;
+        }
+
+        using var profile = Profile("SimpleStringConcat");
+        var left = AllocateTemp(TypeSymbol.String, registers);
+        var right = AllocateTemp(TypeSymbol.String, registers);
+        LowerExpressionInto(binary.Left, left, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        LowerExpressionInto(binary.Right, right, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(IrOpCode.ConcatString, destination, (left, right)));
+        return true;
     }
 
     private static bool IsComparisonOperator(SyntaxKind kind) =>
@@ -2508,7 +3062,7 @@ public sealed partial class Lowerer
     {
         var displayName = typeName.ToDisplayString();
         return SemanticFacts.TryResolveBuiltInType(displayName)
-            ?? SemanticFacts.ResolveTypeReference(displayName, _knownTypes)
+            ?? ResolveKnownTypeReference(displayName)
             ?? new TypeSymbol(displayName, true);
     }
 

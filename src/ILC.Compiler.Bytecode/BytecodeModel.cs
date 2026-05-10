@@ -122,6 +122,7 @@ public sealed record BytecodeModule(
 
 public sealed record ReachableCompilationClosure(
     IReadOnlyList<MethodSymbol> Methods,
+    IReadOnlyList<IrFunction> Functions,
     IReadOnlyList<FieldSymbol> Fields,
     IReadOnlyList<TypeSymbol> Types,
     IReadOnlyList<PropertySymbol> Properties,
@@ -149,6 +150,7 @@ public sealed record ReachabilityStats(
     int MethodsLowered,
     int MethodCacheHits,
     int MethodReplacements,
+    int KnownMethodDependencySkips,
     int InstructionDependenciesVisited,
     int TypeReferenceCacheHits,
     int TypeReferenceCacheMisses,
@@ -238,6 +240,7 @@ public static class ReachableCompilationBuilder
         TypeSymbol[]? knownTypesCache = null;
         IReadOnlyList<PropertySymbol>? knownPropertiesCache = null;
         Lowerer? lowererCache = null;
+        IReadOnlyDictionary<string, NamedTypeSymbol>? namedTypeLookupCache = null;
         var methodsEnqueued = 0;
         var rootMethodsEnqueued = 0;
         var directCallMethodsEnqueued = 0;
@@ -251,6 +254,7 @@ public static class ReachableCompilationBuilder
         var methodsLowered = 0;
         var methodCacheHits = 0;
         var methodReplacements = 0;
+        var knownMethodDependencySkips = 0;
         var instructionDependenciesVisited = 0;
         var typeReferenceCacheHits = 0;
         var typeReferenceCacheMisses = 0;
@@ -400,7 +404,7 @@ public static class ReachableCompilationBuilder
             lowererRebuilds++;
             AddElapsed(ref lowererBuildTime, () =>
                 lowererCache = new Lowerer(allMethods, GetKnownFields(), GetKnownTypes(), GetKnownProperties(), constantList, loweringProfiler));
-            return lowererCache;
+            return lowererCache ?? throw new InvalidOperationException("Lowerer cache was not initialized after rebuild.");
         }
 
         IReadOnlyList<FieldSymbol> GetKnownFields() =>
@@ -608,6 +612,7 @@ public static class ReachableCompilationBuilder
         {
             typeReferenceCache.Clear();
             typeResolutionCandidatesCache = null;
+            namedTypeLookupCache = null;
         }
 
         void CountLowererInvalidationRequest(LowererInvalidationReason reason)
@@ -729,6 +734,11 @@ public static class ReachableCompilationBuilder
                 methodsEnqueued++;
                 CountMethodEnqueue(reason);
                 methodReplacements++;
+            }
+            else
+            {
+                knownMethodDependencySkips++;
+                return;
             }
 
             AddType(method.ReturnType, includeMembers: false);
@@ -857,7 +867,23 @@ public static class ReachableCompilationBuilder
             }
 
             interfaceDispatchExpansions++;
-            var namedTypeLookup = declaredTypes
+            var namedTypeLookup = GetNamedTypeLookup();
+
+            foreach (var interfaceType in GetImplementedInterfaces(concreteType, namedTypeLookup))
+            {
+                AddType(interfaceType, includeMembers: false);
+
+                foreach (var interfaceMethod in interfaceType.Methods.Where(candidate => !candidate.IsConstructor))
+                {
+                    AddMethod(interfaceMethod, MethodReachabilityReason.InterfaceDispatch);
+                    var implementationMethod = FindInterfaceImplementation(concreteType, interfaceMethod, namedTypeLookup);
+                    AddMethod(implementationMethod, MethodReachabilityReason.InterfaceDispatch);
+                }
+            }
+        }
+
+        IReadOnlyDictionary<string, NamedTypeSymbol> GetNamedTypeLookup() =>
+            namedTypeLookupCache ??= declaredTypes
                 .Concat(typeMap.Values)
                 .OfType<NamedTypeSymbol>()
                 .GroupBy(type => type.Name, StringComparer.Ordinal)
@@ -872,19 +898,6 @@ public static class ReachableCompilationBuilder
                             (type.TypeArguments?.Count ?? 0))
                         .First(),
                     StringComparer.Ordinal);
-
-            foreach (var interfaceType in GetImplementedInterfaces(concreteType, namedTypeLookup))
-            {
-                AddType(interfaceType, includeMembers: false);
-
-                foreach (var interfaceMethod in interfaceType.Methods.Where(candidate => !candidate.IsConstructor))
-                {
-                    AddMethod(interfaceMethod, MethodReachabilityReason.InterfaceDispatch);
-                    var implementationMethod = FindInterfaceImplementation(concreteType, interfaceMethod, namedTypeLookup);
-                    AddMethod(implementationMethod, MethodReachabilityReason.InterfaceDispatch);
-                }
-            }
-        }
 
         void AddField(FieldSymbol? field)
         {
@@ -1038,8 +1051,30 @@ public static class ReachableCompilationBuilder
             }
         }
 
+        var reachableMethods = methodMap.Values.ToArray();
+        var reachableFunctions = new IrFunction[reachableMethods.Length];
+        for (var index = 0; index < reachableMethods.Length; index++)
+        {
+            var method = reachableMethods[index];
+            var methodKey = GetMethodKey(method);
+            if (!irCache.TryGetValue(methodKey, out var ir))
+            {
+                IrFunction? lowered = null;
+                AddElapsed(
+                    ref methodLoweringTime,
+                    elapsed => IncrementDuration(methodLoweringDurations, FormatMethodDiagnostic(method), elapsed),
+                    () => lowered = GetLowerer().Lower(method));
+                ir = lowered!;
+                irCache[methodKey] = ir;
+                methodsLowered++;
+            }
+
+            reachableFunctions[index] = ir;
+        }
+
         return new ReachableCompilationClosure(
-            methodMap.Values.ToArray(),
+            reachableMethods,
+            reachableFunctions,
             fieldMap.Values.ToArray(),
             typeMap.Values.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray(),
             propertyMap.Values.ToArray(),
@@ -1062,6 +1097,7 @@ public static class ReachableCompilationBuilder
                 methodsLowered,
                 methodCacheHits,
                 methodReplacements,
+                knownMethodDependencySkips,
                 instructionDependenciesVisited,
                 typeReferenceCacheHits,
                 typeReferenceCacheMisses,
@@ -1515,6 +1551,7 @@ public sealed class IlbSerializer
             : CollectTypes(methodList, fieldList, types).ToArray();
         var stringTable = new IlbStringTableBuilder();
         var blobTable = new IlbBlobTableBuilder();
+        var signatureBlobIds = new Dictionary<string, uint>(StringComparer.Ordinal);
 
         foreach (var type in typeList)
         {
@@ -1543,7 +1580,7 @@ public sealed class IlbSerializer
                 }
             }
 
-            blobTable.Add(BuildSignatureBlob(method, typeList));
+            signatureBlobIds[GetMethodKey(method)] = blobTable.GetId(BuildSignatureBlob(method, typeList));
         }
 
         var typeIds = typeList
@@ -1567,9 +1604,9 @@ public sealed class IlbSerializer
         var exceptionInfo = BuildExceptionTableSection(module.Functions);
         var stringsPayload = BuildStringTableSection(stringTable);
         var blobsPayload = BuildBlobTableSection(blobTable);
-        var typesPayload = BuildTypeTableSection(typeList, stringTable, typeIds, fieldList, methodList);
+        var typesPayload = BuildTypeTableSection(typeList, stringTable, typeIds, fieldList, fieldIds, methodList, methodIds);
         var fieldsPayload = BuildFieldTableSection(fieldList, typeIds, stringTable);
-        var methodsPayload = BuildMethodTableSection(methodList, typeIds, stringTable, blobTable, codeInfo, exceptionInfo, methodIds);
+        var methodsPayload = BuildMethodTableSection(methodList, typeIds, stringTable, signatureBlobIds, codeInfo, exceptionInfo, methodIds);
         var interfaceDispatchPayload = BuildInterfaceDispatchTableSection(typeList, methodList, typeIds, methodIds);
         var codePayload = codeInfo.SectionBytes;
         var exceptionPayload = exceptionInfo.SectionBytes;
@@ -1773,8 +1810,12 @@ public sealed class IlbSerializer
         IlbStringTableBuilder strings,
         IReadOnlyDictionary<string, uint> typeIds,
         IReadOnlyList<FieldSymbol> fields,
-        IReadOnlyList<MethodSymbol> methods)
+        IReadOnlyDictionary<string, uint> fieldIds,
+        IReadOnlyList<MethodSymbol> methods,
+        IReadOnlyDictionary<string, uint> methodIds)
     {
+        var fieldRanges = BuildFieldRanges(fields, fieldIds);
+        var methodRanges = BuildMethodRanges(methods, methodIds);
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         foreach (var type in types)
@@ -1785,12 +1826,12 @@ public sealed class IlbSerializer
             writer.Write(GetTypeFlags(type));
             writer.Write(GetBaseTypeId(type, typeIds));
             writer.Write(0u);
-            var ownedFields = fields.Where(field => field.DeclaringTypeName == type.Name).ToArray();
-            var ownedMethods = methods.Where(method => method.DeclaringTypeName == type.Name).ToArray();
-            writer.Write(ownedFields.Length > 0 ? GetFieldId(ownedFields[0], fields) : 0u);
-            writer.Write((uint)ownedFields.Length);
-            writer.Write(ownedMethods.Length > 0 ? GetMethodId(ownedMethods[0], methods) : 0u);
-            writer.Write((uint)ownedMethods.Length);
+            fieldRanges.TryGetValue(type.Name, out var fieldRange);
+            methodRanges.TryGetValue(type.Name, out var methodRange);
+            writer.Write(fieldRange.FirstId);
+            writer.Write(fieldRange.Count);
+            writer.Write(methodRange.FirstId);
+            writer.Write(methodRange.Count);
             writer.Write(0u);
             writer.Write(0u);
             writer.Write(0u);
@@ -1800,6 +1841,48 @@ public sealed class IlbSerializer
         }
 
         return stream.ToArray();
+    }
+
+    private static Dictionary<string, IlbMemberRange> BuildFieldRanges(
+        IReadOnlyList<FieldSymbol> fields,
+        IReadOnlyDictionary<string, uint> fieldIds)
+    {
+        var ranges = new Dictionary<string, IlbMemberRange>(StringComparer.Ordinal);
+        foreach (var field in fields)
+        {
+            if (string.IsNullOrEmpty(field.DeclaringTypeName))
+            {
+                continue;
+            }
+
+            var id = fieldIds[GetFieldKey(field)];
+            ranges[field.DeclaringTypeName] = ranges.TryGetValue(field.DeclaringTypeName, out var existing)
+                ? existing.Add(id)
+                : new IlbMemberRange(id, 1);
+        }
+
+        return ranges;
+    }
+
+    private static Dictionary<string, IlbMemberRange> BuildMethodRanges(
+        IReadOnlyList<MethodSymbol> methods,
+        IReadOnlyDictionary<string, uint> methodIds)
+    {
+        var ranges = new Dictionary<string, IlbMemberRange>(StringComparer.Ordinal);
+        foreach (var method in methods)
+        {
+            if (string.IsNullOrEmpty(method.DeclaringTypeName))
+            {
+                continue;
+            }
+
+            var id = methodIds[GetMethodKey(method)];
+            ranges[method.DeclaringTypeName] = ranges.TryGetValue(method.DeclaringTypeName, out var existing)
+                ? existing.Add(id)
+                : new IlbMemberRange(id, 1);
+        }
+
+        return ranges;
     }
 
     private static byte[] BuildFieldTableSection(
@@ -1829,7 +1912,7 @@ public sealed class IlbSerializer
         IReadOnlyList<MethodSymbol> methods,
         IReadOnlyDictionary<string, uint> typeIds,
         IlbStringTableBuilder strings,
-        IlbBlobTableBuilder blobs,
+        IReadOnlyDictionary<string, uint> signatureBlobIds,
         IlbCodeSectionInfo codeInfo,
         IlbExceptionSectionInfo exceptionInfo,
         IReadOnlyDictionary<string, uint> methodIds)
@@ -1840,7 +1923,7 @@ public sealed class IlbSerializer
         {
             writer.Write(method.DeclaringTypeName is null ? 0u : typeIds[method.DeclaringTypeName]);
             writer.Write(strings.GetOrAdd(method.Name));
-            writer.Write(blobs.GetId(BuildSignatureBlob(method, typeIds.Keys.Select(name => new TypeSymbol(name, true)).ToArray())));
+            writer.Write(signatureBlobIds[GetMethodKey(method)]);
             writer.Write(GetMethodFlags(method));
             var function = codeInfo.FunctionsById[methodIds[GetMethodKey(method)]];
             writer.Write(function.RegisterCount);
@@ -2079,12 +2162,6 @@ public sealed class IlbSerializer
         flags |= 1u << 15;
         return flags;
     }
-
-    private static uint GetFieldId(FieldSymbol field, IReadOnlyList<FieldSymbol> fields) =>
-        (uint)(Array.IndexOf(fields.ToArray(), field) + 1);
-
-    private static uint GetMethodId(MethodSymbol method, IReadOnlyList<MethodSymbol> methods) =>
-        (uint)(Array.IndexOf(methods.ToArray(), method) + 1);
 
     private static uint GetBaseTypeId(TypeSymbol type, IReadOnlyDictionary<string, uint> typeIds)
     {
@@ -2396,7 +2473,7 @@ public sealed class IlbSerializer
 
     private sealed class IlbBlobTableBuilder
     {
-        private readonly Dictionary<string, uint> _ids = new(StringComparer.Ordinal);
+        private readonly Dictionary<byte[], uint> _ids = new(ByteArrayComparer.Instance);
         private readonly List<byte[]> _values = [];
 
         public int Count => _values.Count;
@@ -2404,19 +2481,41 @@ public sealed class IlbSerializer
 
         public uint Add(byte[] blob)
         {
-            var key = Convert.ToBase64String(blob);
-            if (_ids.TryGetValue(key, out var existing))
+            if (_ids.TryGetValue(blob, out var existing))
             {
                 return existing;
             }
 
             var id = (uint)(_values.Count + 1);
             _values.Add(blob);
-            _ids[key] = id;
+            _ids[blob] = id;
             return id;
         }
 
         public uint GetId(byte[] blob) => Add(blob);
+    }
+
+    private sealed class ByteArrayComparer : IEqualityComparer<byte[]>
+    {
+        public static ByteArrayComparer Instance { get; } = new();
+
+        public bool Equals(byte[]? x, byte[]? y) =>
+            ReferenceEquals(x, y) ||
+            (x is not null && y is not null && x.AsSpan().SequenceEqual(y));
+
+        public int GetHashCode(byte[] obj)
+        {
+            unchecked
+            {
+                var hash = (int)2166136261;
+                foreach (var value in obj)
+                {
+                    hash = (hash ^ value) * 16777619;
+                }
+
+                return hash;
+            }
+        }
     }
 
     private sealed record IlbCodeFunctionInfo(uint FunctionId, uint CodeOffset, uint CodeSize, ushort RegisterCount, ushort ArgumentCount);
@@ -2424,6 +2523,10 @@ public sealed class IlbSerializer
     private sealed record IlbFunctionExceptionInfo(uint FunctionId, uint ExceptionStart, uint ExceptionCount);
     private sealed record IlbExceptionSectionInfo(byte[] SectionBytes, IReadOnlyDictionary<uint, IlbFunctionExceptionInfo> FunctionsById, uint RowCount);
     private sealed record IlbInterfaceDispatchRow(uint OwnerTypeId, uint InterfaceTypeId, uint InterfaceMethodId, uint ImplementationMethodId);
+    private readonly record struct IlbMemberRange(uint FirstId, uint Count)
+    {
+        public IlbMemberRange Add(uint id) => new(Math.Min(FirstId, id), Count + 1);
+    }
 }
 
 public sealed class BytecodeEmitter
@@ -2997,7 +3100,6 @@ public sealed class BytecodeEmitter
     public BytecodeModule EmitModule(IEnumerable<MethodSymbol> methods, IEnumerable<FieldSymbol> fields, IEnumerable<TypeSymbol> types, Lowerer lowerer)
     {
         var methodList = methods.ToArray();
-        var fieldList = fields.ToArray();
         var loweredMethods = methodList
             .Select(method =>
             {
@@ -3013,7 +3115,15 @@ public sealed class BytecodeEmitter
                 }
             })
             .ToArray();
-        var typeList = CollectReferencedTypesFromIr(loweredMethods, fieldList, types).ToArray();
+        return EmitModule(loweredMethods, fields, types);
+    }
+
+    public BytecodeModule EmitModule(IEnumerable<(MethodSymbol Method, IrFunction Ir)> loweredMethods, IEnumerable<FieldSymbol> fields, IEnumerable<TypeSymbol> types)
+    {
+        var loweredMethodList = loweredMethods.ToArray();
+        var methodList = loweredMethodList.Select(entry => entry.Method).ToArray();
+        var fieldList = fields.ToArray();
+        var typeList = CollectReferencedTypesFromIr(loweredMethodList, fieldList, types).ToArray();
         var functionEntries = methodList
             .Select((method, index) => (method, functionId: (uint)(index + 1)))
             .ToArray();
@@ -3029,7 +3139,7 @@ public sealed class BytecodeEmitter
         var functions = new List<BytecodeFunction>();
         uint nextFunctionId = 1;
 
-        foreach (var (method, ir) in loweredMethods)
+        foreach (var (method, ir) in loweredMethodList)
         {
             functions.Add(Emit(nextFunctionId++, ir, method, functionEntries, functionIds, fieldIds, typeIds));
         }

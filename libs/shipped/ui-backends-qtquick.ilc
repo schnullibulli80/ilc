@@ -15,79 +15,250 @@ namespace System.Ui.Backends.QtQuick;
 
 uses System, System.Collections, System.Ui, System.Ui.Hosting;
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • StringReturn
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Specifies the type of string return value.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum StringReturn
 begin
   None = 0;
   Utf8Owned = 1;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-public delegate function QtQuickInteractionCallback(interactionToken: Integer): Integer;
-
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • ENUM • QtQuickRenderMode
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Specifies the render mode for Qt Quick.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public enum QtQuickRenderMode
 begin
   ManagedPreview = 0;
   NativeBridge = 1;
 end;
+//══ end of enum ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • DELEGATE • QtQuickInteractionCallback
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a callback function for Qt Quick interactions.</summary>
+/// <param name="interactionToken">An integer token representing the interaction.</param>
+/// <returns>An integer result from handling the interaction.</returns>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+public delegate function QtQuickInteractionCallback(interactionToken: Integer): Integer;
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • QtQuickNative
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Provides native interop methods for the Qt Quick backend.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class QtQuickNative
 begin
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_create', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • CreateBackend
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Creates a new instance of the Qt Quick backend and returns its native handle.</summary>
+  /// <returns>The native handle for the created backend instance.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function CreateBackend(): NativeHandle;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_destroy', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • DestroyBackend
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Destroys an instance of the Qt Quick backend.</summary>
+  /// <param name="handle">The native handle of the backend instance to destroy.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern procedure DestroyBackend(handle: NativeHandle);
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_create', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • CreateWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Creates a new window for the Qt Quick backend.</summary>
+  /// <param name="backendHandle">The native handle of the backend instance.</param>
+  /// <param name="title">The title of the window.</param>
+  /// <returns>The native handle of the created window.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function CreateWindow(backendHandle: NativeHandle; title: String): NativeHandle;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_show', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ShowWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Shows the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window to show.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function ShowWindow(windowHandle: NativeHandle): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_size', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetWindowSize
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the size of the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="width">The desired width of the window.</param>
+  /// <param name="height">The desired height of the window.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetWindowSize(windowHandle: NativeHandle; width: Integer; height: Integer): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_minimum_size', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetWindowMinimumSize
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the minimum size of the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="minWidth">The minimum width of the window.</param>
+  /// <param name="minHeight">The minimum height of the window.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetWindowMinimumSize(windowHandle: NativeHandle; minWidth: Integer; minHeight: Integer): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_background', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetWindowBackground
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the background color of the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="color">The background color.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetWindowBackground(windowHandle: NativeHandle; color: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_destroy', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • DestroyWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Destroys the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window to destroy.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern procedure DestroyWindow(windowHandle: NativeHandle);
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_root_name', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetRootName
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the root name of the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="rootName">The root name to set.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetRootName(windowHandle: NativeHandle; rootName: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_content_qml', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetContentQml
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the QML content of the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="qmlSource">The QML source to set as the content.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetContentQml(windowHandle: NativeHandle; qmlSource: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_element_text', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetElementText
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the text of a specific element in the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="objectName">The name of the element.</param>
+  /// <param name="text">The text to set.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetElementText(windowHandle: NativeHandle; objectName: String; text: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_set_element_color', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • SetElementColor
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Sets the color of a specific element in the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="objectName">The name of the element.</param>
+  /// <param name="color">The color to set.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetElementColor(windowHandle: NativeHandle; objectName: String; color: String): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • RunBackend
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Runs the Qt Quick backend to process interactions.</summary>
+  /// <param name="backendHandle">The native handle of the backend instance.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function RunBackend(backendHandle: NativeHandle): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_run_with_click_callback', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • RunBackendWithClickCallback
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Runs the Qt Quick backend with a click callback.</summary>
+  /// <param name="backendHandle">The native handle of the backend instance.</param>
+  /// <param name="callback">The callback function to handle click interactions.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function RunBackendWithClickCallback(backendHandle: NativeHandle; callback: QtQuickInteractionCallback): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_read_text_input_value', CallingConvention := CallingConvention.Cdecl, StringReturn := StringReturn.Utf8Owned, StringFreeEntryPoint := 'ilc_qtquick_string_free')]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ReadTextInputValue
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads the value of a text input element in the specified backend.</summary>
+  /// <param name="backendHandle">The native handle of the backend instance.</param>
+  /// <param name="textBoxId">The ID of the text input element.</param>
+  /// <returns>The current value of the text input element.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function ReadTextInputValue(backendHandle: NativeHandle; textBoxId: Integer): String;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_backend_read_slider_value', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • ReadSliderValue
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Reads the value of a slider element in the specified backend.</summary>
+  /// <param name="backendHandle">The native handle of the backend instance.</param>
+  /// <param name="sliderId">The ID of the slider element.</param>
+  /// <returns>The current value of the slider element.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function ReadSliderValue(backendHandle: NativeHandle; sliderId: Integer): Integer;
 
   [DllImport('libilc_qtbridge.so', EntryPoint := 'ilc_qtquick_window_focus_text_input', CallingConvention := CallingConvention.Cdecl)]
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • EXTERNAL • FocusTextInput
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Focuses the specified text input element in the specified window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="textBoxId">The ID of the text input element.</param>
+  /// <returns>An integer result indicating success or failure.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function FocusTextInput(windowHandle: NativeHandle; textBoxId: Integer): Integer;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • QtQuickNativeViewHost
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a view host for Qt Quick native views.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class QtQuickNativeViewHost: IViewHost
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The view associated with this host.</summary>
   private var ViewValue: View;
+  /// <summary>The native handle for the view, if available.</summary>
   private var NativeViewHandleValue: NativeHandle;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the view associated with this host.</summary>
   public property View: View
   begin
     get
@@ -96,6 +267,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the native handle for the view, if available.</summary>
   public property NativeViewHandle: NativeHandle
   begin
     get
@@ -104,6 +276,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the view has a native handle.</summary>
   public property HasNativeViewHandle: Boolean
   begin
     get
@@ -112,12 +285,25 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="QtQuickNativeViewHost"/> class.</summary>
+  /// <param name="view">The view associated with this host.</param>
+  /// <param name="nativeViewHandle">The native handle for the view, if available.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(view: View; nativeViewHandle: NativeHandle);
   begin
     ViewValue := view;
     NativeViewHandleValue := nativeViewHandle;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Describe
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Provides a string description of the view host.</summary>
+  /// <returns>A string description of the view host.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Describe: String;
   begin
     if ViewValue = nil then
@@ -133,13 +319,29 @@ begin
     return 'view';
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • QtQuickNativeWindowHost
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a window host for Qt Quick native windows.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class QtQuickNativeWindowHost: IWindowHost
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The window associated with this host.</summary>
   private var WindowValue: Window;
+  /// <summary>The root view host for the window's content.</summary>
   private var RootViewHostValue: IViewHost;
+  /// <summary>The native handle for the window, if available.</summary>
   private var NativeWindowHandleValue: NativeHandle;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the window associated with this host.</summary>
   public property Window: Window
   begin
     get
@@ -148,6 +350,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the root view host for the window's content.</summary>
   public property RootViewHost: IViewHost
   begin
     get
@@ -156,6 +359,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the native handle for the window, if available.</summary>
   public property NativeWindowHandle: NativeHandle
   begin
     get
@@ -164,6 +368,7 @@ begin
     end;
   end;
 
+  /// <summary>Indicates whether the window has a native handle.</summary>
   public property HasNativeWindowHandle: Boolean
   begin
     get
@@ -172,6 +377,13 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="QtQuickNativeWindowHost"/> class.</summary>
+  /// <param name="window">The window associated with this host.</param>
+  /// <param name="nativeWindowHandle">The native handle for the window, if available.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(window: Window; nativeWindowHandle: NativeHandle);
   begin
     WindowValue := window;
@@ -187,6 +399,12 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Show
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Shows the window associated with this host.</summary>
+  /// <returns>True if the window was shown successfully; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Show: Boolean;
   begin
     if WindowValue = nil then
@@ -197,27 +415,55 @@ begin
     return true;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// • CLASS • QtQuickNativeWindowHost
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents the Qt Quick backend for the ILC UI framework.</summary>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public class QtQuickBackend: IUiBackend
 begin
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • FIELDS •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>The current interactive backend instance for handling native interactions.</summary>
   public static var CurrentInteractiveBackend: QtQuickBackend;
-
+  /// <summary>A fallback backend instance used when the Qt Quick engine is not initialized.</summary>
   private var FallbackBackendValue: IUiBackend;
+  /// <summary>Indicates whether the Qt Quick engine has been initialized.</summary>
   private var EngineInitializedValue: Boolean;
+  /// <summary>Indicates whether the native bridge is enabled for this backend.</summary>
   private var NativeBridgeEnabledValue: Boolean;
+  /// <summary>The native handle for the backend, if available.</summary>
   private var NativeBackendHandleValue: NativeHandle;
+  /// <summary>The native handle for the last interactive window.</summary>
   private var LastInteractiveWindowHandleValue: NativeHandle;
+  /// <summary>The title of the last hosted window.</summary>
   private var LastHostedWindowTitleValue: String;
+  /// <summary>The description of the root element in the last hosted window.</summary>
   private var LastHostedRootDescriptionValue: String;
+  /// <summary>The status of the native bridge.</summary>
   private var LastBridgeStatusValue: String;
+  /// <summary>The list of active buttons in the UI.</summary>
   private var ActiveButtonsValue: List<Button>;
+  /// <summary>The list of active checkboxes in the UI.</summary>
   private var ActiveCheckBoxesValue: List<CheckBox>;
+  /// <summary>The list of active text boxes in the UI.</summary>
   private var ActiveTextBoxesValue: List<TextBox>;
+  /// <summary>The list of active sliders in the UI.</summary>
   private var ActiveSlidersValue: List<Slider>;
+  /// <summary>The list of active interactive windows in the UI.</summary>
   private var ActiveInteractiveWindowsValue: List<Window>;
+  /// <summary>The list of active interactive window handles in the UI.</summary>
   private var ActiveInteractiveWindowHandlesValue: List<NativeHandle>;
+  /// <summary>The text box that is pending focus.</summary>
   private var PendingFocusTextBoxValue: TextBox;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • PROPERTIES •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the name of the backend.</summary>
   public property BackendName: String
   begin
     get
@@ -226,6 +472,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the render mode of the backend.</summary>
   public property RenderMode: QtQuickRenderMode
   begin
     get
@@ -239,6 +486,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the backend is available.</summary>
   public property IsAvailable: Boolean
   begin
     get
@@ -247,6 +495,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the title of the last hosted window.</summary>
   public property LastHostedWindowTitle: String
   begin
     get
@@ -255,6 +504,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the description of the root element in the last hosted window.</summary>
   public property LastHostedRootDescription: String
   begin
     get
@@ -263,6 +513,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the native handle for the backend, if available.</summary>
   public property NativeBackendHandle: NativeHandle
   begin
     get
@@ -271,6 +522,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets a value indicating whether the backend has a native handle.</summary>
   public property HasNativeBackendHandle: Boolean
   begin
     get
@@ -279,6 +531,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets or sets a value indicating whether the native bridge is enabled for this backend.</summary>
   public property NativeBridgeEnabled: Boolean
   begin
     get
@@ -292,6 +545,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the native handle for the last interactive window, if available.</summary>
   public property LastInteractiveWindowHandle: NativeHandle
   begin
     get
@@ -300,6 +554,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the name of the bridge library used for native interactions.</summary>
   public property BridgeLibraryName: String
   begin
     get
@@ -308,6 +563,7 @@ begin
     end;
   end;
 
+  /// <summary>Gets the status of the last bridge operation.</summary>
   public property LastBridgeStatus: String
   begin
     get
@@ -316,6 +572,11 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • CONSTRUCTOR •
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes a new instance of the <see cref="QtQuickBackend"/> class.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor;
   begin
     FallbackBackendValue := new DebugUiBackend();
@@ -335,6 +596,12 @@ begin
     PendingFocusTextBoxValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • InitializeEngine
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Initializes the Qt Quick engine for this backend.</summary>
+  /// <returns>True if the engine was initialized successfully; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function InitializeEngine: Boolean;
   begin
     EngineInitializedValue := true;
@@ -350,6 +617,13 @@ begin
     return EngineInitializedValue;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • CreateWindowHost
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Creates a window host for the specified window.</summary>
+  /// <param name="window">The window for which to create a host.</param>
+  /// <returns>The created window host.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function CreateWindowHost(window: Window): IWindowHost;
   begin
     if window = nil then
@@ -367,6 +641,12 @@ begin
     return FallbackBackendValue.CreateWindowHost(window);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • PrepareNativeBridge
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Prepares the native bridge for this backend.</summary>
+  /// <returns>True if the native bridge was prepared successfully; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function PrepareNativeBridge: Boolean;
   begin
     NativeBridgeEnabledValue := true;
@@ -376,6 +656,11 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ResetInteractiveSession
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resets the interactive session by clearing active UI elements and pending focus.</summary>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method ResetInteractiveSession;
   begin
     ActiveButtonsValue := new List<Button>();
@@ -387,6 +672,13 @@ begin
     PendingFocusTextBoxValue := nil;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RegisterInteractiveButton
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Registers an interactive button and returns its ID.</summary>
+  /// <param name="button">The button to register.</param>
+  /// <returns>The ID of the registered button.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function RegisterInteractiveButton(button: Button): Integer;
   begin
     if button = nil then
@@ -409,6 +701,13 @@ begin
     return ActiveButtonsValue.Count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FindInteractiveButton
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Finds an interactive button by its ID.</summary>
+  /// <param name="buttonId">The ID of the button to find.</param>
+  /// <returns>The button with the specified ID, or nil if not found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function FindInteractiveButton(buttonId: Integer): Button;
   begin
     if buttonId <= 0 then
@@ -425,6 +724,13 @@ begin
     return ActiveButtonsValue[index];
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RegisterInteractiveCheckBox
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Registers an interactive check box and returns its ID.</summary>
+  /// <param name="checkBox">The check box to register.</param>
+  /// <returns>The ID of the registered check box.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function RegisterInteractiveCheckBox(checkBox: CheckBox): Integer;
   begin
     if checkBox = nil then
@@ -447,6 +753,13 @@ begin
     return ActiveCheckBoxesValue.Count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FindInteractiveCheckBox
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Finds an interactive check box by its ID.</summary>
+  /// <param name="checkBoxId">The ID of the check box to find.</
+  /// <returns>The check box with the specified ID, or nil if not found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function FindInteractiveCheckBox(checkBoxId: Integer): CheckBox;
   begin
     if checkBoxId <= 0 then
@@ -463,6 +776,13 @@ begin
     return ActiveCheckBoxesValue[index];
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RegisterInteractiveTextBox
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Registers an interactive text box and returns its ID.</summary>
+  /// <param name="textBox">The text box to register.</param>
+  /// <returns>The ID of the registered text box.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function RegisterInteractiveTextBox(textBox: TextBox): Integer;
   begin
     if textBox = nil then
@@ -485,6 +805,13 @@ begin
     return ActiveTextBoxesValue.Count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FindInteractiveTextBox
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Finds an interactive text box by its ID.</summary>
+  /// <param name="textBoxId">The ID of the text box to find.</param>
+  /// <returns>The text box with the specified ID, or nil if not found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function FindInteractiveTextBox(textBoxId: Integer): TextBox;
   begin
     if textBoxId <= 0 then
@@ -501,6 +828,13 @@ begin
     return ActiveTextBoxesValue[index];
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RegisterInteractiveSlider
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Registers an interactive slider and returns its ID.</summary>
+  /// <param name="slider">The slider to register.</param>
+  /// <returns>The ID of the registered slider.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function RegisterInteractiveSlider(slider: Slider): Integer;
   begin
     if slider = nil then
@@ -523,6 +857,13 @@ begin
     return ActiveSlidersValue.Count;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • GetButtonLabelObjectName
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Gets the object name of a button's label.</summary>
+  /// <param name="button">The button whose label object name to get.</param>
+  /// <returns>The object name of the button's label, or an empty string if not found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function GetButtonLabelObjectName(button: Button): String;
   begin
     if button = nil then
@@ -543,6 +884,13 @@ begin
     return button.Name + '_label';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • HasPatchObjectName
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Checks if a name has a patch object name.</summary>
+  /// <param name="name">The name to check.</param>
+  /// <returns>True if the name has a patch object name, false otherwise.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function HasPatchObjectName(name: String): Boolean;
   begin
     if name = nil then
@@ -553,11 +901,23 @@ begin
     return name <> '';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • IsBackendDebugEnabled
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Checks if backend debug is enabled.</summary>
+  /// <returns>True if backend debug is enabled, false otherwise.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function IsBackendDebugEnabled: Boolean;
   begin
     return Environment.Variables['ILC_QTBRIDGE_DEBUG'] = '1';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • WriteBackendDebug
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Writes a debug message to the backend console.</summary>
+  /// <param name="message">The message to write.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method WriteBackendDebug(message: String);
   begin
     if IsBackendDebugEnabled() then
@@ -566,6 +926,13 @@ begin
     end;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • FindInteractiveSlider
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Finds an interactive slider by its ID.</summary>
+  /// <param name="sliderId">The ID of the slider to find.</param>
+  /// <returns>The slider with the specified ID, or nil if not found.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function FindInteractiveSlider(sliderId: Integer): Slider;
   begin
     if sliderId <= 0 then
@@ -582,26 +949,61 @@ begin
     return ActiveSlidersValue[index];
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EncodeButtonInteraction
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Encodes a button interaction into an interaction token.</summary>
+  /// <param name="buttonId">The ID of the button that was interacted with.</param>
+  /// <returns>The encoded interaction token for the button interaction.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function EncodeButtonInteraction(buttonId: Integer): Integer;
   begin
     return buttonId;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EncodeTextBoxInteraction
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Encodes a text box interaction into an interaction token.</summary>
+  /// <param name="textBoxId">The ID of the text box that was interacted with.</param>
+  /// <returns>The encoded interaction token for the text box interaction.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function EncodeTextBoxInteraction(textBoxId: Integer): Integer;
   begin
     return 0 - textBoxId;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EncodeCheckBoxInteraction
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Encodes a check box interaction into an interaction token.</summary>
+  /// <param name="checkBoxId">The ID of the check box that was interacted with.</param>
+  /// <returns>The encoded interaction token for the check box interaction.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function EncodeCheckBoxInteraction(checkBoxId: Integer): Integer;
   begin
     return 0 - (1000000 + checkBoxId);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EncodeSliderInteraction
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Encodes a slider interaction into an interaction token.</summary>
+  /// <param name="sliderId">The ID of the slider that was interacted with.</param>
+  /// <returns>The encoded interaction token for the slider interaction.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function EncodeSliderInteraction(sliderId: Integer): Integer;
   begin
     return 0 - (2000000 + sliderId);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TrackInteractiveWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Tracks an interactive window and its native handle.</summary>
+  /// <param name="window">The interactive window to track.</param>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private method TrackInteractiveWindow(window: Window; windowHandle: NativeHandle);
   begin
     if window = nil or windowHandle = NativeHandle.Null then
@@ -613,6 +1015,12 @@ begin
     ActiveInteractiveWindowHandlesValue.Add(windowHandle);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RefreshInteractiveWindows
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Refreshes all interactive windows.</summary>
+  /// <returns>The number of refreshed windows.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function RefreshInteractiveWindows: Integer;
   begin
     WriteBackendDebug('refresh mode=full-refresh windows=' + ActiveInteractiveWindowHandlesValue.Count.ToString());
@@ -635,6 +1043,14 @@ begin
   // The canonical path is full declarative re-rendering via RefreshInteractiveWindows().
   // Re-enable this only once every supported View type can patch all visible QML state
   // and the smoke logs prove that no stale UI state remains.
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TryPatchNativeView
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Attempts to patch a native view with the current state of a managed view.</summary>
+  /// <param name="windowHandle">The native handle of the window containing the view.</param>
+  /// <param name="view">The managed view to patch.</param>
+  /// <returns>True if the view was successfully patched; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function TryPatchNativeView(windowHandle: NativeHandle; view: View): Boolean;
   begin
     if view = nil then
@@ -700,6 +1116,14 @@ begin
     return true;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TryPatchNativeWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Attempts to patch a native window with the current state of a managed window.</summary>
+  /// <param name="windowHandle">The native handle of the window.</param>
+  /// <param name="window">The managed window to patch.</param>
+  /// <returns>True if the window was successfully patched; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function TryPatchNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
   begin
     if windowHandle = NativeHandle.Null or window = nil then
@@ -719,6 +1143,12 @@ begin
     return false;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • TryPatchInteractiveWindows
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Attempts to patch all interactive windows.</summary>
+  /// <returns>The number of successfully patched windows.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function TryPatchInteractiveWindows: Integer;
   begin
     var patched := 0;
@@ -736,11 +1166,23 @@ begin
     return patched;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RequestTextBoxFocus
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Requests focus for a specific text box.</summary>
+  /// <param name="textBox">The text box to focus.</param>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public method RequestTextBoxFocus(textBox: TextBox);
   begin
     PendingFocusTextBoxValue := textBox;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ResolvePendingFocusTextBoxId
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Resolves the ID of the pending focus text box.</summary>
+  /// <returns>The ID of the pending focus text box, or 0 if none.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ResolvePendingFocusTextBoxId: Integer;
   begin
     if PendingFocusTextBoxValue = nil then
@@ -762,6 +1204,12 @@ begin
     return 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ApplyPendingTextBoxFocus
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Applies focus to the pending text box.</summary>
+  /// <returns>The number of windows that successfully received focus.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ApplyPendingTextBoxFocus: Integer;
   begin
     var textBoxId := ResolvePendingFocusTextBoxId();
@@ -786,6 +1234,13 @@ begin
     return focused;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • HandleNativeInteraction
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Handles a native interaction.</summary>
+  /// <param name="interactionToken">The interaction token.</param>
+  /// <returns>The result of the interaction.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function HandleNativeInteraction(interactionToken: Integer): Integer;
   begin
     var currentBackend := QtQuickBackend.CurrentInteractiveBackend;
@@ -797,6 +1252,13 @@ begin
     return currentBackend.DispatchNativeInteraction(interactionToken);
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchNativeInteraction
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a native interaction.</summary>
+  /// <param name="interactionToken">The interaction token.</param>
+  /// <returns>The result of the interaction.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeInteraction(interactionToken: Integer): Integer;
   begin
     if interactionToken <= -2000000 then
@@ -823,6 +1285,13 @@ begin
     return 0;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchNativeClick
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a native click.</summary>
+  /// <param name="buttonId">The ID of the button.</param>
+  /// <returns>The result of the click.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeClick(buttonId: Integer): Integer;
   begin
     var button := FindInteractiveButton(buttonId);
@@ -859,6 +1328,13 @@ begin
     return refreshed;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchNativeSliderChanged
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a native slider change.</summary>
+  /// <param name="sliderId">The ID of the slider.</param>
+  /// <returns>The result of the slider change.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeSliderChanged(sliderId: Integer): Integer;
   begin
     var slider := FindInteractiveSlider(sliderId);
@@ -902,6 +1378,13 @@ begin
     return refreshed;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchNativeCheckBoxToggled
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a native checkbox toggle.</summary>
+  /// <param name="checkBoxId">The ID of the checkbox.</param>
+  /// <returns>The result of the toggle.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeCheckBoxToggled(checkBoxId: Integer): Integer;
   begin
     var checkBox := FindInteractiveCheckBox(checkBoxId);
@@ -941,6 +1424,13 @@ begin
     return refreshed;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DispatchNativeTextChanged
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Dispatches a native text change.</summary>
+  /// <param name="textBoxId">The ID of the text box.</param>
+  /// <returns>The result of the text change.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeTextChanged(textBoxId: Integer): Integer;
   begin
     var textBox := FindInteractiveTextBox(textBoxId);
@@ -993,6 +1483,13 @@ begin
     return refreshed;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • EscapeQmlString
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Escapes a string for use in QML.</summary>
+  /// <param name="value">The string to escape.</param>
+  /// <returns>The escaped string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function EscapeQmlString(value: String): String;
   begin
     if value = nil or value = '' then
@@ -1034,6 +1531,13 @@ begin
     return result;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ColorToQml
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts a color to a QML color string.</summary>
+  /// <param name="value">The color to convert.</param>
+  /// <returns>The QML color string.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ColorToQml(value: Color): String;
   begin
     if value = Color.Black then
@@ -1069,6 +1573,13 @@ begin
     return 'transparent';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ThicknessToHorizontalPadding
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts a thickness to horizontal padding.</summary>
+  /// <param name="value">The thickness to convert.</param>
+  /// <returns>The horizontal padding.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ThicknessToHorizontalPadding(value: Thickness): Integer;
   begin
     if value = nil then
@@ -1079,6 +1590,13 @@ begin
     return value.Left + value.Right;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • ThicknessToVerticalPadding
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Converts a thickness to vertical padding.</summary>
+  /// <param name="value">The thickness to convert.</param>
+  /// <returns>The vertical padding.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function ThicknessToVerticalPadding(value: Thickness): Integer;
   begin
     if value = nil then
@@ -1089,6 +1607,13 @@ begin
     return value.Top + value.Bottom;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • DescribeRootView
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Describes the root view.</summary>
+  /// <param name="view">The view to describe.</param>
+  /// <returns>The description of the root view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function DescribeRootView(view: View): String;
   begin
     if view = nil then
@@ -1114,6 +1639,14 @@ begin
     return 'view';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • BuildViewQml
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Builds the QML representation of a view.</summary>
+  /// <param name="view">The view to build.</param>
+  /// <param name="centerInParent">Whether to center the view in its parent.</param>
+  /// <returns>The QML representation of the view.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function BuildViewQml(view: View; centerInParent: Boolean): String;
   begin
     if view = nil then
@@ -1438,6 +1971,13 @@ begin
     return fallback;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • BuildWindowContentQml
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Builds the QML representation of a window's content.</summary>
+  /// <param name="window">The window whose content to build.</param>
+  /// <returns>The QML representation of the window's content.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private function BuildWindowContentQml(window: Window): String;
   begin
     var rootName := 'ilcRoot';
@@ -1476,6 +2016,13 @@ begin
       ' }';
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • Run
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Runs the application.</summary>
+  /// <param name="application">The application to run.</param>
+  /// <returns>The result of the run.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Run(application: Application): Integer;
   begin
     EngineInitializedValue := true;
@@ -1595,6 +2142,14 @@ begin
     return hosted;
   end;
 
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  // • METHOD • RefreshNativeWindow
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+  /// <summary>Refreshes the content of a native window.</summary>
+  /// <param name="windowHandle">The handle of the native window.</param>
+  /// <param name="window">The window to refresh.</param>
+  /// <returns>True if the refresh was successful; otherwise, false.</returns>
+  //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function RefreshNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
   begin
     if windowHandle = NativeHandle.Null or window = nil then
@@ -1619,3 +2174,6 @@ begin
     return false;
   end;
 end;
+//══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+//══ end of file ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

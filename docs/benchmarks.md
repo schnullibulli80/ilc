@@ -16,16 +16,33 @@ It runs the already-built compiler CLI over representative fixtures in normal mo
 - per-run logs such as `tmp/compiler-performance-ui-qtquick-demo-normal-run-1.log`
 - timings per-run logs such as `tmp/compiler-performance-ui-qtquick-demo-timings-run-1.log`
 
-Use `--timings` when phase timings are needed without debug dump overhead. Use `--profile-lowering` when method lowering needs a hierarchical drill-down into Lowerer scopes. Use `--debug` when syntax, binding, symbol, IR, listing, and debug-symbol dumps are also required.
+Use `--timings` when phase timings are needed without debug dump overhead. Use `--profile-binding` when symbol binding needs a hierarchical drill-down into Binder scopes. Use `--profile-lowering` when method lowering needs a hierarchical drill-down into Lowerer scopes. Use `--debug` when syntax, binding, symbol, IR, listing, and debug-symbol dumps are also required.
 The `--timings` output also includes reachability counters such as processed methods, enqueue reasons (`root`, `directCall`, `propertyAccessor`, `nativeCallback`, `declaringType`, `typeMember`, `interfaceDispatch`), lowerer rebuilds, cache invalidations, and interface-dispatch expansions. `nativeCallback` tracks delegate `Invoke` methods that are retained because a reachable `DllImport` signature passes the delegate to unmanaged code. Lowerer cache invalidations are also grouped by `field`, `property`, and `type` so performance work can identify which symbol category forces rebuilds. `typeReferenceCacheHits` and `typeReferenceCacheMisses` measure the local reachability type-resolution cache used while scanning IR dependencies. `typesPreseededOrReplaced`, `fieldsPreseeded`, and `propertiesPreseeded` track type and member surfaces discovered before the first Lowerer instance is created, which should reduce later rebuilds. `closedGenericTypeInvalidationsSuppressed` tracks closed generic type additions that are retained for bytecode emission without rebuilding the Lowerer. `fieldInvalidationNames`, `propertyInvalidationNames`, and `typeInvalidationNames` list the highest-impact declaring type or type names when symbol additions still force Lowerer rebuilds. The reachability timing line breaks the phase down into declaration seeding, type-surface preseeding, global member seeding, root seeding, lowerer construction, method lowering, dependency scanning, and exception-handler scanning. `methodLoweringDurations` and `dependencyScanDurations` list the slowest methods for the two dominant reachability sub-phases.
 
-For targeted Lowerer analysis, run the compiler CLI directly:
+For targeted Binder and Lowerer analysis, run:
 
 ```bash
-src/ILC.Compiler.Cli/bin/Debug/net9.0/ILC.Compiler.Cli --profile-lowering tests/fixtures/compiler-bootstrap.ilc libs/shipped/system.ilc libs/shipped/diagnostics.ilc libs/shipped/text.ilc libs/shipped/json.ilc libs/shipped/net.ilc libs/shipped/threading.ilc libs/shipped/collections.ilc libs/shipped/ui.ilc libs/shipped/ui-hosting.ilc libs/shipped/ui-backends-qtquick.ilc tests/fixtures/demo-core.ilc
+./scripts/run-compiler-profile.sh
 ```
 
-The `lowering-profile:` lines report hierarchical Lowerer scopes with total time, max single invocation time, and call count. Use this after `methodLoweringDurations` identifies which ILC method is expensive.
+It profiles `compiler-bootstrap.ilc` by default and writes:
+
+- `tmp/compiler-bootstrap-binding-profile.log`
+- `tmp/compiler-bootstrap-lowering-profile.log`
+
+Pass `ui-qtquick-demo` for the UI fixture set or `all` for both supported fixture sets:
+
+```bash
+./scripts/run-compiler-profile.sh ui-qtquick-demo
+./scripts/run-compiler-profile.sh all
+```
+
+The `binding-profile:` and `lowering-profile:` lines report hierarchical scopes with total time, max single invocation time, and call count. Use the Binder profile after the `bind symbols` timing indicates that binding is dominant. Use the Lowerer profile after `methodLoweringDurations` identifies which ILC method is expensive.
+By default the CLI prints the top 32 profile scopes. Increase that limit when a hotspot needs deeper child scopes:
+
+```bash
+ILC_COMPILER_PROFILE_TOP=120 ./scripts/run-compiler-profile.sh
+```
 
 The default is five measured runs after one warmup run. Override with:
 

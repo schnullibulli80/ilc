@@ -86,10 +86,16 @@ public static partial class SemanticFacts
             }
         }
 
+        NamedTypeSymbol[] receiverHierarchy;
+        using (profiler?.Invoke("ResolveReceiverHierarchy"))
+        {
+            receiverHierarchy = GetReceiverTypeHierarchy(receiverType, knownTypes).ToArray();
+        }
+
         MethodSymbol? method;
         using (profiler?.Invoke("ResolveInstanceMethod"))
         {
-            method = GetReceiverTypeHierarchy(receiverType, knownTypes)
+            method = receiverHierarchy
                 .SelectMany(knownType => knownType.Methods
                     .Where(candidate =>
                         candidate.Name == memberAccess.MemberName.Text &&
@@ -113,7 +119,7 @@ public static partial class SemanticFacts
         {
             isVirtual = method.IsVirtual ||
                 method.IsOverride ||
-                ResolveTypeReference(receiverType.Name, knownTypes) is NamedTypeSymbol { IsInterface: true };
+                receiverHierarchy.FirstOrDefault(type => type.Name == receiverType.Name) is { IsInterface: true };
         }
 
         return new InvocationResolution(
@@ -155,16 +161,28 @@ public static partial class SemanticFacts
     ];
 
     private static MethodSymbol? TryResolveIntrinsic(TypeSymbol receiverType, string name, int argumentCount) =>
-        InstanceIntrinsicSignatures
-            .Where(signature => IntrinsicSignatureMatches(signature, receiverType, name, argumentCount))
-            .Select(CreateIntrinsicMethod)
-            .FirstOrDefault();
+        TryResolveIntrinsic(InstanceIntrinsicSignatures, receiverType, name, argumentCount);
 
     private static MethodSymbol? TryResolveTypeIntrinsic(TypeSymbol targetType, string name, int argumentCount) =>
-        TypeIntrinsicSignatures
-            .Where(signature => IntrinsicSignatureMatches(signature, targetType, name, argumentCount))
-            .Select(CreateIntrinsicMethod)
-            .FirstOrDefault();
+        TryResolveIntrinsic(TypeIntrinsicSignatures, targetType, name, argumentCount);
+
+    private static MethodSymbol? TryResolveIntrinsic(
+        IReadOnlyList<IntrinsicMethodSignature> signatures,
+        TypeSymbol receiverType,
+        string name,
+        int argumentCount)
+    {
+        for (var index = 0; index < signatures.Count; index++)
+        {
+            var signature = signatures[index];
+            if (IntrinsicSignatureMatches(signature, receiverType, name, argumentCount))
+            {
+                return CreateIntrinsicMethod(signature);
+            }
+        }
+
+        return null;
+    }
 
     private static bool IntrinsicSignatureMatches(IntrinsicMethodSignature signature, TypeSymbol declaringType, string name, int argumentCount) =>
         signature.DeclaringType == declaringType &&

@@ -26,11 +26,18 @@ public sealed partial class Lowerer
     private readonly IReadOnlyList<ConstantSymbol> _knownConstants;
     private readonly IReadOnlyList<PropertySymbol> _knownProperties;
     private readonly IReadOnlyList<TypeSymbol> _knownTypes;
+    private readonly IReadOnlyList<MethodSymbol> _knownLambdaMethods;
+    private readonly Dictionary<LambdaExpressionSyntax, MethodSymbol> _lambdaMethodBySyntax = new(ReferenceComparer<LambdaExpressionSyntax>.Instance);
+    private readonly Dictionary<MethodLookupKey, MethodSymbol[]> _methodsByDeclaringTypeName;
+    private static readonly Dictionary<Type, PropertyInfo[]> SyntaxNodePropertyCache = new();
+    private static readonly object SyntaxNodePropertyCacheLock = new();
     private readonly LoweringProfiler? _profiler;
     private readonly Stack<(string BreakLabel, string ContinueLabel)> _loopLabels = new();
+    private readonly Dictionary<string, TypeSymbol?> _typeReferenceCache = new(StringComparer.Ordinal);
     private Dictionary<string, IrValue>? _localTypeCacheSource;
     private Dictionary<string, TypeSymbol>? _localTypeCache;
     private readonly Dictionary<object, TextSpan?> _syntaxSpanCache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<MethodSymbol, CallParameterShape> _callParameterShapeCache = new(ReferenceEqualityComparer.Instance);
     private int _localTypeCacheCount = -1;
     private int _labelCounter;
 
@@ -41,7 +48,46 @@ public sealed partial class Lowerer
         _knownConstants = knownConstants as IReadOnlyList<ConstantSymbol> ?? knownConstants?.ToArray() ?? [];
         _knownTypes = knownTypes?.ToArray() ?? [];
         _knownProperties = knownProperties as IReadOnlyList<PropertySymbol> ?? knownProperties?.ToArray() ?? [];
+        _knownLambdaMethods = _knownMethods.Where(method => method.LambdaSource is not null).ToArray();
+        foreach (var lambdaMethod in _knownLambdaMethods)
+        {
+            _lambdaMethodBySyntax.TryAdd(lambdaMethod.LambdaSource!, lambdaMethod);
+        }
+
+        _methodsByDeclaringTypeName = _knownMethods
+            .Where(method => !string.IsNullOrWhiteSpace(method.DeclaringTypeName))
+            .GroupBy(method => new MethodLookupKey(method.DeclaringTypeName!, method.Name, method.IsStatic))
+            .ToDictionary(group => group.Key, group => group.ToArray());
+
         _profiler = profiler;
+    }
+
+    private readonly record struct MethodLookupKey(string DeclaringTypeName, string Name, bool IsStatic);
+    private readonly record struct CallParameterShape(bool HasByRef, bool HasParams, int FixedParameterCount);
+
+    private sealed class ReferenceComparer<T> : IEqualityComparer<T>
+        where T : class
+    {
+        public static ReferenceComparer<T> Instance { get; } = new();
+
+        public bool Equals(T? x, T? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(T obj) => ReferenceEqualityComparer.Instance.GetHashCode(obj);
+    }
+
+    private static PropertyInfo[] GetCachedSyntaxNodeProperties(Type type)
+    {
+        lock (SyntaxNodePropertyCacheLock)
+        {
+            if (SyntaxNodePropertyCache.TryGetValue(type, out var properties))
+            {
+                return properties;
+            }
+
+            properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            SyntaxNodePropertyCache.Add(type, properties);
+            return properties;
+        }
     }
 
     public IrFunction Lower(MethodSymbol method)
@@ -166,6 +212,17 @@ public sealed partial class Lowerer
         return action();
     }
 
+    private TypeSymbol? ResolveKnownTypeReference(string displayName)
+    {
+        if (!_typeReferenceCache.TryGetValue(displayName, out var resolvedType))
+        {
+            resolvedType = SemanticFacts.ResolveTypeReference(displayName, _knownTypes);
+            _typeReferenceCache.Add(displayName, resolvedType);
+        }
+
+        return resolvedType;
+    }
+
     private void InvalidateLocalTypeCache()
     {
         _localTypeCacheSource = null;
@@ -200,17 +257,24 @@ public sealed partial class Lowerer
             return method;
         }
 
-        if (SemanticFacts.ResolveTypeReference(method.DeclaringTypeName, _knownTypes) is not NamedTypeSymbol declaringType)
-        {
-            return method;
-        }
-
         static int CountOpenGenericMarkers(TypeSymbol type) =>
             type.Name.Contains("<T", StringComparison.Ordinal) ||
             type.Name.Contains(", T", StringComparison.Ordinal) ||
             type.Name.EndsWith("<T>", StringComparison.Ordinal)
                 ? 1
                 : 0;
+
+        var openGenericMarkerCount = CountOpenGenericMarkers(method.ReturnType) +
+            method.Parameters.Sum(parameter => CountOpenGenericMarkers(parameter.Type));
+        if (openGenericMarkerCount == 0)
+        {
+            return method;
+        }
+
+        if (ResolveKnownTypeReference(method.DeclaringTypeName) is not NamedTypeSymbol declaringType)
+        {
+            return method;
+        }
 
         var normalized = declaringType.Methods
             .Where(candidate =>

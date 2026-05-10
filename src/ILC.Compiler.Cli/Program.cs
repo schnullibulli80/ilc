@@ -8,18 +8,21 @@ using System.Text;
 
 var debugEnabled = args.Contains("--debug", StringComparer.Ordinal);
 var timingsEnabled = args.Contains("--timings", StringComparer.Ordinal);
+var bindingProfileEnabled = args.Contains("--profile-binding", StringComparer.Ordinal);
 var loweringProfileEnabled = args.Contains("--profile-lowering", StringComparer.Ordinal);
+var profileEntryLimit = ReadPositiveEnvironmentInteger("ILC_COMPILER_PROFILE_TOP", 32);
 var positionalArgs = args
     .Where(argument =>
         !string.Equals(argument, "--debug", StringComparison.Ordinal) &&
         !string.Equals(argument, "--timings", StringComparison.Ordinal) &&
+        !string.Equals(argument, "--profile-binding", StringComparison.Ordinal) &&
         !string.Equals(argument, "--profile-lowering", StringComparison.Ordinal))
     .ToArray();
 var timing = new CompilationTiming();
 
 if (positionalArgs.Length == 0)
 {
-    Console.Error.WriteLine("usage: ilc [--debug] [--timings] [--profile-lowering] <main-source-file> [additional-source-files...]");
+    Console.Error.WriteLine("usage: ilc [--debug] [--timings] [--profile-binding] [--profile-lowering] <main-source-file> [additional-source-files...]");
     return 1;
 }
 
@@ -63,8 +66,9 @@ if (positionalArgs.Length > 1)
 }
 
 var mergedSyntaxTree = timing.Measure("merge syntax trees", () => SyntaxTree.Merge(syntaxTree, importedSyntaxTrees));
-var bindingResult = timing.Measure("bind symbols", () => new Binder().Bind(mergedSyntaxTree));
-var timingDetailsEnabled = debugEnabled || timingsEnabled || loweringProfileEnabled;
+var bindingProfiler = bindingProfileEnabled ? new BindingProfiler() : null;
+var bindingResult = timing.Measure("bind symbols", () => new Binder().Bind(mergedSyntaxTree, bindingProfiler));
+var timingDetailsEnabled = debugEnabled || timingsEnabled || bindingProfileEnabled || loweringProfileEnabled;
 var syntaxDumpPath = Path.ChangeExtension(sourcePath, ".syntax.txt");
 var bindingDumpPath = Path.ChangeExtension(sourcePath, ".binding.txt");
 var symbolsDumpPath = Path.ChangeExtension(sourcePath, ".symbols.txt");
@@ -130,10 +134,12 @@ if (bindingResult.HasErrors)
         Console.WriteLine($"declared fields: {declaredFields.Count}");
         Console.WriteLine("module functions: 0");
         Console.WriteLine("entry point: <none>");
+        WriteBindingProfile(Console.Out, bindingProfiler?.Snapshot() ?? [], profileEntryLimit);
         timing.WriteTimings(Console.Out);
     }
     else if (timingDetailsEnabled)
     {
+        WriteBindingProfile(Console.Out, bindingProfiler?.Snapshot() ?? [], profileEntryLimit);
         timing.WriteTimings(Console.Out);
     }
 
@@ -184,23 +190,29 @@ if (moduleMethods.Count > 0)
 
         return (closureFields, closureTypes, closureProperties);
     });
-    var lowerer = timing.Measure("create lowerer", () => new Lowerer(
-        moduleMethods,
-        knownFields,
-        knownTypes,
-        knownProperties,
-        declaredConstants));
+    Lowerer? debugLowerer = null;
     if (debugEnabled)
     {
+        debugLowerer = timing.Measure("create debug lowerer", () => new Lowerer(
+            moduleMethods,
+            knownFields,
+            knownTypes,
+            knownProperties,
+            declaredConstants));
         await timing.MeasureAsync("write ir dump", () => File.WriteAllTextAsync(
             irDumpPath,
             BuildIrDump(
                 sourcePath,
                 closure.Methods,
-                lowerer)));
+                debugLowerer)));
     }
 
-    var module = timing.Measure("lower and emit bytecode", () => new BytecodeEmitter().EmitModule(closure.Methods, closure.Fields, closure.Types, lowerer));
+    var module = timing.Measure(
+        "emit bytecode",
+        () => new BytecodeEmitter().EmitModule(
+            closure.Methods.Zip(closure.Functions, (method, ir) => (Method: method, Ir: ir)),
+            closure.Fields,
+            closure.Types));
     var ilbImage = timing.Measure("serialize ilb", () => new IlbSerializer().Serialize(module, closure.Methods, closure.Fields, closure.Types, bindingResult.Compilation.EntryPoint));
     var functionCodeOffsets = timing.Measure("build code offsets", () => BuildFunctionCodeOffsets(module.Functions));
     await timing.MeasureAsync("write ilb", () => File.WriteAllBytesAsync(ilbPath, ilbImage.Bytes));
@@ -229,7 +241,7 @@ if (moduleMethods.Count > 0)
                     sourcePath,
                     closure.Methods,
                     module,
-                    lowerer,
+                    debugLowerer ?? throw new InvalidOperationException("Debug lowerer was not initialized."),
                     sourceInputs));
         });
     }
@@ -255,7 +267,8 @@ if (moduleMethods.Count > 0)
         Console.WriteLine($"ir dump: {Path.GetFileName(irDumpPath)}");
         Console.WriteLine($"debug symbols: {Path.GetFileName(ildbgPath)}");
         Console.WriteLine($"entry point: {FormatMethod(entryPoint)}");
-        WriteReachabilityStats(Console.Out, closure.Stats);
+        WriteReachabilityStats(Console.Out, closure.Stats, profileEntryLimit);
+        WriteBindingProfile(Console.Out, bindingProfiler?.Snapshot() ?? [], profileEntryLimit);
         timing.WriteTimings(Console.Out);
 
         foreach (var shape in module.ArrayShapes)
@@ -284,7 +297,8 @@ if (moduleMethods.Count > 0)
     }
     else if (timingDetailsEnabled)
     {
-        WriteReachabilityStats(Console.Out, closure.Stats);
+        WriteReachabilityStats(Console.Out, closure.Stats, profileEntryLimit);
+        WriteBindingProfile(Console.Out, bindingProfiler?.Snapshot() ?? [], profileEntryLimit);
         timing.WriteTimings(Console.Out);
     }
 }
@@ -301,10 +315,12 @@ else
         Console.WriteLine($"declared fields: {declaredFields.Count}");
         Console.WriteLine("module functions: 0");
         Console.WriteLine("entry point: <none>");
+        WriteBindingProfile(Console.Out, bindingProfiler?.Snapshot() ?? [], profileEntryLimit);
         timing.WriteTimings(Console.Out);
     }
     else if (timingDetailsEnabled)
     {
+        WriteBindingProfile(Console.Out, bindingProfiler?.Snapshot() ?? [], profileEntryLimit);
         timing.WriteTimings(Console.Out);
     }
 }
@@ -318,7 +334,15 @@ static string FormatMethod(MethodSymbol? method) =>
             ? method.Name
             : $"{method.DeclaringTypeName}.{method.Name}";
 
-static void WriteReachabilityStats(TextWriter writer, ReachabilityStats stats)
+static int ReadPositiveEnvironmentInteger(string name, int defaultValue)
+{
+    var rawValue = Environment.GetEnvironmentVariable(name);
+    return int.TryParse(rawValue, out var value) && value > 0
+        ? value
+        : defaultValue;
+}
+
+static void WriteReachabilityStats(TextWriter writer, ReachabilityStats stats, int profileEntryLimit)
 {
     writer.WriteLine(
         "reachability: roots={0} declaredMethods={1} declaredFields={2} declaredProperties={3} declaredTypes={4}",
@@ -328,12 +352,13 @@ static void WriteReachabilityStats(TextWriter writer, ReachabilityStats stats)
         stats.DeclaredProperties,
         stats.DeclaredTypes);
     writer.WriteLine(
-        "reachability: methods enqueued={0} processed={1} lowered={2} cacheHits={3} replacements={4}",
+        "reachability: methods enqueued={0} processed={1} lowered={2} cacheHits={3} replacements={4} knownDependencySkips={5}",
         stats.MethodsEnqueued,
         stats.MethodsProcessed,
         stats.MethodsLowered,
         stats.MethodCacheHits,
-        stats.MethodReplacements);
+        stats.MethodReplacements,
+        stats.KnownMethodDependencySkips);
     writer.WriteLine(
         "reachability: methodsByReason root={0} directCall={1} methodConstant={2} propertyAccessor={3} nativeCallback={4} declaringType={5} typeMember={6} interfaceDispatch={7}",
         stats.RootMethodsEnqueued,
@@ -394,7 +419,7 @@ static void WriteReachabilityStats(TextWriter writer, ReachabilityStats stats)
     WriteReachabilityCounterLine(writer, "typeInvalidationNames", stats.LowererTypeInvalidationNames);
     WriteReachabilityDurationCounterLine(writer, "methodLoweringDurations", stats.MethodLoweringDurations);
     WriteReachabilityDurationCounterLine(writer, "dependencyScanDurations", stats.DependencyScanDurations);
-    WriteLoweringProfile(writer, stats.LoweringProfile);
+    WriteLoweringProfile(writer, stats.LoweringProfile, profileEntryLimit);
 }
 
 static string FormatReachabilityDuration(TimeSpan elapsed) =>
@@ -436,18 +461,37 @@ static void WriteReachabilityDurationCounterLine(TextWriter writer, string name,
                 .Select(counter => $"{counter.Name}={FormatReachabilityDuration(counter.Elapsed)}#{counter.Count}")));
 }
 
-static void WriteLoweringProfile(TextWriter writer, IReadOnlyList<LoweringProfileEntry> entries)
+static void WriteLoweringProfile(TextWriter writer, IReadOnlyList<LoweringProfileEntry> entries, int entryLimit)
 {
     if (entries.Count == 0)
     {
         return;
     }
 
-    writer.WriteLine("lowering-profile: top hierarchical scopes");
-    foreach (var entry in entries.Take(32))
+    writer.WriteLine("lowering-profile: top hierarchical scopes limit={0}", entryLimit);
+    foreach (var entry in entries.Take(entryLimit))
     {
         writer.WriteLine(
             "lowering-profile: {0} total={1} max={2} count={3}",
+            entry.Path,
+            FormatReachabilityDuration(entry.Elapsed),
+            FormatReachabilityDuration(entry.MaxElapsed),
+            entry.Count);
+    }
+}
+
+static void WriteBindingProfile(TextWriter writer, IReadOnlyList<BindingProfileEntry> entries, int entryLimit)
+{
+    if (entries.Count == 0)
+    {
+        return;
+    }
+
+    writer.WriteLine("binding-profile: top hierarchical scopes limit={0}", entryLimit);
+    foreach (var entry in entries.Take(entryLimit))
+    {
+        writer.WriteLine(
+            "binding-profile: {0} total={1} max={2} count={3}",
             entry.Path,
             FormatReachabilityDuration(entry.Elapsed),
             FormatReachabilityDuration(entry.MaxElapsed),

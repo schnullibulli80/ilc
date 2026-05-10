@@ -187,9 +187,94 @@ public sealed partial class Lowerer
             return cachedSpan;
         }
 
-        var span = TryGetSyntaxSpan(node);
+        var span = TryGetDirectSyntaxSpan(node) ?? TryGetSyntaxSpan(node);
         _syntaxSpanCache[node] = span;
         return span;
+    }
+
+    private TextSpan? TryGetDirectSyntaxSpan(SyntaxNode node) =>
+        node switch
+        {
+            BlockStatementSyntax block => CombineSpans(block.BeginKeyword.Span, block.SemicolonToken.Span),
+            IfStatementSyntax statement => CombineSpans(statement.IfKeyword.Span, statement.SemicolonToken.Span),
+            WhileStatementSyntax statement => CombineSpans(statement.WhileKeyword.Span, GetSyntaxSpan(statement.Body)),
+            RepeatStatementSyntax statement => CombineSpans(statement.RepeatKeyword.Span, statement.SemicolonToken.Span),
+            ForStatementSyntax statement => CombineSpans(statement.ForKeyword.Span, GetSyntaxSpan(statement.Body)),
+            ForeachStatementSyntax statement => CombineSpans(statement.LoopKeyword.Span, GetSyntaxSpan(statement.Body)),
+            WithStatementSyntax statement => CombineSpans(statement.WithKeyword.Span, GetSyntaxSpan(statement.Body)),
+            CaseStatementSyntax statement => CombineSpans(statement.CaseKeyword.Span, statement.SemicolonToken.Span),
+            MatchStatementSyntax statement => CombineSpans(statement.MatchKeyword.Span, statement.SemicolonToken.Span),
+            ReturnStatementSyntax statement => CombineSpans(statement.ReturnKeyword.Span, statement.SemicolonToken.Span),
+            BreakStatementSyntax statement => CombineSpans(statement.BreakKeyword.Span, statement.SemicolonToken.Span),
+            ContinueStatementSyntax statement => CombineSpans(statement.ContinueKeyword.Span, statement.SemicolonToken.Span),
+            RaiseStatementSyntax statement => CombineSpans(statement.Keyword.Span, statement.SemicolonToken.Span),
+            TryStatementSyntax statement => CombineSpans(statement.TryKeyword.Span, statement.SemicolonToken.Span),
+            LocalVariableDeclarationStatementSyntax statement => CombineSpans(statement.VarKeyword.Span, statement.SemicolonToken.Span),
+            IncStatementSyntax statement => CombineSpans(statement.Keyword.Span, statement.SemicolonToken.Span),
+            DecStatementSyntax statement => CombineSpans(statement.Keyword.Span, statement.SemicolonToken.Span),
+            IncludeStatementSyntax statement => CombineSpans(statement.Keyword.Span, statement.SemicolonToken.Span),
+            ExcludeStatementSyntax statement => CombineSpans(statement.Keyword.Span, statement.SemicolonToken.Span),
+            ExpressionStatementSyntax statement => CombineSpans(GetSyntaxSpan(statement.Expression), statement.SemicolonToken.Span),
+            LiteralExpressionSyntax expression => expression.LiteralToken.Span,
+            SetLiteralExpressionSyntax expression => CombineSpans(expression.OpenBracketToken.Span, expression.CloseBracketToken.Span),
+            ProjectorExpressionSyntax expression => CombineSpans(expression.NewKeyword.Span, expression.CloseBraceToken.Span),
+            RangeExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Start), GetSyntaxSpan(expression.End)),
+            NewExpressionSyntax expression => CombineSpans(expression.NewKeyword.Span, expression.CloseParenToken.Span),
+            NewArrayExpressionSyntax expression => CombineSpans(expression.NewKeyword.Span, expression.CloseBracketToken.Span),
+            NameExpressionSyntax expression => GetSyntaxSpan(expression.Name),
+            ArrayLengthExpressionSyntax expression => GetSyntaxSpan(expression.Target),
+            ElementAccessExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Target), expression.CloseBracketToken.Span),
+            PostfixElementAccessExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Target), expression.CloseBracketToken.Span),
+            MemberAccessExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Receiver), expression.MemberName.Span),
+            AssignmentExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Target), GetSyntaxSpan(expression.Expression)),
+            CompoundAssignmentExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Target), GetSyntaxSpan(expression.Expression)),
+            BinaryExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Left), GetSyntaxSpan(expression.Right)),
+            MatchNotPatternSyntax expression => CombineSpans(expression.NotKeyword.Span, GetSyntaxSpan(expression.Pattern)),
+            MatchOrPatternSyntax expression => CombineSpans(expression.Patterns),
+            MatchAndPatternSyntax expression => CombineSpans(expression.Patterns),
+            MatchRelationalPatternSyntax expression => CombineSpans(expression.OperatorToken.Span, GetSyntaxSpan(expression.Operand)),
+            TypeTestExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Expression), GetSyntaxSpan(expression.TypeName)),
+            AsExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Expression), GetSyntaxSpan(expression.TypeName)),
+            CallExpressionSyntax expression => CombineSpans(GetSyntaxSpan(expression.Target), expression.CloseParenToken.Span),
+            LambdaExpressionSyntax expression => CombineSpans(expression.SignatureKeyword.Span, GetSyntaxSpan(expression.Body)),
+            MatchExpressionSyntax expression => CombineSpans(expression.MatchKeyword.Span, expression.EndKeyword.Span),
+            UnaryExpressionSyntax expression => CombineSpans(expression.OperatorToken.Span, GetSyntaxSpan(expression.Operand)),
+            ParenthesizedExpressionSyntax expression => CombineSpans(expression.OpenParenToken.Span, expression.CloseParenToken.Span),
+            QueryExpressionSyntax expression => CombineSpans(expression.FromKeyword.Span, GetSyntaxSpan(expression.SkipExpression ?? expression.TakeExpression ?? expression.ContinuationSelectExpression ?? expression.SelectExpression)),
+            QualifiedNameSyntax name => CombineSpans(name.Parts),
+            _ => null
+        };
+
+    private static TextSpan? CombineSpans(TextSpan? first, TextSpan? second)
+    {
+        if (first is null)
+        {
+            return second;
+        }
+
+        if (second is null)
+        {
+            return first;
+        }
+
+        var start = Math.Min(first.Value.Start, second.Value.Start);
+        var end = Math.Max(first.Value.End, second.Value.End);
+        return new TextSpan(start, end - start);
+    }
+
+    private static TextSpan? CombineSpans(IEnumerable<SyntaxNode> nodes)
+    {
+        TextSpan? combinedSpan = null;
+        foreach (var node in nodes)
+        {
+            combinedSpan = CombineSpans(combinedSpan, node switch
+            {
+                SyntaxToken token => token.Span,
+                _ => TryGetSyntaxSpan(node)
+            });
+        }
+
+        return combinedSpan;
     }
 
     private static TextSpan? TryGetSyntaxSpan(SyntaxNode node)
@@ -236,7 +321,7 @@ public sealed partial class Lowerer
             return;
         }
 
-        foreach (var property in node.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var property in GetCachedSyntaxNodeProperties(node.GetType()))
         {
             VisitSyntaxValue(property.GetValue(node), visited, ref minStart, ref maxEnd);
         }

@@ -2,9 +2,13 @@ namespace ILC.Compiler.Binding;
 
 using ILC.Compiler.Core;
 using ILC.Compiler.Syntax;
+using System.Diagnostics;
 
 public sealed partial class Binder
 {
+    [ThreadStatic]
+    private static BindingProfiler? currentValidationProfiler;
+
     private static void ValidateSemantics(
         IReadOnlyList<MemberSyntax> members,
         IReadOnlyList<GlobalVariableSymbol> globals,
@@ -14,40 +18,69 @@ public sealed partial class Binder
         IReadOnlyList<FieldSymbol> knownFields,
         IReadOnlyList<ConstantSymbol> knownConstants,
         IReadOnlyList<PropertySymbol> knownProperties,
-        DiagnosticBag diagnostics)
+        DiagnosticBag diagnostics,
+        BindingProfiler? profiler = null)
     {
-        var topLevelScope = globals.ToDictionary(global => global.Name, global => global.Type, StringComparer.Ordinal);
-
-        foreach (var member in members)
+        var previousValidationProfiler = currentValidationProfiler;
+        currentValidationProfiler = profiler;
+        try
         {
-            switch (member)
+            Dictionary<string, TypeSymbol> topLevelScope;
+            using (Profile(profiler, "ValidateSemantics.BuildTopLevelScope"))
             {
-                case TopLevelConstantDeclarationSyntax constantDeclaration:
-                    ValidateConstantDeclarators(constantDeclaration.Declarators, topLevelScope, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
-                    break;
-                case TopLevelExpressionStatementSyntax expressionStatement:
-                    ValidateExpression(expressionStatement.Expression, topLevelScope, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
-                    break;
-                case TopLevelVariableDeclarationSyntax variableDeclaration:
-                    foreach (var declarator in variableDeclaration.Declarators)
-                    {
-                        if (declarator.Initializer is not null)
-                        {
-                            ValidateExpression(declarator.Initializer, topLevelScope, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
-                        }
-                    }
-                    break;
-                case ClassDeclarationSyntax classDeclaration:
-                    ValidateClassSemantics(classDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics);
-                    break;
-                case InterfaceDeclarationSyntax interfaceDeclaration:
-                    ValidateInterfaceSemantics(interfaceDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics);
-                    break;
-                case DelegateDeclarationSyntax:
-                    break;
-                case EnumDeclarationSyntax:
-                    break;
+                topLevelScope = globals.ToDictionary(global => global.Name, global => global.Type, StringComparer.Ordinal);
             }
+
+            foreach (var member in members)
+            {
+                switch (member)
+                {
+                    case TopLevelConstantDeclarationSyntax constantDeclaration:
+                        using (Profile(profiler, "ValidateSemantics.TopLevelConstants"))
+                        {
+                            ValidateConstantDeclarators(constantDeclaration.Declarators, topLevelScope, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+                        }
+                        break;
+                    case TopLevelExpressionStatementSyntax expressionStatement:
+                        using (Profile(profiler, "ValidateSemantics.TopLevelExpression"))
+                        {
+                            ValidateExpression(expressionStatement.Expression, topLevelScope, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+                        }
+                        break;
+                    case TopLevelVariableDeclarationSyntax variableDeclaration:
+                        using (Profile(profiler, "ValidateSemantics.TopLevelVariables"))
+                        {
+                            foreach (var declarator in variableDeclaration.Declarators)
+                            {
+                                if (declarator.Initializer is not null)
+                                {
+                                    ValidateExpression(declarator.Initializer, topLevelScope, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+                                }
+                            }
+                        }
+                        break;
+                    case ClassDeclarationSyntax classDeclaration:
+                        using (Profile(profiler, $"ValidateSemantics.Class:{classDeclaration.Identifier.Text}"))
+                        {
+                            ValidateClassSemantics(classDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics, profiler);
+                        }
+                        break;
+                    case InterfaceDeclarationSyntax interfaceDeclaration:
+                        using (Profile(profiler, $"ValidateSemantics.Interface:{interfaceDeclaration.Identifier.Text}"))
+                        {
+                            ValidateInterfaceSemantics(interfaceDeclaration, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, diagnostics, profiler);
+                        }
+                        break;
+                    case DelegateDeclarationSyntax:
+                        break;
+                    case EnumDeclarationSyntax:
+                        break;
+                }
+            }
+        }
+        finally
+        {
+            currentValidationProfiler = previousValidationProfiler;
         }
     }
 
@@ -58,183 +91,217 @@ public sealed partial class Binder
         IReadOnlyList<FieldSymbol> knownFields,
         IReadOnlyList<ConstantSymbol> knownConstants,
         IReadOnlyList<PropertySymbol> knownProperties,
-        DiagnosticBag diagnostics)
+        DiagnosticBag diagnostics,
+        BindingProfiler? profiler = null)
     {
         var declaredTypeName = classDeclaration.Identifier.Text;
-        var typeScope = knownTypes.Concat(BindTypeParameters(classDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
-        if (classDeclaration.BaseType is not null)
+        TypeSymbol[] typeScope;
+        using (Profile(profiler, "ValidateClass.BuildTypeScope"))
         {
-            var primaryType = SemanticFacts.ResolveTypeReference(classDeclaration.BaseType.ToDisplayString(), typeScope);
-            if (primaryType is null)
+            typeScope = knownTypes.Concat(BindTypeParameters(classDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
+        }
+
+        using (Profile(profiler, "ValidateClass.Inheritance"))
+        {
+            if (classDeclaration.BaseType is not null)
             {
-                diagnostics.Report(
-                    "ILC2193",
-                    $"Unknown inherited type '{classDeclaration.BaseType.ToDisplayString()}' for class '{declaredTypeName}'.",
-                    DiagnosticSeverity.Error,
-                    classDeclaration.BaseType.Parts[^1].Span);
+                var primaryType = SemanticFacts.ResolveTypeReference(classDeclaration.BaseType.ToDisplayString(), typeScope);
+                if (primaryType is null)
+                {
+                    diagnostics.Report(
+                        "ILC2193",
+                        $"Unknown inherited type '{classDeclaration.BaseType.ToDisplayString()}' for class '{declaredTypeName}'.",
+                        DiagnosticSeverity.Error,
+                        classDeclaration.BaseType.Parts[^1].Span);
+                }
+                else if (!IsReferenceClassOrInterfaceType(primaryType))
+                {
+                    diagnostics.Report(
+                        "ILC2194",
+                        $"Inherited type '{primaryType.Name}' for class '{declaredTypeName}' must be a class, record, or interface type.",
+                        DiagnosticSeverity.Error,
+                        classDeclaration.BaseType.Parts[^1].Span);
+                }
+                else if (ResolveNamedType(primaryType, typeScope) is { IsInterface: false } namedPrimaryType &&
+                    CreatesTypeCycle(declaredTypeName, namedPrimaryType, typeScope))
+                {
+                    diagnostics.Report(
+                        "ILC2195",
+                        $"Inheritance cycle detected for class '{declaredTypeName}'.",
+                        DiagnosticSeverity.Error,
+                        classDeclaration.Identifier.Span);
+                }
             }
-            else if (!IsReferenceClassOrInterfaceType(primaryType))
+
+            foreach (var interfaceTypeName in classDeclaration.InterfaceTypes)
             {
-                diagnostics.Report(
-                    "ILC2194",
-                    $"Inherited type '{primaryType.Name}' for class '{declaredTypeName}' must be a class, record, or interface type.",
-                    DiagnosticSeverity.Error,
-                    classDeclaration.BaseType.Parts[^1].Span);
-            }
-            else if (ResolveNamedType(primaryType, typeScope) is { IsInterface: false } namedPrimaryType &&
-                CreatesTypeCycle(declaredTypeName, namedPrimaryType, typeScope))
-            {
-                diagnostics.Report(
-                    "ILC2195",
-                    $"Inheritance cycle detected for class '{declaredTypeName}'.",
-                    DiagnosticSeverity.Error,
-                    classDeclaration.Identifier.Span);
+                var interfaceType = SemanticFacts.ResolveTypeReference(interfaceTypeName.ToDisplayString(), typeScope);
+                if (interfaceType is null)
+                {
+                    diagnostics.Report(
+                        "ILC2200",
+                        $"Unknown interface '{interfaceTypeName.ToDisplayString()}' for class '{declaredTypeName}'.",
+                        DiagnosticSeverity.Error,
+                        interfaceTypeName.Parts[^1].Span);
+                    continue;
+                }
+
+                if (ResolveNamedType(interfaceType, typeScope) is not { IsInterface: true })
+                {
+                    diagnostics.Report(
+                        "ILC2201",
+                        $"Implemented type '{interfaceType.Name}' for class '{declaredTypeName}' must be an interface.",
+                        DiagnosticSeverity.Error,
+                        interfaceTypeName.Parts[^1].Span);
+                }
             }
         }
 
-        foreach (var interfaceTypeName in classDeclaration.InterfaceTypes)
+        TypeSymbol? baseType;
+        IReadOnlyList<TypeSymbol> interfaceTypes;
+        using (Profile(profiler, "ValidateClass.ResolveInheritanceTargets"))
         {
-            var interfaceType = SemanticFacts.ResolveTypeReference(interfaceTypeName.ToDisplayString(), typeScope);
-            if (interfaceType is null)
-            {
-                diagnostics.Report(
-                    "ILC2200",
-                    $"Unknown interface '{interfaceTypeName.ToDisplayString()}' for class '{declaredTypeName}'.",
-                    DiagnosticSeverity.Error,
-                    interfaceTypeName.Parts[^1].Span);
-                continue;
-            }
+            (baseType, interfaceTypes) = ResolveClassInheritanceTargets(classDeclaration, typeScope);
+        }
 
-            if (ResolveNamedType(interfaceType, typeScope) is not { IsInterface: true })
+        using (Profile(profiler, "ValidateClass.InterfaceImplementations"))
+        {
+            foreach (var interfaceType in interfaceTypes)
             {
-                diagnostics.Report(
-                    "ILC2201",
-                    $"Implemented type '{interfaceType.Name}' for class '{declaredTypeName}' must be an interface.",
-                    DiagnosticSeverity.Error,
-                    interfaceTypeName.Parts[^1].Span);
+                ValidateInterfaceImplementation(
+                    declaredTypeName,
+                    interfaceType,
+                    classDeclaration,
+                    typeScope,
+                    knownMethods,
+                    diagnostics);
             }
         }
 
-        var (baseType, interfaceTypes) = ResolveClassInheritanceTargets(classDeclaration, typeScope);
-        foreach (var interfaceType in interfaceTypes)
+        IReadOnlyList<FieldSymbol> typeFields;
+        using (Profile(profiler, "ValidateClass.FindFields"))
         {
-            ValidateInterfaceImplementation(
-                declaredTypeName,
-                interfaceType,
-                classDeclaration,
-                typeScope,
-                knownMethods,
-                diagnostics);
+            typeFields = FindFields(knownFields, classDeclaration.Identifier.Text);
         }
 
-        var typeFields = FindFields(knownFields, classDeclaration.Identifier.Text);
-        foreach (var property in classDeclaration.Members.OfType<PropertyDeclarationSyntax>())
+        using (Profile(profiler, "ValidateClass.Properties"))
         {
-            ValidatePropertyDeclaration(property, classDeclaration.Identifier.Text, typeFields, knownTypes, diagnostics);
+            foreach (var property in classDeclaration.Members.OfType<PropertyDeclarationSyntax>())
+            {
+                ValidatePropertyDeclaration(property, classDeclaration.Identifier.Text, typeFields, knownTypes, diagnostics);
+            }
         }
 
-        foreach (var constant in classDeclaration.Members.OfType<ConstantDeclarationSyntax>())
+        using (Profile(profiler, "ValidateClass.Constants"))
         {
-            ValidateConstantDeclarators(constant.Declarators, new Dictionary<string, TypeSymbol>(StringComparer.Ordinal), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+            foreach (var constant in classDeclaration.Members.OfType<ConstantDeclarationSyntax>())
+            {
+                ValidateConstantDeclarators(constant.Declarators, new Dictionary<string, TypeSymbol>(StringComparer.Ordinal), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+            }
         }
 
-        foreach (var method in classDeclaration.Members.OfType<MethodDeclarationSyntax>())
+        using (Profile(profiler, "ValidateClass.Methods"))
         {
-            var locals = method.Parameters.ToDictionary(
-                parameter => parameter.Identifier.Text,
-                parameter => BindType(parameter.TypeName, typeScope),
-                StringComparer.Ordinal);
-
-            var boundMethod = FindMethod(knownMethods, classDeclaration.Identifier.Text, method.Identifier.Text, method.Parameters.Count);
-            if (boundMethod is not null && !boundMethod.IsStatic)
+            foreach (var method in classDeclaration.Members.OfType<MethodDeclarationSyntax>())
             {
-                locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
+                using var methodProfile = Profile(profiler, $"ValidateClass.Method:{method.Identifier.Text}");
+                var locals = method.Parameters.ToDictionary(
+                    parameter => parameter.Identifier.Text,
+                    parameter => BindType(parameter.TypeName, typeScope),
+                    StringComparer.Ordinal);
+
+                var boundMethod = FindMethod(knownMethods, classDeclaration.Identifier.Text, method.Identifier.Text, method.Parameters.Count);
+                if (boundMethod is not null && !boundMethod.IsStatic)
+                {
+                    locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
+                }
+
+                ValidateMethodInheritanceModifiers(
+                    method,
+                    boundMethod,
+                    baseType,
+                    typeScope,
+                    knownMethods,
+                    declaredTypeName,
+                    diagnostics);
+
+                if (method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod is not null)
+                {
+                    ValidateDllImportMethod(classDeclaration.Identifier.Text, method, boundMethod, typeScope, diagnostics);
+                }
+
+                foreach (var field in typeFields.Where(field => field.IsStatic))
+                {
+                    locals[field.Name] = field.Type;
+                }
+
+                if (method.ExpressionBody is not null)
+                {
+                    if (boundMethod?.IsExtern == true)
+                    {
+                        diagnostics.Report(
+                            "ILC2182",
+                            $"Extern method '{classDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                        continue;
+                    }
+
+                    if (boundMethod?.IsConstructor == true)
+                    {
+                        diagnostics.Report(
+                            "ILC2114",
+                            $"Constructor '{classDeclaration.Identifier.Text}' cannot declare an expression body.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                        continue;
+                    }
+
+                    ValidateExpression(method.ExpressionBody, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, boundMethod, diagnostics);
+                    continue;
+                }
+
+                if (boundMethod?.IsExtern == true)
+                {
+                    if (method.Body is not null)
+                    {
+                        diagnostics.Report(
+                            "ILC2182",
+                            $"Extern method '{classDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                    }
+                    else if (!method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod.HostImportKind == HostImportKind.None)
+                    {
+                        diagnostics.Report(
+                            "ILC2183",
+                            $"Extern method '{classDeclaration.Identifier.Text}.{method.Identifier.Text}' does not map to a supported host service.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                    }
+
+                    continue;
+                }
+
+                if (method.Body is null)
+                {
+                    continue;
+                }
+
+                ValidateStatements(
+                    method.Body.Statements,
+                    locals,
+                    typeScope,
+                    knownMethods,
+                    knownFields,
+                    knownConstants,
+                    knownProperties,
+                    boundMethod,
+                    false,
+                    false,
+                    diagnostics,
+                    profiler);
             }
-
-            ValidateMethodInheritanceModifiers(
-                method,
-                boundMethod,
-                baseType,
-                typeScope,
-                knownMethods,
-                declaredTypeName,
-                diagnostics);
-
-            if (method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod is not null)
-            {
-                ValidateDllImportMethod(classDeclaration.Identifier.Text, method, boundMethod, typeScope, diagnostics);
-            }
-
-            foreach (var field in typeFields.Where(field => field.IsStatic))
-            {
-                locals[field.Name] = field.Type;
-            }
-
-        if (method.ExpressionBody is not null)
-        {
-            if (boundMethod?.IsExtern == true)
-            {
-                diagnostics.Report(
-                    "ILC2182",
-                    $"Extern method '{classDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
-                    DiagnosticSeverity.Error,
-                    method.Keyword.Span);
-                continue;
-            }
-
-            if (boundMethod?.IsConstructor == true)
-            {
-                diagnostics.Report(
-                    "ILC2114",
-                    $"Constructor '{classDeclaration.Identifier.Text}' cannot declare an expression body.",
-                    DiagnosticSeverity.Error,
-                    method.Keyword.Span);
-                continue;
-            }
-
-            ValidateExpression(method.ExpressionBody, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, boundMethod, diagnostics);
-            continue;
-        }
-
-        if (boundMethod?.IsExtern == true)
-        {
-            if (method.Body is not null)
-            {
-                diagnostics.Report(
-                    "ILC2182",
-                    $"Extern method '{classDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
-                    DiagnosticSeverity.Error,
-                    method.Keyword.Span);
-            }
-            else if (!method.Attributes.Any(attribute => IsDllImportAttribute(attribute)) && boundMethod.HostImportKind == HostImportKind.None)
-            {
-                diagnostics.Report(
-                    "ILC2183",
-                    $"Extern method '{classDeclaration.Identifier.Text}.{method.Identifier.Text}' does not map to a supported host service.",
-                    DiagnosticSeverity.Error,
-                    method.Keyword.Span);
-            }
-
-            continue;
-        }
-
-        if (method.Body is null)
-        {
-            continue;
-        }
-
-            ValidateStatements(
-                method.Body.Statements,
-                locals,
-                typeScope,
-                knownMethods,
-                knownFields,
-                knownConstants,
-            knownProperties,
-            boundMethod,
-            false,
-            false,
-            diagnostics);
         }
     }
 
@@ -245,81 +312,93 @@ public sealed partial class Binder
         IReadOnlyList<FieldSymbol> knownFields,
         IReadOnlyList<ConstantSymbol> knownConstants,
         IReadOnlyList<PropertySymbol> knownProperties,
-        DiagnosticBag diagnostics)
+        DiagnosticBag diagnostics,
+        BindingProfiler? profiler = null)
     {
-        var typeScope = knownTypes.Concat(BindTypeParameters(interfaceDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
-        foreach (var baseInterfaceName in interfaceDeclaration.BaseInterfaces)
+        TypeSymbol[] typeScope;
+        using (Profile(profiler, "ValidateInterface.BuildTypeScope"))
         {
-            var resolvedInterface = SemanticFacts.ResolveTypeReference(baseInterfaceName.ToDisplayString(), typeScope);
-            if (resolvedInterface is null)
-            {
-                diagnostics.Report(
-                    "ILC2202",
-                    $"Unknown base interface '{baseInterfaceName.ToDisplayString()}' for interface '{interfaceDeclaration.Identifier.Text}'.",
-                    DiagnosticSeverity.Error,
-                    baseInterfaceName.Parts[^1].Span);
-                continue;
-            }
+            typeScope = knownTypes.Concat(BindTypeParameters(interfaceDeclaration.TypeParameters).Cast<TypeSymbol>()).ToArray();
+        }
 
-            if (ResolveNamedType(resolvedInterface, typeScope) is not { IsInterface: true })
+        using (Profile(profiler, "ValidateInterface.BaseInterfaces"))
+        {
+            foreach (var baseInterfaceName in interfaceDeclaration.BaseInterfaces)
             {
-                diagnostics.Report(
-                    "ILC2203",
-                    $"Base interface '{resolvedInterface.Name}' for interface '{interfaceDeclaration.Identifier.Text}' must itself be an interface.",
-                    DiagnosticSeverity.Error,
-                    baseInterfaceName.Parts[^1].Span);
+                var resolvedInterface = SemanticFacts.ResolveTypeReference(baseInterfaceName.ToDisplayString(), typeScope);
+                if (resolvedInterface is null)
+                {
+                    diagnostics.Report(
+                        "ILC2202",
+                        $"Unknown base interface '{baseInterfaceName.ToDisplayString()}' for interface '{interfaceDeclaration.Identifier.Text}'.",
+                        DiagnosticSeverity.Error,
+                        baseInterfaceName.Parts[^1].Span);
+                    continue;
+                }
+
+                if (ResolveNamedType(resolvedInterface, typeScope) is not { IsInterface: true })
+                {
+                    diagnostics.Report(
+                        "ILC2203",
+                        $"Base interface '{resolvedInterface.Name}' for interface '{interfaceDeclaration.Identifier.Text}' must itself be an interface.",
+                        DiagnosticSeverity.Error,
+                        baseInterfaceName.Parts[^1].Span);
+                }
             }
         }
 
-        foreach (var member in interfaceDeclaration.Members)
+        using (Profile(profiler, "ValidateInterface.Members"))
         {
-            switch (member)
+            foreach (var member in interfaceDeclaration.Members)
             {
-                case FieldDeclarationSyntax:
-                    diagnostics.Report(
-                        "ILC2204",
-                        $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare fields.",
-                        DiagnosticSeverity.Error,
-                        interfaceDeclaration.Identifier.Span);
-                    break;
-                case ConstantDeclarationSyntax:
-                    diagnostics.Report(
-                        "ILC2205",
-                        $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare constants in the current bootstrap compiler.",
-                        DiagnosticSeverity.Error,
-                        interfaceDeclaration.Identifier.Span);
-                    break;
-                case MethodDeclarationSyntax method when method.Keyword.Kind == SyntaxKind.ConstructorKeyword:
-                    diagnostics.Report(
-                        "ILC2206",
-                        $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare constructors.",
-                        DiagnosticSeverity.Error,
-                        method.Keyword.Span);
-                    break;
-                case MethodDeclarationSyntax method when method.Body is not null || method.ExpressionBody is not null:
-                    diagnostics.Report(
-                        "ILC2207",
-                        $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
-                        DiagnosticSeverity.Error,
-                        method.Keyword.Span);
-                    break;
-                case MethodDeclarationSyntax method when method.Attributes.Any(attribute => IsDllImportAttribute(attribute)):
-                    diagnostics.Report(
-                        "ILC2216",
-                        $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' cannot declare DllImport metadata.",
-                        DiagnosticSeverity.Error,
-                        method.Keyword.Span);
-                    break;
-                case PropertyDeclarationSyntax property when
-                    property.BeginKeyword is not null ||
-                    property.GetterBody is not null ||
-                    property.SetterBody is not null:
-                    diagnostics.Report(
-                        "ILC2208",
-                        $"Interface property '{interfaceDeclaration.Identifier.Text}.{property.Identifier.Text}' must be declaration-only.",
-                        DiagnosticSeverity.Error,
-                        property.PropertyKeyword.Span);
-                    break;
+                switch (member)
+                {
+                    case FieldDeclarationSyntax:
+                        diagnostics.Report(
+                            "ILC2204",
+                            $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare fields.",
+                            DiagnosticSeverity.Error,
+                            interfaceDeclaration.Identifier.Span);
+                        break;
+                    case ConstantDeclarationSyntax:
+                        diagnostics.Report(
+                            "ILC2205",
+                            $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare constants in the current bootstrap compiler.",
+                            DiagnosticSeverity.Error,
+                            interfaceDeclaration.Identifier.Span);
+                        break;
+                    case MethodDeclarationSyntax method when method.Keyword.Kind == SyntaxKind.ConstructorKeyword:
+                        diagnostics.Report(
+                            "ILC2206",
+                            $"Interface '{interfaceDeclaration.Identifier.Text}' cannot declare constructors.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                        break;
+                    case MethodDeclarationSyntax method when method.Body is not null || method.ExpressionBody is not null:
+                        diagnostics.Report(
+                            "ILC2207",
+                            $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' must not declare a body.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                        break;
+                    case MethodDeclarationSyntax method when method.Attributes.Any(attribute => IsDllImportAttribute(attribute)):
+                        diagnostics.Report(
+                            "ILC2216",
+                            $"Interface method '{interfaceDeclaration.Identifier.Text}.{method.Identifier.Text}' cannot declare DllImport metadata.",
+                            DiagnosticSeverity.Error,
+                            method.Keyword.Span);
+                        break;
+                    case PropertyDeclarationSyntax property when
+                        property.BeginKeyword is not null ||
+                        property.GetterBody is not null ||
+                        property.SetterBody is not null:
+                        diagnostics.Report(
+                            "ILC2208",
+                            $"Interface property '{interfaceDeclaration.Identifier.Text}.{property.Identifier.Text}' must be declaration-only.",
+                            DiagnosticSeverity.Error,
+                            property.PropertyKeyword.Span);
+                        break;
+                }
             }
         }
     }
@@ -351,7 +430,7 @@ public sealed partial class Binder
             if (declarator.TypeName is not null)
             {
                 var declaredType = BindType(declarator.TypeName, knownTypes);
-                var initializerType = SemanticFacts.InferExpressionType(declarator.Initializer, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var initializerType = InferValidationExpressionType(declarator.Initializer, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (declaredType != initializerType)
                 {
                     diagnostics.Report(
@@ -469,23 +548,27 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         bool inExceptionHandler,
         bool inLoop,
-        DiagnosticBag diagnostics)
+        DiagnosticBag diagnostics,
+        BindingProfiler? profiler = null)
     {
         foreach (var statement in statements)
         {
+            using var statementProfile = Profile(profiler, $"ValidateStatements.{statement.GetType().Name}");
             switch (statement)
             {
                 case BlockStatementSyntax block:
-                    ValidateStatements(block.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                    ValidateStatements(block.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     break;
                 case LocalVariableDeclarationStatementSyntax localVariable:
                     foreach (var declarator in localVariable.Declarators)
                     {
+                        var declaredType = declarator.TypeName is not null ? BindType(declarator.TypeName, knownTypes) : null;
+                        TypeSymbol? initializerType = null;
                         if (declarator.Initializer is not null)
                         {
-                            ValidateExpressionForExpectedType(
+                            initializerType = ValidateExpressionForExpectedType(
                                 declarator.Initializer,
-                                declarator.TypeName is not null ? BindType(declarator.TypeName, knownTypes) : null,
+                                declaredType,
                                 locals,
                                 knownTypes,
                                 knownMethods,
@@ -496,9 +579,7 @@ public sealed partial class Binder
                                 diagnostics);
                         }
 
-                        locals[declarator.Identifier.Text] = declarator.TypeName is not null
-                            ? BindType(declarator.TypeName, knownTypes)
-                            : SemanticFacts.InferExpressionType(
+                        locals[declarator.Identifier.Text] = declaredType ?? initializerType ?? InferValidationExpressionType(
                                 declarator.Initializer,
                                 locals,
                                 knownMethods,
@@ -553,18 +634,18 @@ public sealed partial class Binder
                     break;
                 case IfStatementSyntax ifStatement:
                     ValidateExpression(ifStatement.Condition, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    ValidateStatements([ifStatement.ThenStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                    ValidateStatements([ifStatement.ThenStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     if (ifStatement.ElseStatement is not null)
                     {
-                        ValidateStatements([ifStatement.ElseStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                        ValidateStatements([ifStatement.ElseStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     }
                     break;
                 case WhileStatementSyntax whileStatement:
                     ValidateExpression(whileStatement.Condition, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    ValidateStatements([whileStatement.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics);
+                    ValidateStatements([whileStatement.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
                     break;
                 case RepeatStatementSyntax repeatStatement:
-                    ValidateStatements(repeatStatement.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics);
+                    ValidateStatements(repeatStatement.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
                     ValidateExpression(repeatStatement.Condition, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
                 case ForStatementSyntax forStatement:
@@ -603,7 +684,7 @@ public sealed partial class Binder
                         ValidateExpression(forStatement.StepExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     }
 
-                    if (SemanticFacts.InferExpressionType(forStatement.LowerBound, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) != TypeSymbol.Integer)
+                    if (InferValidationExpressionType(forStatement.LowerBound, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
                             "ILC2138",
@@ -612,7 +693,7 @@ public sealed partial class Binder
                             GetExpressionDiagnosticSpan(forStatement.LowerBound, knownTypes));
                     }
 
-                    if (SemanticFacts.InferExpressionType(forStatement.UpperBound, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) != TypeSymbol.Integer)
+                    if (InferValidationExpressionType(forStatement.UpperBound, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
                             "ILC2139",
@@ -622,7 +703,7 @@ public sealed partial class Binder
                     }
 
                     if (forStatement.StepExpression is not null &&
-                        SemanticFacts.InferExpressionType(forStatement.StepExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) != TypeSymbol.Integer)
+                        InferValidationExpressionType(forStatement.StepExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes) != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
                             "ILC2189",
@@ -631,11 +712,11 @@ public sealed partial class Binder
                             GetExpressionDiagnosticSpan(forStatement.StepExpression, knownTypes));
                     }
 
-                    ValidateStatements([forStatement.Body], forLoopLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics);
+                    ValidateStatements([forStatement.Body], forLoopLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
                     break;
                 case ForeachStatementSyntax foreachStatement:
                     ValidateExpression(foreachStatement.Collection, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var collectionType = SemanticFacts.InferExpressionType(foreachStatement.Collection, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var collectionType = InferValidationExpressionType(foreachStatement.Collection, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     TypeSymbol? elementType = null;
                     if (collectionType == TypeSymbol.String)
                     {
@@ -697,16 +778,16 @@ public sealed partial class Binder
                             foreachStatement.Identifier.Span);
                     }
 
-                    ValidateStatements([foreachStatement.Body], foreachLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics);
+                    ValidateStatements([foreachStatement.Body], foreachLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
                     break;
                 case WithStatementSyntax withStatement:
                     ValidateExpression(withStatement.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var rewrittenWithBody = RewriteWithStatement(withStatement.Body, withStatement.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-                    ValidateStatements([rewrittenWithBody], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                    ValidateStatements([rewrittenWithBody], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     break;
                 case CaseStatementSyntax caseStatement:
                     ValidateExpression(caseStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var caseExpressionType = SemanticFacts.InferExpressionType(caseStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var caseExpressionType = InferValidationExpressionType(caseStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (caseExpressionType != TypeSymbol.Integer && caseExpressionType != TypeSymbol.String && !SemanticFacts.IsEnumType(caseExpressionType))
                     {
                         diagnostics.Report(
@@ -727,7 +808,7 @@ public sealed partial class Binder
                         if (clause.Guard is not null)
                         {
                             ValidateExpression(clause.Guard, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                            var guardType = SemanticFacts.InferExpressionType(clause.Guard, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                            var guardType = InferValidationExpressionType(clause.Guard, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                             if (guardType != TypeSymbol.Boolean)
                             {
                                 diagnostics.Report(
@@ -738,14 +819,14 @@ public sealed partial class Binder
                             }
                         }
 
-                        ValidateStatements([clause.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                        ValidateStatements([clause.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     }
 
-                    ValidateStatements(caseStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                    ValidateStatements(caseStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     break;
                 case MatchStatementSyntax matchStatement:
                     ValidateExpression(matchStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var matchExpressionType = SemanticFacts.InferExpressionType(matchStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var matchExpressionType = InferValidationExpressionType(matchStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (matchExpressionType != TypeSymbol.Integer &&
                         matchExpressionType != TypeSymbol.String &&
                         !SemanticFacts.IsEnumType(matchExpressionType) &&
@@ -807,7 +888,7 @@ public sealed partial class Binder
                         if (arm.Guard is not null)
                         {
                             ValidateExpression(arm.Guard, armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                            var guardType = SemanticFacts.InferExpressionType(arm.Guard, armLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                            var guardType = InferValidationExpressionType(arm.Guard, armLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                             if (guardType != TypeSymbol.Boolean)
                             {
                                 diagnostics.Report(
@@ -818,13 +899,13 @@ public sealed partial class Binder
                             }
                         }
 
-                        ValidateStatements([arm.Body], armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                        ValidateStatements([arm.Body], armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     }
 
-                    ValidateStatements(matchStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                    ValidateStatements(matchStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     break;
                 case TryStatementSyntax tryStatement:
-                    ValidateStatements(tryStatement.TryStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics);
+                    ValidateStatements(tryStatement.TryStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
                     if (tryStatement.ExceptKeyword is not null)
                     {
                         foreach (var clause in tryStatement.ExceptionClauses)
@@ -854,10 +935,10 @@ public sealed partial class Binder
                             {
                                 [clause.Identifier.Text] = clauseType
                             };
-                            ValidateStatements([clause.Body], clauseLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics);
+                            ValidateStatements([clause.Body], clauseLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler);
                         }
 
-                        ValidateStatements(tryStatement.ExceptStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics);
+                        ValidateStatements(tryStatement.ExceptStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler);
                     }
 
                     if (tryStatement.FinallyKeyword is not null)
@@ -875,7 +956,7 @@ public sealed partial class Binder
                                 tryStatement.FinallyKeyword.Span);
                         }
 
-                        ValidateStatements(tryStatement.FinallyStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, false, inLoop, diagnostics);
+                        ValidateStatements(tryStatement.FinallyStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, false, inLoop, diagnostics, profiler);
                     }
                     break;
             }
@@ -1277,9 +1358,39 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
+        var profiler = currentValidationProfiler;
+        if (profiler is null)
+        {
+            ValidateExpressionCore(expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+            return;
+        }
+
+        var startedAt = Stopwatch.GetTimestamp();
+        ValidateExpressionCore(expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+        profiler.AddFlatSample($"ValidateExpression.{expression.GetType().Name}", Stopwatch.GetElapsedTime(startedAt));
+    }
+
+    private static void ValidateExpressionCore(
+        ExpressionSyntax expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
         switch (expression)
         {
             case NameExpressionSyntax name:
+                if (name.Name.Parts.Count == 1 &&
+                    locals.ContainsKey(name.Name.Parts[0].Text))
+                {
+                    using var localNameProfile = Profile(currentValidationProfiler, "ValidateName.LocalFastPath");
+                    break;
+                }
+
                 ValidateNameReference(name.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 break;
             case ParenthesizedExpressionSyntax parenthesized:
@@ -1289,7 +1400,7 @@ public sealed partial class Binder
                 ValidateAssignmentTarget(assignment.Target, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 ValidateExpressionForExpectedType(
                     assignment.Expression,
-                    SemanticFacts.InferExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
+                    InferValidationExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes),
                     locals,
                     knownTypes,
                     knownMethods,
@@ -1305,7 +1416,7 @@ public sealed partial class Binder
                 ValidateExpression(assignment.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 if (assignment.OperatorToken.Kind == SyntaxKind.NullCoalescingAssignToken)
                 {
-                    var targetType = SemanticFacts.InferExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var targetType = InferValidationExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (!targetType.IsReferenceType)
                     {
                         diagnostics.Report(
@@ -1317,8 +1428,8 @@ public sealed partial class Binder
                 }
                 else if (assignment.OperatorToken.Kind is SyntaxKind.ShlAssignToken or SyntaxKind.ShrAssignToken)
                 {
-                    var targetType = SemanticFacts.InferExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var valueType = SemanticFacts.InferExpressionType(assignment.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var targetType = InferValidationExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var valueType = InferValidationExpressionType(assignment.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (SemanticFacts.IsUnknownType(targetType) || SemanticFacts.IsUnknownType(valueType))
                     {
                         break;
@@ -1343,8 +1454,8 @@ public sealed partial class Binder
                 }
                 else if (assignment.OperatorToken.Kind == SyntaxKind.DivAssignToken)
                 {
-                    var targetType = SemanticFacts.InferExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var valueType = SemanticFacts.InferExpressionType(assignment.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var targetType = InferValidationExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var valueType = InferValidationExpressionType(assignment.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (SemanticFacts.IsUnknownType(targetType) || SemanticFacts.IsUnknownType(valueType))
                     {
                         break;
@@ -1369,8 +1480,8 @@ public sealed partial class Binder
                 }
                 else if (assignment.OperatorToken.Kind == SyntaxKind.ModAssignToken)
                 {
-                    var targetType = SemanticFacts.InferExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var valueType = SemanticFacts.InferExpressionType(assignment.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var targetType = InferValidationExpressionType(assignment.Target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var valueType = InferValidationExpressionType(assignment.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (SemanticFacts.IsUnknownType(targetType) || SemanticFacts.IsUnknownType(valueType))
                     {
                         break;
@@ -1395,16 +1506,36 @@ public sealed partial class Binder
                 }
                 break;
             case BinaryExpressionSyntax binary:
-                ValidateExpression(binary.Left, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                ValidateExpression(binary.Right, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                using (Profile(currentValidationProfiler, "ValidateBinary.Operands"))
+                {
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Left"))
+                    {
+                        ValidateExpression(binary.Left, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
+
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Right"))
+                    {
+                        ValidateExpression(binary.Right, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
+                }
+
                 if (binary.OperatorToken.Kind is SyntaxKind.InKeyword or SyntaxKind.NotInKeyword)
                 {
-                    ValidateSetMembership(binary, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    using (Profile(currentValidationProfiler, "ValidateBinary.SetMembership"))
+                    {
+                        ValidateSetMembership(binary, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
                 }
                 else if (binary.OperatorToken.Kind == SyntaxKind.NullCoalescingToken)
                 {
-                    var leftType = SemanticFacts.InferExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var rightType = SemanticFacts.InferExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    TypeSymbol leftType;
+                    TypeSymbol rightType;
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Infer.NullCoalescing"))
+                    {
+                        leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    }
+
                     if (!leftType.IsReferenceType && leftType != TypeSymbol.Nil)
                     {
                         diagnostics.Report(
@@ -1424,8 +1555,14 @@ public sealed partial class Binder
                 }
                 else if (binary.OperatorToken.Kind is SyntaxKind.ShlKeyword or SyntaxKind.ShrKeyword)
                 {
-                    var leftType = SemanticFacts.InferExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var rightType = SemanticFacts.InferExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    TypeSymbol leftType;
+                    TypeSymbol rightType;
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Infer.Shift"))
+                    {
+                        leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    }
+
                     if (leftType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1445,8 +1582,14 @@ public sealed partial class Binder
                 }
                 else if (binary.OperatorToken.Kind == SyntaxKind.DivKeyword)
                 {
-                    var leftType = SemanticFacts.InferExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var rightType = SemanticFacts.InferExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    TypeSymbol leftType;
+                    TypeSymbol rightType;
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Infer.Div"))
+                    {
+                        leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    }
+
                     if (leftType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1466,8 +1609,14 @@ public sealed partial class Binder
                 }
                 else if (binary.OperatorToken.Kind == SyntaxKind.ModKeyword)
                 {
-                    var leftType = SemanticFacts.InferExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var rightType = SemanticFacts.InferExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    TypeSymbol leftType;
+                    TypeSymbol rightType;
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Infer.Mod"))
+                    {
+                        leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    }
+
                     if (leftType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1487,14 +1636,28 @@ public sealed partial class Binder
                 }
                 else if (binary.OperatorToken.Kind is SyntaxKind.PlusToken or SyntaxKind.MinusToken or SyntaxKind.StarToken)
                 {
-                    ValidateSetBinary(binary, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    bool mayBeSetExpression;
+                    using (Profile(currentValidationProfiler, "ValidateBinary.MayBeSetExpression"))
+                    {
+                        mayBeSetExpression =
+                            MayBeSetExpression(binary.Left, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod) ||
+                            MayBeSetExpression(binary.Right, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                    }
+
+                    if (mayBeSetExpression)
+                    {
+                        using (Profile(currentValidationProfiler, "ValidateBinary.SetBinary"))
+                        {
+                            ValidateSetBinary(binary, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        }
+                    }
                 }
                 break;
             case UnaryExpressionSyntax unary:
                 ValidateExpression(unary.Operand, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 if (unary.OperatorToken.Kind == SyntaxKind.NotKeyword)
                 {
-                    var operandType = SemanticFacts.InferExpressionType(unary.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var operandType = InferValidationExpressionType(unary.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (operandType != TypeSymbol.Boolean && operandType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1506,7 +1669,7 @@ public sealed partial class Binder
                 }
                 else if (unary.OperatorToken.Kind == SyntaxKind.MinusToken)
                 {
-                    var operandType = SemanticFacts.InferExpressionType(unary.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var operandType = InferValidationExpressionType(unary.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (operandType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1518,7 +1681,7 @@ public sealed partial class Binder
                 }
                 else if (unary.OperatorToken.Kind == SyntaxKind.PlusToken)
                 {
-                    var operandType = SemanticFacts.InferExpressionType(unary.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var operandType = InferValidationExpressionType(unary.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (operandType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1549,7 +1712,7 @@ public sealed partial class Binder
                 break;
             case MatchExpressionSyntax matchExpression:
                 ValidateExpression(matchExpression.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var matchedExpressionType = SemanticFacts.InferExpressionType(matchExpression.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var matchedExpressionType = InferValidationExpressionType(matchExpression.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (matchedExpressionType != TypeSymbol.Integer &&
                     matchedExpressionType != TypeSymbol.String &&
                     !SemanticFacts.IsEnumType(matchedExpressionType) &&
@@ -1617,7 +1780,7 @@ public sealed partial class Binder
                     if (arm.Guard is not null)
                     {
                         ValidateExpression(arm.Guard, armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                        var guardType = SemanticFacts.InferExpressionType(arm.Guard, armLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var guardType = InferValidationExpressionType(arm.Guard, armLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         if (guardType != TypeSymbol.Boolean)
                         {
                             diagnostics.Report(
@@ -1629,7 +1792,7 @@ public sealed partial class Binder
                     }
 
                     ValidateExpression(arm.Expression, armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var armType = SemanticFacts.InferExpressionType(arm.Expression, armLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var armType = InferValidationExpressionType(arm.Expression, armLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (resultType is null)
                     {
                         resultType = armType;
@@ -1745,7 +1908,7 @@ public sealed partial class Binder
                 break;
             case ArrayLengthExpressionSyntax arrayLength:
                 ValidateNameReference(arrayLength.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var lengthTargetType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(arrayLength.Target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var lengthTargetType = InferValidationExpressionType(new NameExpressionSyntax(arrayLength.Target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (!SemanticFacts.HasLengthProperty(lengthTargetType))
                 {
                     diagnostics.Report(
@@ -1763,8 +1926,22 @@ public sealed partial class Binder
 
                 break;
             case CallExpressionSyntax call:
-                var invocation = SemanticFacts.ResolveInvocation(call.Target, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-                if (TryReportInvalidMethodAccess(call.Target, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics))
+                InvocationResolution? invocation;
+                using (Profile(currentValidationProfiler, "ValidateCall.ResolveInvocation"))
+                {
+                    invocation = SemanticFacts.ResolveInvocation(call.Target, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+                }
+
+                var reportedInvalidMethodAccess = false;
+                if (RequiresInvalidMethodAccessCheck(call.Target, invocation, currentMethod))
+                {
+                    using (Profile(currentValidationProfiler, "ValidateCall.InvalidMethodAccess"))
+                    {
+                        reportedInvalidMethodAccess = TryReportInvalidMethodAccess(call.Target, call.Arguments.Count, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    }
+                }
+
+                if (reportedInvalidMethodAccess)
                 {
                 }
                 else if (invocation is null)
@@ -1778,25 +1955,28 @@ public sealed partial class Binder
 
                 for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
                 {
-                    var argument = call.Arguments[argumentIndex];
-                    var parameter = invocation?.Method.Parameters.ElementAtOrDefault(argumentIndex);
-                    if (parameter is not null && (parameter.PassingKind == ParameterPassingKind.Out || parameter.PassingKind == ParameterPassingKind.Ref))
+                    using (Profile(currentValidationProfiler, "ValidateCall.Argument"))
                     {
-                        ValidateAssignmentTarget(argument.Expression, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    }
-                    else
-                    {
-                        ValidateExpressionForExpectedType(
-                            argument.Expression,
-                            parameter?.Type,
-                            locals,
-                            knownTypes,
-                            knownMethods,
-                            knownFields,
-                            knownConstants,
-                            knownProperties,
-                            currentMethod,
-                            diagnostics);
+                        var argument = call.Arguments[argumentIndex];
+                        var parameter = invocation?.Method.Parameters.ElementAtOrDefault(argumentIndex);
+                        if (parameter is not null && (parameter.PassingKind == ParameterPassingKind.Out || parameter.PassingKind == ParameterPassingKind.Ref))
+                        {
+                            ValidateAssignmentTarget(argument.Expression, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        }
+                        else
+                        {
+                            ValidateExpressionForExpectedType(
+                                argument.Expression,
+                                parameter?.Type,
+                                locals,
+                                knownTypes,
+                                knownMethods,
+                                knownFields,
+                                knownConstants,
+                                knownProperties,
+                                currentMethod,
+                                diagnostics);
+                        }
                     }
                 }
 
@@ -1805,30 +1985,33 @@ public sealed partial class Binder
                     invocation.Method.IsStatic &&
                     call.Arguments.Count == 2)
                 {
-                    var parseInputType = SemanticFacts.InferExpressionType(call.Arguments[0].Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    if (parseInputType != TypeSymbol.String)
+                    using (Profile(currentValidationProfiler, "ValidateCall.TryParseSpecialCase"))
                     {
-                        diagnostics.Report(
-                            "ILC2163",
-                            "Integer.TryParse expects a String as its first argument.",
-                            DiagnosticSeverity.Error,
-                            GetExpressionDiagnosticSpan(call.Arguments[0].Expression, knownTypes));
-                    }
+                        var parseInputType = InferValidationExpressionType(call.Arguments[0].Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        if (parseInputType != TypeSymbol.String)
+                        {
+                            diagnostics.Report(
+                                "ILC2163",
+                                "Integer.TryParse expects a String as its first argument.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(call.Arguments[0].Expression, knownTypes));
+                        }
 
-                    var parseTargetType = SemanticFacts.InferExpressionType(call.Arguments[1].Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    if (parseTargetType != TypeSymbol.Integer)
-                    {
-                        diagnostics.Report(
-                            "ILC2164",
-                            "Integer.TryParse expects an Integer assignment target as its second argument.",
-                            DiagnosticSeverity.Error,
-                            GetExpressionDiagnosticSpan(call.Arguments[1].Expression, knownTypes));
+                        var parseTargetType = InferValidationExpressionType(call.Arguments[1].Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        if (parseTargetType != TypeSymbol.Integer)
+                        {
+                            diagnostics.Report(
+                                "ILC2164",
+                                "Integer.TryParse expects an Integer assignment target as its second argument.",
+                                DiagnosticSeverity.Error,
+                                GetExpressionDiagnosticSpan(call.Arguments[1].Expression, knownTypes));
+                        }
                     }
                 }
                 break;
             case QueryExpressionSyntax query:
                 ValidateExpression(query.SourceExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                var querySourceType = SemanticFacts.InferExpressionType(query.SourceExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var querySourceType = InferValidationExpressionType(query.SourceExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 var enumerablePattern = SemanticFacts.ResolveEnumerablePattern(querySourceType, knownTypes);
                 if (enumerablePattern is null)
                 {
@@ -1848,7 +2031,7 @@ public sealed partial class Binder
                 if (query.JoinSourceExpression is not null && query.JoinIdentifier is not null)
                 {
                     ValidateExpression(query.JoinSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var joinSourceType = SemanticFacts.InferExpressionType(query.JoinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var joinSourceType = InferValidationExpressionType(query.JoinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var joinEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(joinSourceType, knownTypes);
                     if (joinEnumerablePattern is null)
                     {
@@ -1879,8 +2062,8 @@ public sealed partial class Binder
 
                     if (query.JoinLeftExpression is not null && query.JoinRightExpression is not null)
                     {
-                        var joinLeftType = SemanticFacts.InferExpressionType(query.JoinLeftExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                        var joinRightType = SemanticFacts.InferExpressionType(query.JoinRightExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var joinLeftType = InferValidationExpressionType(query.JoinLeftExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var joinRightType = InferValidationExpressionType(query.JoinRightExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         if (joinLeftType.Name != joinRightType.Name)
                         {
                             diagnostics.Report(
@@ -1903,7 +2086,7 @@ public sealed partial class Binder
                 if (query.SecondSourceExpression is not null && query.SecondIdentifier is not null)
                 {
                     ValidateExpression(query.SecondSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var secondSourceType = SemanticFacts.InferExpressionType(query.SecondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var secondSourceType = InferValidationExpressionType(query.SecondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var secondEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(secondSourceType, knownTypes);
                     if (secondEnumerablePattern is null)
                     {
@@ -1921,14 +2104,14 @@ public sealed partial class Binder
                 if (query.LetExpression is not null && query.LetIdentifier is not null)
                 {
                     ValidateExpression(query.LetExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var letType = SemanticFacts.InferExpressionType(query.LetExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var letType = InferValidationExpressionType(query.LetExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     queryLocals[query.LetIdentifier.Text] = letType;
                 }
 
                 if (query.PredicateExpression is not null)
                 {
                     ValidateExpression(query.PredicateExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var predicateType = SemanticFacts.InferExpressionType(query.PredicateExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var predicateType = InferValidationExpressionType(query.PredicateExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (predicateType != TypeSymbol.Boolean)
                     {
                         diagnostics.Report(
@@ -1942,7 +2125,7 @@ public sealed partial class Binder
                 if (query.OrderByExpression is not null)
                 {
                     ValidateExpression(query.OrderByExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var orderByType = SemanticFacts.InferExpressionType(query.OrderByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var orderByType = InferValidationExpressionType(query.OrderByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (orderByType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1956,7 +2139,7 @@ public sealed partial class Binder
                 if (query.ThenByExpression is not null)
                 {
                     ValidateExpression(query.ThenByExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var thenByType = SemanticFacts.InferExpressionType(query.ThenByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var thenByType = InferValidationExpressionType(query.ThenByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (thenByType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -1971,7 +2154,7 @@ public sealed partial class Binder
                 {
                     ValidateExpression(query.GroupExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     ValidateExpression(query.GroupByExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var groupKeyType = SemanticFacts.InferExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var groupKeyType = InferValidationExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (groupKeyType != TypeSymbol.Integer && groupKeyType != TypeSymbol.String)
                     {
                         diagnostics.Report(
@@ -1990,12 +2173,12 @@ public sealed partial class Binder
                     var continuationRangeType =
                         query.GroupExpression is not null && query.GroupByExpression is not null
                             ? SemanticFacts.ResolveTypeReference(
-                                $"Grouping<{SemanticFacts.InferExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {SemanticFacts.InferExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
+                                $"Grouping<{InferValidationExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {InferValidationExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
                                 knownTypes)
                                 ?? new TypeSymbol(
-                                    $"Grouping<{SemanticFacts.InferExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {SemanticFacts.InferExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
+                                    $"Grouping<{InferValidationExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {InferValidationExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
                                     true)
-                            : SemanticFacts.InferExpressionType(query.SelectExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                            : InferValidationExpressionType(query.SelectExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var continuationLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
                     {
                         [query.IntoIdentifier.Text] = continuationRangeType
@@ -2004,14 +2187,14 @@ public sealed partial class Binder
                     if (query.ContinuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
                     {
                         ValidateExpression(query.ContinuationLetExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                        var continuationLetType = SemanticFacts.InferExpressionType(query.ContinuationLetExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var continuationLetType = InferValidationExpressionType(query.ContinuationLetExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         continuationLocals[query.ContinuationLetIdentifier.Text] = continuationLetType;
                     }
 
                     if (query.ContinuationPredicateExpression is not null)
                     {
                         ValidateExpression(query.ContinuationPredicateExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                        var continuationPredicateType = SemanticFacts.InferExpressionType(query.ContinuationPredicateExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var continuationPredicateType = InferValidationExpressionType(query.ContinuationPredicateExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         if (continuationPredicateType != TypeSymbol.Boolean)
                         {
                             diagnostics.Report(
@@ -2025,7 +2208,7 @@ public sealed partial class Binder
                     if (query.ContinuationOrderByExpression is not null)
                     {
                         ValidateExpression(query.ContinuationOrderByExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                        var continuationOrderByType = SemanticFacts.InferExpressionType(query.ContinuationOrderByExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var continuationOrderByType = InferValidationExpressionType(query.ContinuationOrderByExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         if (continuationOrderByType != TypeSymbol.Integer)
                         {
                             diagnostics.Report(
@@ -2039,7 +2222,7 @@ public sealed partial class Binder
                     if (query.ContinuationThenByExpression is not null)
                     {
                         ValidateExpression(query.ContinuationThenByExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                        var continuationThenByType = SemanticFacts.InferExpressionType(query.ContinuationThenByExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        var continuationThenByType = InferValidationExpressionType(query.ContinuationThenByExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         if (continuationThenByType != TypeSymbol.Integer)
                         {
                             diagnostics.Report(
@@ -2056,7 +2239,7 @@ public sealed partial class Binder
                 if (query.TakeExpression is not null)
                 {
                     ValidateExpression(query.TakeExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var takeType = SemanticFacts.InferExpressionType(query.TakeExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var takeType = InferValidationExpressionType(query.TakeExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (takeType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -2070,7 +2253,7 @@ public sealed partial class Binder
                 if (query.SkipExpression is not null)
                 {
                     ValidateExpression(query.SkipExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    var skipType = SemanticFacts.InferExpressionType(query.SkipExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    var skipType = InferValidationExpressionType(query.SkipExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     if (skipType != TypeSymbol.Integer)
                     {
                         diagnostics.Report(
@@ -2147,7 +2330,7 @@ public sealed partial class Binder
         }
     }
 
-    private static void ValidateExpressionForExpectedType(
+    private static TypeSymbol ValidateExpressionForExpectedType(
         ExpressionSyntax expression,
         TypeSymbol? expectedType,
         IReadOnlyDictionary<string, TypeSymbol> locals,
@@ -2171,7 +2354,7 @@ public sealed partial class Binder
                 currentMethod,
                 diagnostics))
         {
-            return;
+            return expectedType ?? TypeSymbol.Unknown;
         }
 
         if (TryValidateDelegateLambdaConversion(
@@ -2186,19 +2369,14 @@ public sealed partial class Binder
                 currentMethod,
                 diagnostics))
         {
-            return;
+            return expectedType ?? TypeSymbol.Unknown;
         }
 
         ValidateExpression(expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-        if (expectedType is null)
+        var actualType = InferValidationExpressionType(expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (expectedType is null || actualType == TypeSymbol.Unknown)
         {
-            return;
-        }
-
-        var actualType = SemanticFacts.InferExpressionType(expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-        if (actualType == TypeSymbol.Unknown)
-        {
-            return;
+            return actualType;
         }
 
         if (!IsAssignableTo(actualType, expectedType, knownTypes))
@@ -2209,6 +2387,8 @@ public sealed partial class Binder
                 DiagnosticSeverity.Error,
                 GetExpressionDiagnosticSpan(expression, knownTypes));
         }
+
+        return actualType;
     }
 
     private static bool IsAssignableTo(TypeSymbol sourceType, TypeSymbol targetType, IReadOnlyList<TypeSymbol> knownTypes)
@@ -2486,7 +2666,7 @@ public sealed partial class Binder
             return;
         }
 
-        var elementType = SemanticFacts.InferExpressionType(element, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var elementType = InferValidationExpressionType(element, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (!SemanticFacts.IsEnumType(elementType))
         {
             diagnostics.Report(
@@ -2519,8 +2699,8 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
-        var leftType = SemanticFacts.InferExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-        var rightType = SemanticFacts.InferExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         var setElementType = SemanticFacts.GetSetElementType(rightType);
         if (setElementType is null)
         {
@@ -2553,8 +2733,8 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
-        var leftType = SemanticFacts.InferExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-        var rightType = SemanticFacts.InferExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (!SemanticFacts.IsSetType(leftType) || !SemanticFacts.IsSetType(rightType))
         {
             return;
@@ -2567,6 +2747,49 @@ public sealed partial class Binder
                 $"Set operands for '{binary.OperatorToken.Text}' must have the same element type.",
                 DiagnosticSeverity.Error,
                 GetExpressionDiagnosticSpan(binary, knownTypes));
+        }
+    }
+
+    private static TypeSymbol InferValidationExpressionType(
+        ExpressionSyntax expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        IReadOnlyList<TypeSymbol> knownTypes)
+        => SemanticFacts.InferExpressionType(expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+
+    private static bool MayBeSetExpression(
+        ExpressionSyntax expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        switch (expression)
+        {
+            case SetLiteralExpressionSyntax:
+                return true;
+            case ParenthesizedExpressionSyntax parenthesized:
+                return MayBeSetExpression(parenthesized.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+            case NameExpressionSyntax name:
+                if (locals.TryGetValue(name.Name.ToDisplayString(), out var localType))
+                {
+                    return SemanticFacts.IsSetType(localType);
+                }
+
+                return SemanticFacts.ResolveName(name.Name, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod).Type is { } resolvedType &&
+                    SemanticFacts.IsSetType(resolvedType);
+            case BinaryExpressionSyntax binary when binary.OperatorToken.Kind is SyntaxKind.PlusToken or SyntaxKind.MinusToken or SyntaxKind.StarToken:
+                return MayBeSetExpression(binary.Left, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod) ||
+                    MayBeSetExpression(binary.Right, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
+            default:
+                return false;
         }
     }
 
@@ -2609,7 +2832,7 @@ public sealed partial class Binder
             return;
         }
 
-        var labelType = SemanticFacts.InferExpressionType(label, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var labelType = InferValidationExpressionType(label, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (SemanticFacts.IsUnknownType(caseExpressionType) || SemanticFacts.IsUnknownType(labelType))
         {
             return;
@@ -2676,7 +2899,7 @@ public sealed partial class Binder
                 return;
             }
 
-            var operandType = SemanticFacts.InferExpressionType(relational.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var operandType = InferValidationExpressionType(relational.Operand, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             if (operandType != TypeSymbol.Integer)
             {
                 diagnostics.Report(
@@ -2769,7 +2992,7 @@ public sealed partial class Binder
                 ValidateExpression(indexExpression, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
             }
 
-            var indexedTargetType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(elementAccess.Target), locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var indexedTargetType = InferValidationExpressionType(new NameExpressionSyntax(elementAccess.Target), locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             var resolvedIndexer = SemanticFacts.ResolveIndexerReference(elementAccess.Target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             if (SemanticFacts.IsSliceAccess(elementAccess.IndexExpressions))
             {
@@ -2803,7 +3026,7 @@ public sealed partial class Binder
                 ValidateExpression(indexExpression, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
             }
 
-            var indexedTargetType = SemanticFacts.InferExpressionType(postfixElementAccess.Target, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var indexedTargetType = InferValidationExpressionType(postfixElementAccess.Target, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             var resolvedIndexer = SemanticFacts.ResolveIndexerReference(postfixElementAccess.Target, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             if (SemanticFacts.IsSliceAccess(postfixElementAccess.IndexExpressions))
             {
@@ -2886,6 +3109,12 @@ public sealed partial class Binder
         }
 
         var targetName = nameTarget.Name;
+        if (targetName.Parts.Count == 1 &&
+            locals.ContainsKey(targetName.ToDisplayString()))
+        {
+            return;
+        }
+
         if (TryReportInvalidFieldAccess(targetName, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes, diagnostics))
         {
             return;
@@ -3007,7 +3236,7 @@ public sealed partial class Binder
 
             foreach (var indexExpression in indexExpressions)
             {
-                var indexType = SemanticFacts.InferExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var indexType = InferValidationExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (indexType != memberIndexer.IndexParameter?.Type)
                 {
                     diagnostics.Report(
@@ -3021,7 +3250,7 @@ public sealed partial class Binder
             return;
         }
 
-        var indexedType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var indexedType = InferValidationExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         var indexer = SemanticFacts.ResolveIndexerReference(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (indexer is not null)
         {
@@ -3037,7 +3266,7 @@ public sealed partial class Binder
 
             foreach (var indexExpression in indexExpressions)
             {
-                var indexType = SemanticFacts.InferExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                var indexType = InferValidationExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (indexType != indexer.IndexParameter?.Type)
                 {
                     diagnostics.Report(
@@ -3072,7 +3301,7 @@ public sealed partial class Binder
 
         foreach (var indexExpression in indexExpressions)
         {
-            var indexType = SemanticFacts.InferExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var indexType = InferValidationExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             if (indexType != TypeSymbol.Integer)
             {
                 diagnostics.Report(
@@ -3099,7 +3328,7 @@ public sealed partial class Binder
         ValidateAssignmentTarget(target, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
         ValidateExpression(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
 
-        var targetType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var targetType = InferValidationExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (SemanticFacts.IsUnknownType(targetType))
         {
             return;
@@ -3132,7 +3361,7 @@ public sealed partial class Binder
         ValidateExpression(target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
         ValidateExpression(value, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
 
-        var targetType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var targetType = InferValidationExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         var elementType = SemanticFacts.GetSetElementType(targetType);
         if (elementType is null)
         {
@@ -3144,7 +3373,7 @@ public sealed partial class Binder
             return;
         }
 
-        var valueType = SemanticFacts.InferExpressionType(value, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var valueType = InferValidationExpressionType(value, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueType != elementType)
         {
             diagnostics.Report(
@@ -3187,7 +3416,7 @@ public sealed partial class Binder
                 return;
             }
 
-            var resolvedIndexType = SemanticFacts.InferExpressionType(indexExpressions[0], locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var resolvedIndexType = InferValidationExpressionType(indexExpressions[0], locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             if (resolvedIndexType != indexer.IndexParameter?.Type)
             {
                 diagnostics.Report(
@@ -3200,7 +3429,7 @@ public sealed partial class Binder
             return;
         }
 
-        var indexedType = SemanticFacts.InferExpressionType(new NameExpressionSyntax(target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var indexedType = InferValidationExpressionType(new NameExpressionSyntax(target), locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (!SemanticFacts.IsIndexableType(indexedType))
         {
             diagnostics.Report(
@@ -3222,7 +3451,7 @@ public sealed partial class Binder
 
         foreach (var indexExpression in indexExpressions)
         {
-            var indexType = SemanticFacts.InferExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+            var indexType = InferValidationExpressionType(indexExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
             if (indexType != TypeSymbol.Integer)
             {
                 diagnostics.Report(
@@ -3246,7 +3475,7 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
-        var targetType = SemanticFacts.InferExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var targetType = InferValidationExpressionType(target, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (targetType != TypeSymbol.String &&
             (!SemanticFacts.IsArrayType(targetType) ||
              SemanticFacts.GetArrayRank(targetType) != 1 ||
@@ -3265,8 +3494,8 @@ public sealed partial class Binder
             return;
         }
 
-        var startType = SemanticFacts.InferExpressionType(range.Start, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-        var endType = SemanticFacts.InferExpressionType(range.End, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var startType = InferValidationExpressionType(range.Start, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var endType = InferValidationExpressionType(range.End, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (startType != TypeSymbol.Integer || endType != TypeSymbol.Integer)
         {
             diagnostics.Report(
@@ -3375,6 +3604,21 @@ public sealed partial class Binder
             MemberAccessExpressionSyntax memberAccess => TryReportInvalidMethodAccess(memberAccess, argumentCount, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics),
             _ => false
         };
+    }
+
+    private static bool RequiresInvalidMethodAccessCheck(
+        ExpressionSyntax target,
+        InvocationResolution? invocation,
+        MethodSymbol? currentMethod)
+    {
+        if (invocation is null)
+        {
+            return true;
+        }
+
+        return target is NameExpressionSyntax { Name.Parts.Count: 1 } &&
+            !invocation.Method.IsStatic &&
+            (currentMethod is null || currentMethod.IsStatic);
     }
 
     private static bool TryReportInvalidMethodAccess(
@@ -3535,7 +3779,7 @@ public sealed partial class Binder
             return false;
         }
 
-        var receiverType = SemanticFacts.InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        var receiverType = InferValidationExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (SemanticFacts.ResolveTypeReference(receiverType.Name, knownTypes) is not NamedTypeSymbol { IsInterface: true } interfaceType)
         {
             return false;
@@ -4067,7 +4311,7 @@ public sealed partial class Binder
         }
 
         ValidateExpression(lambda.Body, lambdaLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
-        var bodyType = SemanticFacts.InferExpressionType(lambda.Body, lambdaLocals, knownMethods, knownFields, knownConstants, knownProperties, null, knownTypes);
+        var bodyType = InferValidationExpressionType(lambda.Body, lambdaLocals, knownMethods, knownFields, knownConstants, knownProperties, null, knownTypes);
         if (invokeMethod.ReturnType != TypeSymbol.Void && bodyType != invokeMethod.ReturnType)
         {
             diagnostics.Report(
@@ -4115,4 +4359,5 @@ public sealed partial class Binder
 
     private static bool AreDelegateMethodSignaturesCompatible(MethodSymbol delegateInvokeMethod, MethodSymbol targetMethod, IReadOnlyList<TypeSymbol> knownTypes) =>
         AreInterfaceMethodSignaturesCompatible(delegateInvokeMethod, targetMethod, knownTypes);
+
 }

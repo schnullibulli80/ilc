@@ -158,6 +158,8 @@ end;
 // • DELEGATE • Predicate<T>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 /// <summary>Represents a boolean test applied to a value in an enumerable pipeline.</summary>
+/// <param name="value">The value to test.</param>
+/// <returns>A boolean indicating whether the value satisfies the condition.</returns>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function Predicate<T>(value: T): Boolean;
 
@@ -165,21 +167,37 @@ public delegate function Predicate<T>(value: T): Boolean;
 // • DELEGATE • Selector<TSource, TResult>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 /// <summary>Represents a value projection applied to an enumerable pipeline.</summary>
+/// <param name="value">The value to project.</param>
+/// <returns>The projected value.</returns>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function Selector<TSource, TResult>(value: TSource): TResult;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • DELEGATE • CollectionSelector<TSource, TCollection>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a collection projection applied to an enumerable pipeline.</summary>
+/// <param name="value">The value to project.</param>
+/// <returns>The projected collection.</returns>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function CollectionSelector<TSource, TCollection>(value: TSource): IEnumerable<TCollection>;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • DELEGATE • ResultSelector<TSource, TCollection, TResult>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a result projection applied to an enumerable pipeline after a collection projection.</summary>
+/// <param name="source">The original value before projection.</param>
+/// <param name="value">The value after collection projection.</param>
+/// <returns>The projected result.</returns>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function ResultSelector<TSource, TCollection, TResult>(source: TSource; value: TCollection): TResult;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • DELEGATE • GroupResultSelector<TSource, TCollection, TResult>
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/// <summary>Represents a result projection applied to an enumerable pipeline after a group projection.</summary>
+/// <param name="source">The original value before projection.</param>
+/// <param name="group">The group of values after collection projection.</param>
+/// <returns>The projected result.</returns>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function GroupResultSelector<TSource, TCollection, TResult>(source: TSource; group: IEnumerable<TCollection>): TResult;
 

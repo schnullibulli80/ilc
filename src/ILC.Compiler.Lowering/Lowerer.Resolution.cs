@@ -91,18 +91,80 @@ public sealed partial class Lowerer
             currentMethod).Field;
     }
 
-    private BoundWriteTarget? ResolveBoundWriteTarget(ExpressionSyntax target, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod) =>
-        Profiled(
-            "ResolveBoundWriteTarget",
+    private BoundWriteTarget? ResolveBoundWriteTarget(ExpressionSyntax target, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod)
+    {
+        using var profile = Profile("ResolveBoundWriteTarget");
+        var locals = GetLocalTypes(registerByName);
+        if (TryResolveSimpleFieldWriteTarget(target, locals, currentMethod, out var simpleTarget))
+        {
+            return simpleTarget;
+        }
+
+        return Profiled(
+            "ResolveBoundWriteTarget.BindWriteTarget",
             () => SemanticFacts.BindWriteTarget(
                 target,
-                GetLocalTypes(registerByName),
+                locals,
                 _knownTypes,
                 _knownMethods,
                 _knownFields,
                 _knownConstants,
                 _knownProperties,
                 currentMethod));
+    }
+
+    private bool TryResolveSimpleFieldWriteTarget(
+        ExpressionSyntax target,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        MethodSymbol? currentMethod,
+        out BoundWriteTarget? boundTarget)
+    {
+        using var profile = Profile("ResolveBoundWriteTarget.SimpleField");
+        boundTarget = null;
+        if (target is not NameExpressionSyntax { Name.Parts.Count: 1 } nameExpression ||
+            currentMethod?.DeclaringTypeName is null ||
+            currentMethod.IsStatic)
+        {
+            return false;
+        }
+
+        var displayName = nameExpression.Name.ToDisplayString();
+        if (locals.ContainsKey(displayName) ||
+            ResolveKnownTypeReference(currentMethod.DeclaringTypeName) is not NamedTypeSymbol declaringType)
+        {
+            return false;
+        }
+
+        foreach (var type in EnumerateTypeHierarchy(declaringType))
+        {
+            var writableProperty = type.Properties.FirstOrDefault(property =>
+                property.Name == displayName &&
+                !property.IsStatic &&
+                (property.WriteField is not null || property.SetterMethod is not null));
+            if (writableProperty is not null)
+            {
+                return false;
+            }
+
+            var field = type.Fields.FirstOrDefault(field => !field.IsStatic && field.Name == displayName);
+            if (field is not null)
+            {
+                boundTarget = new BoundWriteTarget(
+                    BoundWriteTargetKind.Field,
+                    displayName,
+                    field.Type,
+                    new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self"),
+                    field,
+                    null,
+                    null,
+                    null,
+                    target);
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private BoundCall? ResolveBoundCall(CallExpressionSyntax call, Dictionary<string, IrValue> registerByName, MethodSymbol? currentMethod)
     {

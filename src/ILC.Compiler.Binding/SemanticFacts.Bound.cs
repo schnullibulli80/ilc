@@ -749,6 +749,11 @@ public static partial class SemanticFacts
                 return new BoundReceiver(BoundReceiverKind.Local, localType, LocalName: displayName);
             }
 
+            if (receiverType is not null)
+            {
+                return new BoundReceiver(BoundReceiverKind.Expression, receiverType, SourceExpression: receiver);
+            }
+
             if (ResolveTypeReference(displayName, knownTypes) is { } targetType)
             {
                 return new BoundReceiver(BoundReceiverKind.Type, targetType, TargetType: targetType);

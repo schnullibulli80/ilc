@@ -162,7 +162,16 @@ Use the compiler performance script when compiler pipeline changes need timing:
 ```
 
 It measures `compiler-bootstrap.ilc` and `ui-qtquick-demo.ilc`, writes the summary to `tmp/compiler-performance.log`, and stores per-run logs in `tmp/`.
-The script uses `--timings` for phase-level compiler timings and reachability counters without generating the heavier `--debug` dump artifacts. For deeper Lowerer hotspots, run the compiler CLI with `--profile-lowering`; it emits `lowering-profile:` hierarchical scopes for method lowering without requiring full debug dumps.
+The script uses `--timings` for phase-level compiler timings and reachability counters without generating the heavier `--debug` dump artifacts.
+
+Use the compiler profile script when Binder or Lowerer hotspots need hierarchical drill-down logs:
+
+```bash
+./scripts/run-compiler-profile.sh
+```
+
+By default it profiles `compiler-bootstrap.ilc` and writes `tmp/compiler-bootstrap-binding-profile.log` plus `tmp/compiler-bootstrap-lowering-profile.log`. Pass `ui-qtquick-demo` or `all` to profile another fixture set. The Binder log emits `binding-profile:` scopes; the Lowerer log emits `lowering-profile:` scopes.
+Set `ILC_COMPILER_PROFILE_TOP=120` when deeper child scopes are needed beyond the default top 32 profile entries.
 
 Use the benchmark script when performance checks are needed:
 

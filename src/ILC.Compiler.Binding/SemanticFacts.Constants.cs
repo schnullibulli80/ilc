@@ -11,6 +11,19 @@ public static partial class SemanticFacts
         MethodSymbol? currentMethod,
         IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
+        var displayName = name.ToDisplayString();
+        if (name.Parts.Count == 1 && currentMethod?.DeclaringTypeName is not null)
+        {
+            var sameTypeField = knownFields.FirstOrDefault(field =>
+                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
+                field.Name == displayName &&
+                (field.IsStatic || !currentMethod.IsStatic));
+            if (sameTypeField is not null)
+            {
+                return sameTypeField;
+            }
+        }
+
         var fields = knownFields.ToArray();
         var locals = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
         if (currentMethod?.DeclaringTypeName is not null)
@@ -41,7 +54,6 @@ public static partial class SemanticFacts
             }
         }
 
-        var displayName = name.ToDisplayString();
         if (name.Parts.Count >= 2 && name.Parts[0].Text == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
         {
             return fields.FirstOrDefault(field =>
@@ -336,39 +348,42 @@ public static partial class SemanticFacts
         }
 
         if (name.Parts.Count == 1 &&
+            displayName == "self" &&
             currentMethod?.DeclaringTypeName is not null &&
-            (displayName == "self" || !locals.ContainsKey(displayName)))
+            !currentMethod.IsStatic)
         {
-            var sameTypeProperty = knownProperties.FirstOrDefault(property =>
-                property.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                property.Name == displayName &&
-                (property.IsStatic || !currentMethod.IsStatic));
+            return new TypeSymbol(currentMethod.DeclaringTypeName, true);
+        }
+
+        if (name.Parts.Count == 1 &&
+            currentMethod?.DeclaringTypeName is not null &&
+            !locals.ContainsKey(displayName))
+        {
+            var sameTypeProperty = FindPropertiesByDeclaringType(knownProperties, currentMethod.DeclaringTypeName)
+                .FirstOrDefault(property =>
+                    property.Name == displayName &&
+                    (property.IsStatic || !currentMethod.IsStatic));
             if (sameTypeProperty is not null)
             {
                 return sameTypeProperty.Type;
             }
 
-            var sameTypeField = knownFields.FirstOrDefault(field =>
-                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                field.Name == displayName &&
-                (field.IsStatic || !currentMethod.IsStatic));
+            var sameTypeField = FindFieldsByDeclaringType(knownFields, currentMethod.DeclaringTypeName)
+                .FirstOrDefault(field =>
+                    field.Name == displayName &&
+                    (field.IsStatic || !currentMethod.IsStatic));
             if (sameTypeField is not null)
             {
                 return sameTypeField.Type;
             }
 
-            var sameTypeConstant = knownConstants.FirstOrDefault(constant =>
-                constant.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                constant.Name == displayName &&
-                constant.IsStatic);
+            var sameTypeConstant = FindConstantsByDeclaringType(knownConstants, currentMethod.DeclaringTypeName)
+                .FirstOrDefault(constant =>
+                    constant.Name == displayName &&
+                    constant.IsStatic);
             if (sameTypeConstant is not null)
             {
                 return sameTypeConstant.Type;
-            }
-
-            if (displayName == "self" && !currentMethod.IsStatic)
-            {
-                return new TypeSymbol(currentMethod.DeclaringTypeName, true);
             }
         }
 
@@ -427,19 +442,20 @@ public static partial class SemanticFacts
             ? qualifierTypeName[(qualifierTypeName.LastIndexOf('.') + 1)..]
             : qualifierTypeName;
 
-        var staticProperty = knownProperties.FirstOrDefault(property =>
-            property.IsStatic &&
-            property.DeclaringTypeName == declaringTypeName &&
-            property.Name == name.Parts[^1].Text);
+        var memberName = name.Parts[^1].Text;
+        var staticProperty = FindPropertiesByDeclaringType(knownProperties, declaringTypeName)
+            .FirstOrDefault(property =>
+                property.IsStatic &&
+                property.Name == memberName);
         if (staticProperty is not null)
         {
             return staticProperty.Type;
         }
 
-        var staticField = knownFields.FirstOrDefault(field =>
-            field.IsStatic &&
-            field.DeclaringTypeName == declaringTypeName &&
-            field.Name == name.Parts[^1].Text);
+        var staticField = FindFieldsByDeclaringType(knownFields, declaringTypeName)
+            .FirstOrDefault(field =>
+                field.IsStatic &&
+                field.Name == memberName);
         return staticField?.Type;
     }
 
