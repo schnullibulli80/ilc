@@ -865,38 +865,55 @@ internal sealed class LanguageModel(string workspaceRoot)
     public IReadOnlyList<Diagnostic> GetBindingDiagnostics(string uri, string text, IReadOnlyDictionary<string, string> openDocuments)
     {
         var primaryTree = SyntaxTree.Parse(text);
-        var importedNamespaces = CollectImportedNamespaces(text);
+        var importedNamespaces = CollectImportedNamespaces(text).ToHashSet(StringComparer.Ordinal);
         var importedTrees = new List<SyntaxTree>();
         var seenUris = new HashSet<string>(StringComparer.Ordinal) { uri };
+        var workspaceDocuments = new List<(string Uri, string Text, SyntaxTree Tree, string? NamespaceName)>();
         foreach (var file in EnumerateIlcFiles(workspaceRoot))
         {
             var fileUri = PathToUri(file);
-            if (!seenUris.Add(fileUri))
+            if (string.Equals(fileUri, uri, StringComparison.Ordinal))
             {
                 continue;
             }
 
             var importedText = openDocuments.TryGetValue(fileUri, out var openText) ? openText : File.ReadAllText(file);
             var importedTree = SyntaxTree.Parse(importedText);
-            var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
-            if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
-            {
-                importedTrees.Add(importedTree);
-            }
+            workspaceDocuments.Add((fileUri, importedText, importedTree, importedTree.Root.Namespace?.Name.ToDisplayString()));
         }
 
         foreach (var (openUri, openText) in openDocuments)
         {
-            if (!seenUris.Add(openUri))
+            if (string.Equals(openUri, uri, StringComparison.Ordinal) ||
+                workspaceDocuments.Any(document => string.Equals(document.Uri, openUri, StringComparison.Ordinal)))
             {
                 continue;
             }
 
             var importedTree = SyntaxTree.Parse(openText);
-            var importedNamespace = importedTree.Root.Namespace?.Name.ToDisplayString();
-            if (importedNamespace is not null && importedNamespaces.Contains(importedNamespace))
+            workspaceDocuments.Add((openUri, openText, importedTree, importedTree.Root.Namespace?.Name.ToDisplayString()));
+        }
+
+        var addedImport = true;
+        while (addedImport)
+        {
+            addedImport = false;
+            foreach (var document in workspaceDocuments)
             {
-                importedTrees.Add(importedTree);
+                if (document.NamespaceName is null ||
+                    !importedNamespaces.Contains(document.NamespaceName) ||
+                    !seenUris.Add(document.Uri))
+                {
+                    continue;
+                }
+
+                importedTrees.Add(document.Tree);
+                foreach (var namespaceName in CollectImportedNamespaces(document.Text))
+                {
+                    importedNamespaces.Add(namespaceName);
+                }
+
+                addedImport = true;
             }
         }
 
@@ -1053,13 +1070,14 @@ internal sealed class LanguageModel(string workspaceRoot)
             }
         }
 
-        var pattern = new System.Text.RegularExpressions.Regex(@"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?))?\s*(?::=\s*new\s+([A-Za-z_][A-Za-z0-9_]*))?", System.Text.RegularExpressions.RegexOptions.Multiline);
+        var pattern = new System.Text.RegularExpressions.Regex(@"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?))?\s*(?::=\s*(?:new\s+([A-Za-z_][A-Za-z0-9_]*)|.*?\bas\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)))?", System.Text.RegularExpressions.RegexOptions.Multiline);
         foreach (System.Text.RegularExpressions.Match match in pattern.Matches(text))
         {
             var name = match.Groups[1].Value;
             var explicitType = match.Groups[2].Success ? match.Groups[2].Value : string.Empty;
             var newType = match.Groups[3].Success ? match.Groups[3].Value : string.Empty;
-            var typeName = explicitType.Length > 0 ? explicitType : newType.Length > 0 ? newType : "inferred";
+            var castType = match.Groups[4].Success ? match.Groups[4].Value.Split('.').Last() : string.Empty;
+            var typeName = explicitType.Length > 0 ? explicitType : newType.Length > 0 ? newType : castType.Length > 0 ? castType : "inferred";
             var span = new TextSpan(match.Groups[1].Index, match.Groups[1].Length);
             yield return CreateSymbol(uri, text, name, "local", span, $"{name}: {typeName}", typeName: typeName);
         }
@@ -1315,7 +1333,7 @@ internal sealed class LanguageModel(string workspaceRoot)
             if (receiverType.Length > 0)
             {
                 return new LanguageCompletionContext(
-                    FilterByPrefix(ResolveMemberSymbols(snapshot, receiverType, string.Empty), prefix).ToArray(),
+                    FilterByPrefix(ResolveMemberSymbols(snapshot, receiverType, string.Empty).Where(symbol => symbol.Kind != "constructor"), prefix).ToArray(),
                     IncludeKeywords: false,
                     IncludeBuiltInTypes: false);
             }
@@ -1340,7 +1358,7 @@ internal sealed class LanguageModel(string workspaceRoot)
         var localSymbols = snapshot.Symbols
             .Where(symbol => symbol.Uri == snapshot.Uri && (symbol.Kind is "local" or "parameter") && symbol.Range.Start.Line <= line);
         var globalSymbols = snapshot.Symbols
-            .Where(symbol => symbol.Kind is not "local" and not "parameter");
+            .Where(symbol => symbol.Kind is not "local" and not "parameter" and not "constructor");
         return new LanguageCompletionContext(
             FilterByPrefix(localSymbols.Concat(globalSymbols), prefix)
                 .OrderBy(symbol => symbol.Kind is "local" or "parameter" ? 0 : symbol.Uri == snapshot.Uri ? 1 : symbol.Uri.Contains("/libs/shipped/", StringComparison.Ordinal) ? 3 : 2)
@@ -1435,6 +1453,10 @@ internal sealed class LanguageModel(string workspaceRoot)
         var importedNamespaces = CollectImportedNamespaces(snapshot.Text);
         var workspace = Build(workspaceRoot, new Dictionary<string, string>(StringComparer.Ordinal));
         var visibleNames = snapshot.Symbols.Select(symbol => symbol.Name).ToHashSet(StringComparer.Ordinal);
+        var ignoredSpans = SyntaxTree.Parse(snapshot.Text).Root.Tokens
+            .Where(token => token.Kind == SyntaxKind.StringToken)
+            .Select(token => token.Span)
+            .ToArray();
         var candidates = workspace.Symbols
             .Where(symbol => symbol.Kind is "class" or "interface" or "enum" or "function")
             .Select(symbol => new { Symbol = symbol, NamespaceName = GetNamespaceForSymbol(symbol) })
@@ -1446,7 +1468,10 @@ internal sealed class LanguageModel(string workspaceRoot)
         foreach (System.Text.RegularExpressions.Match match in identifierPattern.Matches(snapshot.Text))
         {
             var name = match.Value;
-            if (IsMemberAccessName(snapshot.Text, match.Index) || !reported.Add(name) || !candidates.TryGetValue(name, out var namespaceName))
+            if (IsOffsetInSpans(match.Index, ignoredSpans) ||
+                IsMemberAccessName(snapshot.Text, match.Index) ||
+                !reported.Add(name) ||
+                !candidates.TryGetValue(name, out var namespaceName))
             {
                 continue;
             }
@@ -1454,6 +1479,9 @@ internal sealed class LanguageModel(string workspaceRoot)
             yield return new MissingUsesDiagnostic(ToRange(snapshot.Text, new TextSpan(match.Index, match.Length)), name, namespaceName);
         }
     }
+
+    private static bool IsOffsetInSpans(int offset, IReadOnlyList<TextSpan> spans) =>
+        spans.Any(span => offset >= span.Start && offset < span.End);
 
     private static bool IsMemberAccessName(string text, int offset)
     {
@@ -1511,6 +1539,12 @@ internal sealed class LanguageModel(string workspaceRoot)
 
     private string ResolveReceiverType(ModelSnapshot snapshot, string receiver, int line)
     {
+        receiver = TrimOuterParentheses(receiver.Trim());
+        if (TryResolveCastReceiverType(receiver, out var castType))
+        {
+            return castType;
+        }
+
         if (receiver.Contains('.', StringComparison.Ordinal))
         {
             var chainType = ResolveReceiverChainType(snapshot, receiver, line);
@@ -1547,6 +1581,11 @@ internal sealed class LanguageModel(string workspaceRoot)
 
     private string ResolveSimpleReceiverType(ModelSnapshot snapshot, string receiver, int line)
     {
+        if (string.Equals(receiver, "self", StringComparison.Ordinal))
+        {
+            return GetEnclosingTypeName(snapshot.Text, line);
+        }
+
         var local = snapshot.Symbols
             .Where(symbol => symbol.Uri == snapshot.Uri && (symbol.Kind is "local" or "parameter") && symbol.Name == receiver && symbol.TypeName.Length > 0 && symbol.Range.Start.Line <= line)
             .OrderByDescending(symbol => symbol.Range.Start.Line)
@@ -1563,6 +1602,63 @@ internal sealed class LanguageModel(string workspaceRoot)
 
         var field = snapshot.Symbols.FirstOrDefault(symbol => symbol.Name == receiver && symbol.TypeName.Length > 0);
         return field?.TypeName ?? string.Empty;
+    }
+
+    private static string GetEnclosingTypeName(string text, int line)
+    {
+        var tree = SyntaxTree.Parse(text);
+        var offset = OffsetAt(text, line, 0);
+        foreach (var declaration in tree.Root.Members.OfType<ClassDeclarationSyntax>())
+        {
+            if (offset >= declaration.ClassKeyword.Span.Start && offset <= declaration.SemicolonToken.Span.End)
+            {
+                return declaration.Identifier.Text;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool TryResolveCastReceiverType(string receiver, out string typeName)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            receiver,
+            @"\bas\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        typeName = match.Success ? match.Groups[1].Value.Split('.').Last() : string.Empty;
+        return typeName.Length > 0;
+    }
+
+    private static string TrimOuterParentheses(string value)
+    {
+        while (value.Length >= 2 && value[0] == '(' && value[^1] == ')' && HasSingleOuterParentheses(value))
+        {
+            value = value[1..^1].Trim();
+        }
+
+        return value;
+    }
+
+    private static bool HasSingleOuterParentheses(string value)
+    {
+        var depth = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] == '(')
+            {
+                depth++;
+            }
+            else if (value[index] == ')')
+            {
+                depth--;
+                if (depth == 0 && index < value.Length - 1)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return depth == 0;
     }
 
     private static IEnumerable<LanguageSymbol> FilterByPrefix(IEnumerable<LanguageSymbol> symbols, string prefix) =>
@@ -1613,19 +1709,7 @@ internal sealed class LanguageModel(string workspaceRoot)
             return string.Empty;
         }
 
-        var receiverEnd = memberStart - 1;
-        var receiverStart = receiverEnd;
-        while (receiverStart > 0 && (IsIdentifierChar(text[receiverStart - 1]) || text[receiverStart - 1] == '.'))
-        {
-            receiverStart--;
-        }
-
-        while (receiverStart < receiverEnd && text[receiverStart] == '.')
-        {
-            receiverStart++;
-        }
-
-        return receiverEnd > receiverStart ? text[receiverStart..receiverEnd] : string.Empty;
+        return ExtractReceiverBeforeDot(text, memberStart - 1);
     }
 
     private static (string Receiver, string Member)? GetMemberAccessAt(string text, int line, int character)
@@ -1653,7 +1737,48 @@ internal sealed class LanguageModel(string workspaceRoot)
             return null;
         }
 
-        var receiverEnd = memberStart - 1;
+        var receiver = ExtractReceiverBeforeDot(text, memberStart - 1);
+        if (receiver.Length == 0)
+        {
+            return null;
+        }
+
+        return (receiver, text[memberStart..memberEnd]);
+    }
+
+    private static string ExtractReceiverBeforeDot(string text, int dotOffset)
+    {
+        var receiverEnd = dotOffset;
+        while (receiverEnd > 0 && char.IsWhiteSpace(text[receiverEnd - 1]))
+        {
+            receiverEnd--;
+        }
+
+        if (receiverEnd <= 0)
+        {
+            return string.Empty;
+        }
+
+        if (text[receiverEnd - 1] == ')')
+        {
+            var depth = 0;
+            for (var index = receiverEnd - 1; index >= 0; index--)
+            {
+                if (text[index] == ')')
+                {
+                    depth++;
+                }
+                else if (text[index] == '(')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        return text[index..receiverEnd].Trim();
+                    }
+                }
+            }
+        }
+
         var receiverStart = receiverEnd;
         while (receiverStart > 0 && (IsIdentifierChar(text[receiverStart - 1]) || text[receiverStart - 1] == '.'))
         {
@@ -1665,12 +1790,7 @@ internal sealed class LanguageModel(string workspaceRoot)
             receiverStart++;
         }
 
-        if (receiverStart == receiverEnd)
-        {
-            return null;
-        }
-
-        return (text[receiverStart..receiverEnd], text[memberStart..memberEnd]);
+        return receiverEnd > receiverStart ? text[receiverStart..receiverEnd] : string.Empty;
     }
 
     public static InvocationInfo? FindInvocation(string text, int line, int character)
@@ -1745,17 +1865,7 @@ internal sealed class LanguageModel(string workspaceRoot)
         var receiver = string.Empty;
         if (nameStart > 1 && before[nameStart - 1] == '.')
         {
-            var receiverEnd = nameStart - 1;
-            var receiverStart = receiverEnd;
-            while (receiverStart > 0 && IsIdentifierChar(before[receiverStart - 1]))
-            {
-                receiverStart--;
-            }
-
-            if (receiverEnd > receiverStart)
-            {
-                receiver = before[receiverStart..receiverEnd];
-            }
+            receiver = ExtractReceiverBeforeDot(before, nameStart - 1);
         }
 
         return new InvocationInfo(receiver, before[nameStart..nameEnd], parameterIndex);

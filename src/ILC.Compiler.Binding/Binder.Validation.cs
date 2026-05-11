@@ -579,15 +579,7 @@ public sealed partial class Binder
                                 diagnostics);
                         }
 
-                        locals[declarator.Identifier.Text] = declaredType ?? initializerType ?? InferValidationExpressionType(
-                                declarator.Initializer,
-                                locals,
-                                knownMethods,
-                                knownFields,
-                                knownConstants,
-                                knownProperties,
-                                currentMethod,
-                                knownTypes);
+                        locals[declarator.Identifier.Text] = declaredType ?? initializerType ?? TypeSymbol.Unknown;
                     }
                     break;
                 case ReturnStatementSyntax returnStatement when returnStatement.Expression is not null:
