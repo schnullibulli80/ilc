@@ -150,17 +150,20 @@ Do not reimplement the ILC parser or binder in TypeScript for advanced editor
 features. Completion, hover, go-to-definition, rename, semantic highlighting,
 and richer diagnostics should move into this language server.
 
-Current semantic lookup in the language server includes imported-namespace
-filtering for workspace symbols, nested document symbols for Outline, local
-variable declarations with simple type inference, member access lookup through
-locals/static types/enums, and one-step base-type lookup for inherited members.
-Completion is context-aware: member access returns only members for the resolved
-receiver type, `new` returns constructible classes, type-name contexts return
-known types plus built-ins, and normal word completion combines scoped locals
-with visible global symbols.
-Signature help also resolves member invocations through the receiver type, so
+Current semantic lookup in the language server includes transitive imported
+namespace filtering for workspace symbols, nested document symbols for Outline,
+local variable declarations with heuristic type inference, member access lookup
+through locals/static types/enums, `self`, cast receivers, array/indexer
+receivers, namespace prefixes, and inherited members. Completion is
+context-aware: member access returns only members for the resolved receiver
+type, `new` returns constructible classes, type-name contexts return known types
+plus built-ins, and normal word completion combines scoped locals with visible
+global symbols.
+Signature help resolves member invocations through the receiver type, so
 `window.SetMinimumSize(...)` is matched against `Window` methods instead of all
-methods with the same name.
+methods with the same name. Constructor calls such as `new Task<Integer>(...)`
+and default indexers such as `dictionary[...]` are handled as signature-help
+targets too.
 Code actions currently provide a first quick fix for missing imports: if the
 identifier under the cursor is known in another workspace namespace, the server
 offers `Add uses <namespace>`.
@@ -170,6 +173,41 @@ Editor diagnostics include parser diagnostics plus Binder diagnostics from the
 same merge model as the compiler CLI: active document plus imported workspace
 namespaces. The server filters the result back to the active document before
 publishing diagnostics.
+
+### Resolver Behavior
+
+The language server is intentionally still lighter than the compiler Binder.
+It builds a workspace symbol model and resolves common editor scenarios without
+running a full semantic analysis for every hover/completion request.
+
+Currently covered:
+
+- local and parameter symbols, including `in`, `out`, `ref`, and `params`
+  modifiers in signatures and hover text;
+- explicit local types, `new` expressions, casts, string/integer/boolean
+  literals, boolean expressions, `is`, `??`, simple member access, simple method
+  calls, arrays, and indexers for `var` inference;
+- `self` hover and member completion against the enclosing class;
+- static type/member access such as `System.Console.WriteLine(...)`;
+- generic receiver substitution for common collection patterns;
+- array `Length` and array indexer hints, including multi-dimensional arrays;
+- default property/indexer hints for types such as `Dictionary<TKey, TValue>`.
+
+Known limits:
+
+- overload resolution is intentionally approximate;
+- complex expression trees, lambdas, query expressions, chained arithmetic, and
+  flow-sensitive null/type facts can still produce `inferred`;
+- local scoping is line-oriented and can over-approximate symbols from nearby
+  blocks;
+- the resolver should eventually share a Binder-backed expression type model
+  instead of accumulating individual heuristics.
+
+With `ilc.debugOutput = true`, the language server logs cache invalidations,
+diagnostic scheduling/cancellation, import-cache hits, completion contexts,
+signature candidates, and resolver-relevant counts to the `ILC` output channel.
+Keep new resolver work similarly diagnosable so regressions can be inspected
+from user-provided logs.
 
 The current TypeScript symbol index is intentionally a fallback bridge:
 

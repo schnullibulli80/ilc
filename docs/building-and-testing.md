@@ -61,6 +61,16 @@ If you only need part of the flow, run the pieces directly.
 dotnet build ILC.sln
 ```
 
+Language-server-only changes can be checked faster with:
+
+```bash
+dotnet build src/ILC.LanguageServer/ILC.LanguageServer.csproj --no-restore
+```
+
+After rebuilding the language server, reload VS Code with
+`Developer: Reload Window`. A VSIX rebuild is only needed when the TypeScript
+extension client, grammar, snippets, or extension metadata changed.
+
 2) Run compiler tests
 
 ```bash
