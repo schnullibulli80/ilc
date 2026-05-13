@@ -365,9 +365,11 @@ internal sealed class LanguageServer(string workspaceRoot, bool debugEnabled)
         var symbol = model.ResolveSymbolAt(snapshot, position.Line, position.Character, word);
         if (symbol is null)
         {
+            _ = LogDebugAsync($"hover none uri={uri} line={position.Line + 1} char={position.Character + 1} word='{word}'");
             return null;
         }
 
+        _ = LogDebugAsync($"hover symbol uri={uri} line={position.Line + 1} char={position.Character + 1} word='{word}' kind={symbol.Kind} signature='{symbol.Signature}' type='{symbol.TypeName}' owner='{symbol.OwnerType}'");
         return new
         {
             contents = new
@@ -627,7 +629,20 @@ internal sealed class LanguageServer(string workspaceRoot, bool debugEnabled)
             var workspace = BuildImportedWorkspaceModel(uri, visibleNamespaces);
             var snapshot = model.BuildDocumentWithWorkspace(uri, text, workspace);
             modelSnapshots[uri] = new CachedModelSnapshot(revision, text, snapshot);
-            _ = LogDebugAsync($"model cache miss uri={uri} revision={revision} symbols={snapshot.Symbols.Count}");
+            var parameterCount = snapshot.Symbols.Count(symbol => symbol.Kind == "parameter" && symbol.Uri == uri);
+            var localCount = snapshot.Symbols.Count(symbol => symbol.Kind == "local" && symbol.Uri == uri);
+            var inferredLocalCount = snapshot.Symbols.Count(symbol => symbol.Kind == "local" && symbol.Uri == uri && symbol.TypeName == "inferred");
+            _ = LogDebugAsync($"model cache miss uri={uri} revision={revision} symbols={snapshot.Symbols.Count} parameters={parameterCount} locals={localCount} inferredLocals={inferredLocalCount}");
+            if (inferredLocalCount > 0)
+            {
+                var inferredNames = snapshot.Symbols
+                    .Where(symbol => symbol.Kind == "local" && symbol.Uri == uri && symbol.TypeName == "inferred")
+                    .OrderBy(symbol => symbol.Range.Start.Line)
+                    .ThenBy(symbol => symbol.Range.Start.Character)
+                    .Take(40)
+                    .Select(symbol => $"{symbol.Name}@{symbol.Range.Start.Line + 1}:{symbol.Range.Start.Character + 1}");
+                _ = LogDebugAsync($"model inferred locals uri={uri} {string.Join(", ", inferredNames)}");
+            }
             return snapshot;
         }
 
@@ -836,32 +851,46 @@ internal sealed class LanguageModel(string workspaceRoot)
     public ModelSnapshot BuildDocumentWithWorkspace(string uri, string text, IReadOnlyDictionary<string, string> openDocuments)
     {
         var primaryTree = SyntaxTree.Parse(text);
-        var primary = BuildDocument(uri, text);
         var importedNamespaces = CollectVisibleNamespaces(primaryTree.Root);
         var workspace = Build(workspaceRoot, openDocuments, importedNamespaces);
-        return BuildDocumentWithWorkspace(primary, workspace);
+        return BuildDocumentWithWorkspace(uri, text, workspace);
     }
 
     public ModelSnapshot BuildDocumentWithWorkspace(string uri, string text, ModelSnapshot workspace)
     {
-        var primary = BuildDocument(uri, text);
-        return BuildDocumentWithWorkspace(primary, workspace);
+        var tree = SyntaxTree.Parse(text);
+        var primarySymbols = CollectSymbols(uri, text, tree.Root).ToArray();
+        var workspaceSymbols = workspace.Symbols.Where(symbol => symbol.Uri != uri).ToArray();
+        var typeBases = CollectTypeBases(tree.Root)
+            .Concat(workspace.TypeBases)
+            .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(pair => pair.Key, pair => pair.First().Value, StringComparer.Ordinal);
+        var typeParameters = CollectTypeParameters(tree.Root)
+            .Concat(workspace.TypeParameters)
+            .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(pair => pair.Key, pair => pair.First().Value, StringComparer.Ordinal);
+        var declaredWithWorkspace = new ModelSnapshot(
+            uri,
+            text,
+            tree.Diagnostics,
+            primarySymbols.Concat(workspaceSymbols).ToArray(),
+            typeBases,
+            typeParameters);
+        var localSymbols = CollectLocalSymbols(uri, text, declaredWithWorkspace).ToArray();
+
+        return new ModelSnapshot(
+            uri,
+            text,
+            tree.Diagnostics,
+            primarySymbols.Concat(localSymbols).Concat(workspaceSymbols).ToArray(),
+            typeBases,
+            typeParameters);
     }
 
     public IReadOnlySet<string> CollectVisibleNamespaces(string text)
     {
         var tree = SyntaxTree.Parse(text);
         return CollectVisibleNamespaces(tree.Root);
-    }
-
-    private static ModelSnapshot BuildDocumentWithWorkspace(ModelSnapshot primary, ModelSnapshot workspace)
-    {
-        return primary with
-        {
-            Symbols = primary.Symbols.Concat(workspace.Symbols.Where(symbol => symbol.Uri != primary.Uri)).ToArray(),
-            TypeBases = primary.TypeBases.Concat(workspace.TypeBases).GroupBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.First().Value, StringComparer.Ordinal),
-            TypeParameters = primary.TypeParameters.Concat(workspace.TypeParameters).GroupBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.First().Value, StringComparer.Ordinal)
-        };
     }
 
     public ModelSnapshot Build(string root, IReadOnlyDictionary<string, string> openDocuments) =>
@@ -1151,39 +1180,216 @@ internal sealed class LanguageModel(string workspaceRoot)
 
     private IEnumerable<LanguageSymbol> CollectLocalSymbols(string uri, string text, ModelSnapshot declaredSnapshot)
     {
-        var callablePattern = new System.Text.RegularExpressions.Regex(@"\b(?:method|function|procedure)\s+[A-Za-z_][A-Za-z0-9_]*\s*\(([^)]*)\)|\bconstructor\s*\(([^)]*)\)", System.Text.RegularExpressions.RegexOptions.Multiline);
-        var localSymbols = new List<LanguageSymbol>();
-        foreach (System.Text.RegularExpressions.Match callable in callablePattern.Matches(text))
+        var tree = SyntaxTree.Parse(text);
+        var semanticSymbols = BuildSemanticSymbols(declaredSnapshot);
+        foreach (var (method, ownerType) in EnumerateMethods(tree.Root))
         {
-            var parameters = callable.Groups[1].Success ? callable.Groups[1] : callable.Groups[2];
-            var parameterText = parameters.Value;
-            var parameterPattern = new System.Text.RegularExpressions.Regex(@"\b(?:(out|ref|in|params)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^;\r\n)]+)");
-            foreach (System.Text.RegularExpressions.Match parameter in parameterPattern.Matches(parameterText))
+            var methodSymbols = new List<LanguageSymbol>();
+            var currentMethod = CreateMethodSymbol(method, ownerType);
+            foreach (var parameter in method.Parameters)
             {
-                var modifier = parameter.Groups[1].Success ? parameter.Groups[1].Value + " " : string.Empty;
-                var name = parameter.Groups[2].Value;
-                var typeName = parameter.Groups[3].Value.Trim();
-                var span = new TextSpan(parameters.Index + parameter.Groups[2].Index, parameter.Groups[2].Length);
-                var symbol = CreateSymbol(uri, text, name, "parameter", span, $"{modifier}{name}: {typeName}", typeName: typeName);
-                localSymbols.Add(symbol);
+                var modifier = ParameterModifier(parameter);
+                var name = parameter.Identifier.Text;
+                var typeName = NormalizeLocalTypeName(parameter.TypeName.ToDisplayString());
+                var symbol = CreateSymbol(uri, text, name, "parameter", parameter.Identifier.Span, $"{modifier}{name}: {typeName}", typeName: typeName);
+                methodSymbols.Add(symbol);
                 yield return symbol;
             }
+
+            foreach (var declaration in EnumerateLocalDeclarations(method))
+            {
+                var line = ToPosition(text, declaration.Identifier.Span.Start).Line;
+                var localSnapshot = declaredSnapshot with { Symbols = declaredSnapshot.Symbols.Concat(methodSymbols).ToArray() };
+                var inferredType = declaration.IsForeachElement
+                    ? InferForeachElementType(localSnapshot, semanticSymbols, declaration.Initializer, line, currentMethod)
+                    : InferExpressionType(localSnapshot, semanticSymbols, declaration.Initializer, line, currentMethod);
+                var typeName = declaration.ExplicitType.Length > 0 ? declaration.ExplicitType : inferredType.Length > 0 ? inferredType : "inferred";
+                var symbol = CreateSymbol(uri, text, declaration.Identifier.Text, "local", declaration.Identifier.Span, $"{declaration.Identifier.Text}: {typeName}", typeName: typeName);
+                methodSymbols.Add(symbol);
+                yield return symbol;
+
+                if (declaration.Initializer is QueryExpressionSyntax query)
+                {
+                    foreach (var querySymbol in CollectQueryLocalSymbols(uri, text, localSnapshot, semanticSymbols, query, line, currentMethod))
+                    {
+                        yield return querySymbol;
+                    }
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<(MethodDeclarationSyntax Method, string OwnerType)> EnumerateMethods(CompilationUnitSyntax root)
+    {
+        foreach (var member in root.Members)
+        {
+            if (member is not ClassDeclarationSyntax and not InterfaceDeclarationSyntax)
+            {
+                continue;
+            }
+
+            var ownerType = member switch
+            {
+                ClassDeclarationSyntax declaration => declaration.Identifier.Text,
+                InterfaceDeclarationSyntax declaration => declaration.Identifier.Text,
+                _ => string.Empty
+            };
+
+            var members = member switch
+            {
+                ClassDeclarationSyntax declaration => declaration.Members,
+                InterfaceDeclarationSyntax declaration => declaration.Members,
+                _ => []
+            };
+
+            foreach (var method in members.OfType<MethodDeclarationSyntax>())
+            {
+                yield return (method, ownerType);
+            }
+        }
+    }
+
+    private static IEnumerable<LocalDeclarationInfo> EnumerateLocalDeclarations(MethodDeclarationSyntax method)
+    {
+        if (method.Body is null)
+        {
+            yield break;
         }
 
-        var pattern = new System.Text.RegularExpressions.Regex(@"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([^:=;\r\n]+))?\s*(?::=\s*([^;\r\n]+))?", System.Text.RegularExpressions.RegexOptions.Multiline);
-        foreach (System.Text.RegularExpressions.Match match in pattern.Matches(text))
+        foreach (var declaration in EnumerateLocalDeclarations(method.Body))
         {
-            var name = match.Groups[1].Value;
-            var explicitType = match.Groups[2].Success ? NormalizeLocalTypeName(match.Groups[2].Value.Trim()) : string.Empty;
-            var initializer = match.Groups[3].Success ? match.Groups[3].Value.Trim() : string.Empty;
-            var line = ToPosition(text, match.Groups[1].Index).Line;
-            var localSnapshot = declaredSnapshot with { Symbols = declaredSnapshot.Symbols.Concat(localSymbols).ToArray() };
-            var inferredType = initializer.Length > 0 ? InferExpressionType(localSnapshot, initializer, line) : string.Empty;
-            var typeName = explicitType.Length > 0 ? explicitType : inferredType.Length > 0 ? inferredType : "inferred";
-            var span = new TextSpan(match.Groups[1].Index, match.Groups[1].Length);
-            var symbol = CreateSymbol(uri, text, name, "local", span, $"{name}: {typeName}", typeName: typeName);
-            localSymbols.Add(symbol);
-            yield return symbol;
+            yield return declaration;
+        }
+    }
+
+    private static IEnumerable<LocalDeclarationInfo> EnumerateLocalDeclarations(StatementSyntax statement)
+    {
+        switch (statement)
+        {
+            case LocalVariableDeclarationStatementSyntax local:
+                foreach (var declarator in local.Declarators)
+                {
+                    yield return new LocalDeclarationInfo(
+                        declarator.Identifier,
+                        declarator.TypeName is null ? string.Empty : NormalizeLocalTypeName(declarator.TypeName.ToDisplayString()),
+                        declarator.Initializer,
+                        false);
+                }
+
+                break;
+            case BlockStatementSyntax block:
+                foreach (var nested in block.Statements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case IfStatementSyntax ifStatement:
+                foreach (var nested in EnumerateLocalDeclarations(ifStatement.ThenStatement))
+                {
+                    yield return nested;
+                }
+
+                if (ifStatement.ElseStatement is not null)
+                {
+                    foreach (var nested in EnumerateLocalDeclarations(ifStatement.ElseStatement))
+                    {
+                        yield return nested;
+                    }
+                }
+
+                break;
+            case WhileStatementSyntax whileStatement:
+                foreach (var nested in EnumerateLocalDeclarations(whileStatement.Body))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case RepeatStatementSyntax repeat:
+                foreach (var nested in repeat.Statements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case ForStatementSyntax forStatement:
+                if (forStatement.VarKeyword is not null)
+                {
+                    yield return new LocalDeclarationInfo(forStatement.Identifier, TypeSymbol.Integer.Name, null, false);
+                }
+
+                foreach (var nested in EnumerateLocalDeclarations(forStatement.Body))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case ForeachStatementSyntax foreachStatement:
+                if (foreachStatement.VarKeyword is not null)
+                {
+                    yield return new LocalDeclarationInfo(foreachStatement.Identifier, string.Empty, foreachStatement.Collection, true);
+                }
+
+                foreach (var nested in EnumerateLocalDeclarations(foreachStatement.Body))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case WithStatementSyntax withStatement:
+                foreach (var nested in EnumerateLocalDeclarations(withStatement.Body))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case CaseStatementSyntax caseStatement:
+                foreach (var nested in caseStatement.Clauses.SelectMany(clause => EnumerateLocalDeclarations(clause.Body)))
+                {
+                    yield return nested;
+                }
+
+                foreach (var nested in caseStatement.ElseStatements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case MatchStatementSyntax matchStatement:
+                foreach (var nested in matchStatement.Arms.SelectMany(arm => EnumerateLocalDeclarations(arm.Body)))
+                {
+                    yield return nested;
+                }
+
+                foreach (var nested in matchStatement.ElseStatements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                break;
+            case TryStatementSyntax tryStatement:
+                foreach (var nested in tryStatement.TryStatements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                foreach (var nested in tryStatement.ExceptionClauses.SelectMany(clause => EnumerateLocalDeclarations(clause.Body)))
+                {
+                    yield return nested;
+                }
+
+                foreach (var nested in tryStatement.ExceptStatements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                foreach (var nested in tryStatement.FinallyStatements.SelectMany(EnumerateLocalDeclarations))
+                {
+                    yield return nested;
+                }
+
+                break;
         }
     }
 
@@ -1750,7 +1956,7 @@ internal sealed class LanguageModel(string workspaceRoot)
 
     private IEnumerable<LanguageSymbol> ResolveMemberSymbols(ModelSnapshot snapshot, string receiverType, string memberName)
     {
-        if (TryGetArrayElementType(receiverType, out _) &&
+        if (SemanticFacts.HasLengthProperty(CreateTypeSymbol(receiverType)) &&
             (memberName.Length == 0 || string.Equals(memberName, "Length", StringComparison.Ordinal)))
         {
             yield return CreateSyntheticSymbol(
@@ -1945,6 +2151,502 @@ internal sealed class LanguageModel(string workspaceRoot)
 
         return ResolveSimpleReceiverType(snapshot, expression, line);
     }
+
+    private string InferExpressionType(
+        ModelSnapshot snapshot,
+        SemanticSymbolSet semanticSymbols,
+        ExpressionSyntax? expression,
+        int line,
+        MethodSymbol? currentMethod)
+    {
+        if (expression is null)
+        {
+            return string.Empty;
+        }
+
+        var inferredType = InferSemanticExpressionType(snapshot, semanticSymbols, expression, line, currentMethod);
+        if (inferredType == TypeSymbol.Unknown || inferredType.Name == TypeSymbol.Unknown.Name)
+        {
+            if (expression is QueryExpressionSyntax query &&
+                TryInferQueryExpressionType(snapshot, semanticSymbols, query, line, currentMethod, out var queryType))
+            {
+                return queryType;
+            }
+
+            return InferExpressionType(snapshot, SemanticFacts.GetExpressionDisplayName(expression), line);
+        }
+
+        return NormalizeLocalTypeName(inferredType.Name);
+    }
+
+    private bool TryInferQueryExpressionType(
+        ModelSnapshot snapshot,
+        SemanticSymbolSet semanticSymbols,
+        QueryExpressionSyntax query,
+        int line,
+        MethodSymbol? currentMethod,
+        out string typeName)
+    {
+        typeName = string.Empty;
+        var locals = CollectLocalTypes(snapshot, line);
+        if (!SemanticFacts.TryTranslateQueryExpression(
+                query,
+                locals,
+                semanticSymbols.Types,
+                semanticSymbols.Methods,
+                semanticSymbols.Fields,
+                semanticSymbols.Constants,
+                semanticSymbols.Properties,
+                currentMethod,
+                out var translated))
+        {
+            return false;
+        }
+
+        var translatedType = InferSemanticExpressionType(snapshot, semanticSymbols, translated, line, currentMethod);
+        if (translatedType != TypeSymbol.Unknown && translatedType.Name != TypeSymbol.Unknown.Name)
+        {
+            typeName = NormalizeLocalTypeName(translatedType.Name);
+            return typeName.Length > 0;
+        }
+
+        typeName = InferExpressionType(snapshot, SemanticFacts.GetExpressionDisplayName(translated), line);
+        return typeName.Length > 0;
+    }
+
+    private string InferForeachElementType(
+        ModelSnapshot snapshot,
+        SemanticSymbolSet semanticSymbols,
+        ExpressionSyntax? collection,
+        int line,
+        MethodSymbol? currentMethod)
+    {
+        var collectionType = InferSemanticExpressionType(snapshot, semanticSymbols, collection, line, currentMethod);
+        return TryResolveEnumerableElementType(collectionType, semanticSymbols, out var elementType)
+            ? NormalizeLocalTypeName(elementType.Name)
+            : string.Empty;
+    }
+
+    private IEnumerable<LanguageSymbol> CollectQueryLocalSymbols(
+        string uri,
+        string text,
+        ModelSnapshot snapshot,
+        SemanticSymbolSet semanticSymbols,
+        QueryExpressionSyntax query,
+        int line,
+        MethodSymbol? currentMethod)
+    {
+        var queryLocals = new Dictionary<string, TypeSymbol>(CollectLocalTypes(snapshot, line), StringComparer.Ordinal);
+        if (TryResolveEnumerableElementType(InferSemanticExpressionType(query.SourceExpression, queryLocals, semanticSymbols, currentMethod), semanticSymbols, out var rangeVariableType))
+        {
+            queryLocals[query.Identifier.Text] = rangeVariableType;
+            yield return CreateQueryLocalSymbol(uri, text, query.Identifier, rangeVariableType);
+        }
+
+        TypeSymbol? joinRangeVariableType = null;
+        if (query.JoinSourceExpression is not null &&
+            query.JoinIdentifier is not null &&
+            TryResolveEnumerableElementType(InferSemanticExpressionType(query.JoinSourceExpression, queryLocals, semanticSymbols, currentMethod), semanticSymbols, out joinRangeVariableType))
+        {
+            queryLocals[query.JoinIdentifier.Text] = joinRangeVariableType;
+            yield return CreateQueryLocalSymbol(uri, text, query.JoinIdentifier, joinRangeVariableType);
+
+            if (query.JoinIntoIdentifier is not null)
+            {
+                var groupedJoinRangeType = SemanticFacts.ResolveTypeReference($"IEnumerable<{joinRangeVariableType.Name}>", semanticSymbols.Types)
+                    ?? new TypeSymbol($"IEnumerable<{joinRangeVariableType.Name}>", true);
+                queryLocals[query.JoinIntoIdentifier.Text] = groupedJoinRangeType;
+                yield return CreateQueryLocalSymbol(uri, text, query.JoinIntoIdentifier, groupedJoinRangeType);
+            }
+        }
+
+        if (query.SecondSourceExpression is not null &&
+            query.SecondIdentifier is not null &&
+            TryResolveEnumerableElementType(InferSemanticExpressionType(query.SecondSourceExpression, queryLocals, semanticSymbols, currentMethod), semanticSymbols, out var secondRangeVariableType))
+        {
+            queryLocals[query.SecondIdentifier.Text] = secondRangeVariableType;
+            yield return CreateQueryLocalSymbol(uri, text, query.SecondIdentifier, secondRangeVariableType);
+        }
+
+        if (query.LetExpression is not null && query.LetIdentifier is not null)
+        {
+            var letType = InferQueryLocalExpressionType(query.LetExpression, queryLocals, semanticSymbols, currentMethod);
+            if (letType != TypeSymbol.Unknown)
+            {
+                queryLocals[query.LetIdentifier.Text] = letType;
+                yield return CreateQueryLocalSymbol(uri, text, query.LetIdentifier, letType);
+            }
+        }
+
+        var projectedType = query.GroupExpression is not null
+            ? InferSemanticExpressionType(query.GroupExpression, queryLocals, semanticSymbols, currentMethod)
+            : InferSemanticExpressionType(query.SelectExpression, queryLocals, semanticSymbols, currentMethod);
+        var continuationRangeType = projectedType;
+        if (query.GroupExpression is not null && query.GroupByExpression is not null)
+        {
+            var groupKeyType = InferSemanticExpressionType(query.GroupByExpression, queryLocals, semanticSymbols, currentMethod);
+            continuationRangeType = SemanticFacts.ResolveTypeReference($"Grouping<{groupKeyType.Name}, {projectedType.Name}>", semanticSymbols.Types)
+                ?? new TypeSymbol($"Grouping<{groupKeyType.Name}, {projectedType.Name}>", true);
+        }
+
+        if (query.IntoIdentifier is not null && continuationRangeType != TypeSymbol.Unknown)
+        {
+            var continuationLocals = new Dictionary<string, TypeSymbol>(CollectLocalTypes(snapshot, line), StringComparer.Ordinal)
+            {
+                [query.IntoIdentifier.Text] = continuationRangeType
+            };
+            yield return CreateQueryLocalSymbol(uri, text, query.IntoIdentifier, continuationRangeType);
+
+            if (query.ContinuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
+            {
+                var continuationLetType = InferQueryLocalExpressionType(query.ContinuationLetExpression, continuationLocals, semanticSymbols, currentMethod);
+                if (continuationLetType != TypeSymbol.Unknown)
+                {
+                    yield return CreateQueryLocalSymbol(uri, text, query.ContinuationLetIdentifier, continuationLetType);
+                }
+            }
+        }
+    }
+
+    private LanguageSymbol CreateQueryLocalSymbol(string uri, string text, SyntaxToken identifier, TypeSymbol type)
+    {
+        var typeName = NormalizeLocalTypeName(type.Name);
+        return CreateSymbol(uri, text, identifier.Text, "local", identifier.Span, $"{identifier.Text}: {typeName}", typeName: typeName);
+    }
+
+    private static TypeSymbol InferQueryLocalExpressionType(
+        ExpressionSyntax? expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        SemanticSymbolSet semanticSymbols,
+        MethodSymbol? currentMethod)
+    {
+        var type = InferSemanticExpressionType(expression, locals, semanticSymbols, currentMethod);
+        if (type != TypeSymbol.Unknown && type.Name != TypeSymbol.Unknown.Name)
+        {
+            return type;
+        }
+
+        return TryInferKnownEnumerableCallType(expression, out var enumerableCallType)
+            ? enumerableCallType
+            : TypeSymbol.Unknown;
+    }
+
+    private static bool TryInferKnownEnumerableCallType(ExpressionSyntax? expression, out TypeSymbol type)
+    {
+        type = TypeSymbol.Unknown;
+        if (expression is not CallExpressionSyntax call)
+        {
+            return false;
+        }
+
+        var targetName = SemanticFacts.GetExpressionDisplayName(call.Target);
+        if (!targetName.StartsWith("Enumerable", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var lastDot = targetName.LastIndexOf('.');
+        if (lastDot < 0)
+        {
+            return false;
+        }
+
+        type = targetName[(lastDot + 1)..] switch
+        {
+            "Any" or "Contains" => TypeSymbol.Boolean,
+            "Count" => TypeSymbol.Integer,
+            _ => TypeSymbol.Unknown
+        };
+
+        return type != TypeSymbol.Unknown;
+    }
+
+    private static TypeSymbol InferSemanticExpressionType(
+        ExpressionSyntax? expression,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        SemanticSymbolSet semanticSymbols,
+        MethodSymbol? currentMethod) =>
+        expression is null
+            ? TypeSymbol.Unknown
+            : SemanticFacts.InferExpressionType(
+                expression,
+                locals,
+                semanticSymbols.Methods,
+                semanticSymbols.Fields,
+                semanticSymbols.Constants,
+                semanticSymbols.Properties,
+                currentMethod,
+                semanticSymbols.Types);
+
+    private static bool TryResolveEnumerableElementType(TypeSymbol collectionType, SemanticSymbolSet semanticSymbols, out TypeSymbol elementType)
+    {
+        if (collectionType == TypeSymbol.String)
+        {
+            elementType = TypeSymbol.Char;
+            return true;
+        }
+
+        elementType = SemanticFacts.GetElementType(collectionType)
+            ?? SemanticFacts.GetSetElementType(collectionType)
+            ?? TypeSymbol.Unknown;
+        if (elementType != TypeSymbol.Unknown && elementType.Name != TypeSymbol.Unknown.Name)
+        {
+            return true;
+        }
+
+        if (TryResolveEnumerableElementTypeName(collectionType.Name, out var directElementTypeName))
+        {
+            elementType = CreateTypeSymbol(directElementTypeName);
+            return elementType != TypeSymbol.Unknown && elementType.Name != TypeSymbol.Unknown.Name;
+        }
+
+        elementType = SemanticFacts.ResolveEnumerablePattern(collectionType, semanticSymbols.Types)?.ElementType
+            ?? TypeSymbol.Unknown;
+
+        return elementType != TypeSymbol.Unknown && elementType.Name != TypeSymbol.Unknown.Name;
+    }
+
+    private static bool TryResolveEnumerableElementTypeName(string collectionTypeName, out string elementTypeName)
+    {
+        elementTypeName = string.Empty;
+        var genericDefinition = GetGenericTypeDefinitionName(collectionTypeName);
+        if (genericDefinition is not ("IEnumerable" or "IEnumerator" or "List" or "IReadOnlyList" or "Dictionary"))
+        {
+            return false;
+        }
+
+        var genericArguments = GetGenericTypeArguments(collectionTypeName);
+        if (genericArguments.Count == 0)
+        {
+            return false;
+        }
+
+        elementTypeName = genericDefinition == "Dictionary" && genericArguments.Count >= 2
+            ? $"KeyValuePair<{genericArguments[0]}, {genericArguments[1]}>"
+            : genericArguments[0];
+        return elementTypeName.Length > 0;
+    }
+
+    private TypeSymbol InferSemanticExpressionType(
+        ModelSnapshot snapshot,
+        SemanticSymbolSet semanticSymbols,
+        ExpressionSyntax? expression,
+        int line,
+        MethodSymbol? currentMethod)
+    {
+        if (expression is null)
+        {
+            return TypeSymbol.Unknown;
+        }
+
+        return SemanticFacts.InferExpressionType(
+            expression,
+            CollectLocalTypes(snapshot, line),
+            semanticSymbols.Methods,
+            semanticSymbols.Fields,
+            semanticSymbols.Constants,
+            semanticSymbols.Properties,
+            currentMethod,
+            semanticSymbols.Types);
+    }
+
+    private static IReadOnlyDictionary<string, TypeSymbol> CollectLocalTypes(ModelSnapshot snapshot, int line) =>
+        snapshot.Symbols
+            .Where(symbol => symbol.Kind is "local" or "parameter" &&
+                symbol.TypeName.Length > 0 &&
+                symbol.TypeName != "inferred" &&
+                symbol.Range.Start.Line <= line)
+            .GroupBy(symbol => symbol.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => CreateTypeSymbol(group.Last().TypeName),
+                StringComparer.Ordinal);
+
+    private static SemanticSymbolSet BuildSemanticSymbols(ModelSnapshot snapshot)
+    {
+        var declaredMethods = snapshot.Symbols
+            .Where(symbol => symbol.Kind is "method" or "function" or "constructor")
+            .SelectMany(CreateMethodSymbols)
+            .ToArray();
+        var knownFields = snapshot.Symbols
+            .Where(symbol => symbol.Kind == "field" && symbol.TypeName.Length > 0)
+            .SelectMany(CreateFieldSymbols)
+            .ToArray();
+        var knownConstants = snapshot.Symbols
+            .Where(symbol => symbol.Kind is "constant" or "enumMember")
+            .SelectMany(CreateConstantSymbols)
+            .ToArray();
+        var knownProperties = snapshot.Symbols
+            .Where(symbol => symbol.Kind == "property" && symbol.TypeName.Length > 0)
+            .SelectMany(CreatePropertySymbols)
+            .ToArray();
+        var knownMethods = declaredMethods
+            .Concat(knownProperties.SelectMany(property => new[] { property.GetterMethod, property.SetterMethod }.Where(method => method is not null).Cast<MethodSymbol>()))
+            .ToArray();
+
+        var types = new List<TypeSymbol>(TypeSymbol.BuiltInTypes);
+        foreach (var typeSymbol in snapshot.Symbols.Where(symbol => symbol.Kind is "class" or "interface" or "enum"))
+        {
+            var ownerType = typeSymbol.Name;
+            var typeParameters = snapshot.TypeParameters.GetValueOrDefault(ownerType, [])
+                .Select(parameter => new TypeParameterSymbol(parameter))
+                .ToArray();
+            var baseType = snapshot.TypeBases.TryGetValue(ownerType, out var baseTypeName) && baseTypeName.Length > 0
+                ? CreateTypeSymbol(baseTypeName)
+                : typeSymbol.Kind == "class"
+                    ? TypeSymbol.Object
+                    : null;
+
+            types.Add(new NamedTypeSymbol(
+                ownerType,
+                typeSymbol.Kind != "enum",
+                false,
+                typeSymbol.Kind == "interface",
+                baseType,
+                [],
+                knownMethods.Where(method => method.DeclaringTypeName == ownerType).ToArray(),
+                knownFields.Where(field => field.DeclaringTypeName == ownerType).ToArray(),
+                knownConstants.Where(constant => constant.DeclaringTypeName == ownerType).ToArray(),
+                knownProperties.Where(property => property.DeclaringTypeName == ownerType).ToArray(),
+                typeParameters.Length,
+                typeParameters));
+        }
+
+        return new SemanticSymbolSet(
+            SymbolLists.CreateTypes(types),
+            SymbolLists.CreateMethods(knownMethods),
+            SymbolLists.CreateFields(knownFields),
+            SymbolLists.CreateConstants(knownConstants),
+            SymbolLists.CreateProperties(knownProperties));
+    }
+
+    private static MethodSymbol CreateMethodSymbol(MethodDeclarationSyntax method, string ownerType)
+    {
+        var parameters = method.Parameters.Select(ToParameterSymbol).ToArray();
+        var returnType = method.ReturnType is null
+            ? TypeSymbol.Void
+            : CreateTypeSymbol(method.ReturnType.ToDisplayString());
+        var isConstructor = method.Keyword.Kind == SyntaxKind.ConstructorKeyword;
+        return new MethodSymbol(
+            method.Identifier.Text,
+            isConstructor ? CreateTypeSymbol(ownerType) : returnType,
+            parameters,
+            ownerType.Length == 0 ? null : ownerType,
+            IsStatic(method.Modifiers),
+            method,
+            isConstructor);
+    }
+
+    private static IEnumerable<MethodSymbol> CreateMethodSymbols(LanguageSymbol symbol)
+    {
+        var method = new MethodSymbol(
+            symbol.Name,
+            symbol.TypeName.Length > 0 ? CreateTypeSymbol(symbol.TypeName) : TypeSymbol.Void,
+            symbol.Parameters.Select(ToParameterSymbol).ToArray(),
+            symbol.OwnerType.Length == 0 ? null : symbol.OwnerType,
+            false,
+            IsConstructor: symbol.Kind == "constructor");
+
+        yield return method;
+        if (symbol.OwnerType.Length > 0)
+        {
+            yield return method with { IsStatic = true };
+        }
+    }
+
+    private static IEnumerable<FieldSymbol> CreateFieldSymbols(LanguageSymbol symbol)
+    {
+        var field = new FieldSymbol(
+            symbol.Name,
+            CreateTypeSymbol(symbol.TypeName),
+            symbol.OwnerType.Length == 0 ? null : symbol.OwnerType,
+            false);
+
+        yield return field;
+        if (symbol.OwnerType.Length > 0)
+        {
+            yield return field with { IsStatic = true };
+        }
+    }
+
+    private static IEnumerable<ConstantSymbol> CreateConstantSymbols(LanguageSymbol symbol)
+    {
+        var type = symbol.TypeName.Length > 0 ? CreateTypeSymbol(symbol.TypeName) : CreateTypeSymbol(symbol.OwnerType.Length > 0 ? symbol.OwnerType : TypeSymbol.Object.Name);
+        var constant = new ConstantSymbol(
+            symbol.Name,
+            type,
+            null,
+            symbol.OwnerType.Length == 0 ? null : symbol.OwnerType,
+            symbol.OwnerType.Length > 0);
+
+        yield return constant;
+    }
+
+    private static IEnumerable<PropertySymbol> CreatePropertySymbols(LanguageSymbol symbol)
+    {
+        var propertyType = CreateTypeSymbol(symbol.TypeName);
+        var getterMethod = new MethodSymbol(
+            $"get_{symbol.Name}",
+            propertyType,
+            [],
+            symbol.OwnerType.Length == 0 ? null : symbol.OwnerType,
+            false);
+        var property = new PropertySymbol(
+            symbol.Name,
+            propertyType,
+            null,
+            null,
+            symbol.Parameters.Count > 0 ? ToParameterSymbol(symbol.Parameters[0]) : null,
+            getterMethod,
+            DeclaringTypeName: symbol.OwnerType.Length == 0 ? null : symbol.OwnerType,
+            IsStatic: false,
+            IsIndexer: symbol.Parameters.Count > 0);
+
+        yield return property;
+        if (symbol.OwnerType.Length > 0)
+        {
+            yield return property with
+            {
+                IsStatic = true,
+                GetterMethod = getterMethod with { IsStatic = true }
+            };
+        }
+    }
+
+    private static ParameterSymbol ToParameterSymbol(LanguageParameter parameter) =>
+        new(parameter.Name, CreateTypeSymbol(parameter.Type), ToParameterPassingKind(parameter.Modifier));
+
+    private static ParameterSymbol ToParameterSymbol(ParameterSyntax parameter) =>
+        new(parameter.Identifier.Text, CreateTypeSymbol(parameter.TypeName.ToDisplayString()), ToParameterPassingKind(parameter.ModifierKeyword?.Text ?? string.Empty));
+
+    private static ParameterPassingKind ToParameterPassingKind(string modifier) =>
+        modifier.Trim() switch
+        {
+            "out" => ParameterPassingKind.Out,
+            "ref" => ParameterPassingKind.Ref,
+            "in" => ParameterPassingKind.In,
+            "params" => ParameterPassingKind.Params,
+            _ => ParameterPassingKind.Value
+        };
+
+    private static TypeSymbol CreateTypeSymbol(string typeName)
+    {
+        typeName = NormalizeLocalTypeName(typeName);
+        if (typeName.Length == 0)
+        {
+            return TypeSymbol.Unknown;
+        }
+
+        return SemanticFacts.TryResolveBuiltInType(typeName) ?? new TypeSymbol(typeName, IsReferenceTypeName(typeName));
+    }
+
+    private static bool IsReferenceTypeName(string typeName) =>
+        typeName.EndsWith("]", StringComparison.Ordinal) ||
+        typeName.Contains('<', StringComparison.Ordinal) ||
+        !TypeSymbol.BuiltInScalarTypes.Any(type => type.Name == typeName);
+
+    private static bool IsStatic(IEnumerable<SyntaxToken> modifiers) =>
+        modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword);
 
     private bool TryInferCallExpressionType(ModelSnapshot snapshot, string expression, int line, out string typeName)
     {
@@ -3010,6 +3712,13 @@ internal sealed record InvocationInfo(string Receiver, string Name, int Paramete
 internal sealed record MissingUsesDiagnostic(LspRange Range, string TypeName, string NamespaceName);
 internal sealed record TextEditInfo(LspRange Range, string NewText);
 internal sealed record LanguageDocumentSymbol(string Uri, string Name, string Kind, string Signature, LspRange Range, LspRange SelectionRange, IReadOnlyList<LanguageDocumentSymbol> Children);
+internal sealed record LocalDeclarationInfo(SyntaxToken Identifier, string ExplicitType, ExpressionSyntax? Initializer, bool IsForeachElement);
+internal sealed record SemanticSymbolSet(
+    IReadOnlyList<TypeSymbol> Types,
+    IReadOnlyList<MethodSymbol> Methods,
+    IReadOnlyList<FieldSymbol> Fields,
+    IReadOnlyList<ConstantSymbol> Constants,
+    IReadOnlyList<PropertySymbol> Properties);
 internal sealed record LanguageSymbol(
     string Uri,
     string Name,
