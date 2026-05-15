@@ -54,13 +54,13 @@ public static partial class SemanticFacts
             {
                 var staticMethod =
                     (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(candidate =>
-                        candidate.DeclaringTypeName == targetType.Name &&
-                        candidate.Name == memberAccess.MemberName.Text &&
+                        NameEquals(candidate.DeclaringTypeName, targetType.Name )&&
+                        NameEquals(candidate.Name, memberAccess.MemberName.Text )&&
                         SupportsArgumentCount(candidate, argumentCount) &&
                         candidate.IsStatic)
                     ?? FindMethodsByDeclaringType(knownMethods, targetType.Name)
                         .FirstOrDefault(candidate =>
-                            candidate.Name == memberAccess.MemberName.Text &&
+                            NameEquals(candidate.Name, memberAccess.MemberName.Text )&&
                             SupportsArgumentCount(candidate, argumentCount) &&
                             candidate.IsStatic);
                 if (staticMethod is not null)
@@ -98,12 +98,12 @@ public static partial class SemanticFacts
             method = receiverHierarchy
                 .SelectMany(knownType => knownType.Methods
                     .Where(candidate =>
-                        candidate.Name == memberAccess.MemberName.Text &&
+                        NameEquals(candidate.Name, memberAccess.MemberName.Text )&&
                         SupportsArgumentCount(candidate, argumentCount) &&
                         (!ignoreAccess || !candidate.IsStatic))
                     .Concat(FindMethodsByDeclaringType(knownMethods, knownType.Name)
                         .Where(candidate =>
-                            candidate.Name == memberAccess.MemberName.Text &&
+                            NameEquals(candidate.Name, memberAccess.MemberName.Text )&&
                             SupportsArgumentCount(candidate, argumentCount) &&
                             (!ignoreAccess || !candidate.IsStatic))))
                 .FirstOrDefault(candidate => !ignoreAccess ? !candidate.IsStatic : true);
@@ -119,7 +119,7 @@ public static partial class SemanticFacts
         {
             isVirtual = method.IsVirtual ||
                 method.IsOverride ||
-                receiverHierarchy.FirstOrDefault(type => type.Name == receiverType.Name) is { IsInterface: true };
+                receiverHierarchy.FirstOrDefault(type => NameEquals(type.Name, receiverType.Name)) is { IsInterface: true };
         }
 
         return new InvocationResolution(
@@ -186,7 +186,7 @@ public static partial class SemanticFacts
 
     private static bool IntrinsicSignatureMatches(IntrinsicMethodSignature signature, TypeSymbol declaringType, string name, int argumentCount) =>
         signature.DeclaringType == declaringType &&
-        signature.Name == name &&
+        NameEquals(signature.Name, name )&&
         signature.Parameters.Count == argumentCount;
 
     private static MethodSymbol CreateIntrinsicMethod(IntrinsicMethodSignature signature) =>

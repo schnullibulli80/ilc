@@ -45,6 +45,7 @@ ilc_language_reference.md
 # .NET
 bin/
 obj/
+*.csproj.lscache
 
 # CMake
 build/

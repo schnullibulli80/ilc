@@ -59,43 +59,43 @@ internal sealed class Lexer
             var text = _text[start.._position];
             if (_position < _text.Length && _text[_position] == '=')
             {
-                if (text == "and")
+                if (string.Equals(text, "and", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.AndAssignToken, "and=", null, new TextSpan(start, 4));
                 }
 
-                if (text == "or")
+                if (string.Equals(text, "or", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.OrAssignToken, "or=", null, new TextSpan(start, 3));
                 }
 
-                if (text == "xor")
+                if (string.Equals(text, "xor", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.XorAssignToken, "xor=", null, new TextSpan(start, 4));
                 }
 
-                if (text == "mod")
+                if (string.Equals(text, "mod", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.ModAssignToken, "mod=", null, new TextSpan(start, 4));
                 }
 
-                if (text == "div")
+                if (string.Equals(text, "div", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.DivAssignToken, "div=", null, new TextSpan(start, 4));
                 }
 
-                if (text == "shl")
+                if (string.Equals(text, "shl", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.ShlAssignToken, "shl=", null, new TextSpan(start, 4));
                 }
 
-                if (text == "shr")
+                if (string.Equals(text, "shr", StringComparison.OrdinalIgnoreCase))
                 {
                     _position++;
                     return new SyntaxToken(SyntaxKind.ShrAssignToken, "shr=", null, new TextSpan(start, 4));
@@ -267,7 +267,7 @@ internal sealed class Lexer
     }
 
     private static SyntaxKind GetKeywordKind(string text) =>
-        text switch
+        text.ToLowerInvariant() switch
         {
             "namespace" => SyntaxKind.NamespaceKeyword,
             "uses" => SyntaxKind.UsesKeyword,
@@ -363,5 +363,4 @@ internal sealed class Lexer
             _ => SyntaxKind.IdentifierToken
         };
 }
-
 

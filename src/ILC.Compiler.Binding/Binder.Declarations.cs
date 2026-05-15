@@ -216,7 +216,7 @@ public sealed partial class Binder
         IReadOnlyList<TypeSymbol> knownTypes,
         BindingProfiler? profiler = null)
     {
-        var genericTypeNames = new HashSet<string>(StringComparer.Ordinal);
+        var genericTypeNames = new HashSet<string>(SemanticFacts.NameComparer);
         using (Profile(profiler, "CollectConstructedGenericTypes.ScanSyntax"))
         {
             CollectConstructedGenericTypeNames(syntaxTree.Root, genericTypeNames);
@@ -963,7 +963,7 @@ public sealed partial class Binder
         }
 
         var projectorTypes = new List<NamedTypeSymbol>();
-        var projectorTypesBySignature = new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal);
+        var projectorTypesBySignature = new Dictionary<string, NamedTypeSymbol>(SemanticFacts.NameComparer);
 
         void AddProjector(ProjectorExpressionSyntax projector, IReadOnlyDictionary<string, TypeSymbol> locals)
         {
@@ -1016,7 +1016,7 @@ public sealed partial class Binder
                 CollectLambdaExpressions(translatedQuery, translatedLambdas);
                 foreach (var lambda in translatedLambdas)
                 {
-                    var lambdaLocals = new Dictionary<string, TypeSymbol>(methodLocals, StringComparer.Ordinal);
+                    var lambdaLocals = new Dictionary<string, TypeSymbol>(methodLocals, SemanticFacts.NameComparer);
                     foreach (var parameter in lambda.Parameters)
                     {
                         lambdaLocals[parameter.Identifier.Text] = BindType(parameter.TypeName, knownTypes);
@@ -1033,7 +1033,7 @@ public sealed partial class Binder
         }
 
         return projectorTypes
-            .GroupBy(type => type.Name, StringComparer.Ordinal)
+            .GroupBy(type => type.Name, SemanticFacts.NameComparer)
             .Select(group => group.First())
             .ToArray();
     }
@@ -1309,7 +1309,7 @@ public sealed partial class Binder
             methodQueryScopeCache.Add(methodDeclaration, cachedScope);
         }
 
-        return new Dictionary<string, TypeSymbol>(cachedScope, StringComparer.Ordinal);
+        return new Dictionary<string, TypeSymbol>(cachedScope, SemanticFacts.NameComparer);
     }
 
     private static Dictionary<string, TypeSymbol> CollectMethodQueryScope(
@@ -1325,7 +1325,7 @@ public sealed partial class Binder
         var locals = methodDeclaration.Parameters.ToDictionary(
             parameter => parameter.Identifier.Text,
             parameter => BindType(parameter.TypeName, knownTypes),
-            StringComparer.Ordinal);
+            SemanticFacts.NameComparer);
 
         if (methodDeclaration.Body is null)
         {
@@ -1374,7 +1374,7 @@ public sealed partial class Binder
         var locals = methodDeclaration.Parameters.ToDictionary(
             parameter => parameter.Identifier.Text,
             parameter => BindType(parameter.TypeName, knownTypes),
-            StringComparer.Ordinal);
+            SemanticFacts.NameComparer);
         if (methodDeclaration.Body is null || referencedRoots.Count == 0)
         {
             return locals;
@@ -1384,7 +1384,7 @@ public sealed partial class Binder
             .OfType<LocalVariableDeclarationStatementSyntax>()
             .SelectMany(statement => statement.Declarators)
             .ToArray();
-        var declarations = new Dictionary<string, VariableDeclaratorSyntax>(StringComparer.Ordinal);
+        var declarations = new Dictionary<string, VariableDeclaratorSyntax>(SemanticFacts.NameComparer);
         foreach (var declarator in declarationList)
         {
             declarations[declarator.Identifier.Text] = declarator;
@@ -1395,7 +1395,7 @@ public sealed partial class Binder
             return locals;
         }
 
-        var neededLocals = new HashSet<string>(StringComparer.Ordinal);
+        var neededLocals = new HashSet<string>(SemanticFacts.NameComparer);
         foreach (var referencedRoot in referencedRoots)
         {
             CollectReferencedNames(referencedRoot, neededLocals);
@@ -1411,7 +1411,7 @@ public sealed partial class Binder
                 continue;
             }
 
-            var referencedNames = new HashSet<string>(StringComparer.Ordinal);
+            var referencedNames = new HashSet<string>(SemanticFacts.NameComparer);
             CollectReferencedNames(declarator.Initializer, referencedNames);
             foreach (var referencedName in referencedNames)
             {
@@ -1520,7 +1520,7 @@ public sealed partial class Binder
         var locals = methodDeclaration.Parameters.ToDictionary(
             parameter => parameter.Identifier.Text,
             parameter => BindType(parameter.TypeName, knownTypes),
-            StringComparer.Ordinal);
+            SemanticFacts.NameComparer);
 
         if (methodDeclaration.Body is not null)
         {
@@ -1623,13 +1623,13 @@ public sealed partial class Binder
     {
         var lambdaParameters = lambda.Parameters
             .Select(parameter => parameter.Identifier.Text)
-            .ToHashSet(StringComparer.Ordinal);
-        var referencedNames = new HashSet<string>(StringComparer.Ordinal);
+            .ToHashSet(SemanticFacts.NameComparer);
+        var referencedNames = new HashSet<string>(SemanticFacts.NameComparer);
         CollectReferencedNames(lambda.Body, referencedNames);
 
         return referencedNames
             .Where(name => !lambdaParameters.Contains(name) && outerLocals.ContainsKey(name))
-            .ToDictionary(name => name, name => outerLocals[name], StringComparer.Ordinal);
+            .ToDictionary(name => name, name => outerLocals[name], SemanticFacts.NameComparer);
     }
 
     private static void CollectReferencedNames(SyntaxNode? node, HashSet<string> names)

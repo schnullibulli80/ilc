@@ -21,6 +21,12 @@ internal sealed partial class Parser
             return NextToken();
         }
 
+        if (kind == SyntaxKind.IdentifierToken && IsIdentifierLike(Current.Kind))
+        {
+            var current = NextToken();
+            return new SyntaxToken(SyntaxKind.IdentifierToken, current.Text, current.Value, current.Span);
+        }
+
         _diagnostics.Report(
             "ILC1002",
             $"Expected token '{kind}', but found '{Current.Kind}'.",
@@ -35,6 +41,10 @@ internal sealed partial class Parser
         return new SyntaxToken(kind, string.Empty, null, new TextSpan(Current.Span.Start, 0));
     }
 
+    private static bool IsIdentifierLike(SyntaxKind kind) =>
+        kind == SyntaxKind.IdentifierToken ||
+        kind is >= SyntaxKind.NamespaceKeyword and <= SyntaxKind.FalseKeyword;
+
     private SyntaxToken NextToken()
     {
         var current = Current;
@@ -47,13 +57,13 @@ internal sealed partial class Parser
     private bool IsAssignmentTarget()
     {
         var offset = 0;
-        if (Peek(offset).Kind != SyntaxKind.IdentifierToken)
+        if (!IsIdentifierLike(Peek(offset).Kind))
         {
             return false;
         }
 
         offset++;
-        while (Peek(offset).Kind == SyntaxKind.DotToken && Peek(offset + 1).Kind == SyntaxKind.IdentifierToken)
+        while (Peek(offset).Kind == SyntaxKind.DotToken && IsIdentifierLike(Peek(offset + 1).Kind))
         {
             offset += 2;
         }
@@ -80,7 +90,7 @@ internal sealed partial class Parser
                 continue;
             }
 
-            if (Peek(offset).Kind == SyntaxKind.DotToken && Peek(offset + 1).Kind == SyntaxKind.IdentifierToken)
+            if (Peek(offset).Kind == SyntaxKind.DotToken && IsIdentifierLike(Peek(offset + 1).Kind))
             {
                 offset += 2;
                 continue;

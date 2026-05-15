@@ -58,7 +58,7 @@ internal sealed partial class Parser
 
     private UsesImportSyntax ParseUsesImport()
     {
-        if (Current.Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.EqualsToken)
+        if (IsIdentifierLike(Current.Kind) && Peek(1).Kind == SyntaxKind.EqualsToken)
         {
             var aliasIdentifier = Match(SyntaxKind.IdentifierToken);
             var equalsToken = Match(SyntaxKind.EqualsToken);

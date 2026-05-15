@@ -25,14 +25,15 @@ ui_hosting_fixture="$repo_root/libs/shipped/ui-hosting.ilc"
 ui_qtquick_fixture="$repo_root/libs/shipped/ui-backends-qtquick.ilc"
 demo_core_fixture="$repo_root/tests/fixtures/demo-core.ilc"
 qtbridge_build_dir="$repo_root/build/runtime/ilcvm_qtbridge"
+runtime_smoke_env=()
 
 cd "$repo_root"
 
 if [[ -d "$qtbridge_build_dir" ]]; then
     if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
-        export LD_LIBRARY_PATH="$qtbridge_build_dir:$LD_LIBRARY_PATH"
+        runtime_smoke_env=(env "LD_LIBRARY_PATH=$qtbridge_build_dir:$LD_LIBRARY_PATH")
     else
-        export LD_LIBRARY_PATH="$qtbridge_build_dir"
+        runtime_smoke_env=(env "LD_LIBRARY_PATH=$qtbridge_build_dir")
     fi
 fi
 
@@ -263,7 +264,7 @@ current_step=""
 run_runtime_smoke_step \
     "Run runtime smoke" \
     "$tmp_dir/runtime-run-local.log" \
-    "$repo_root/build/runtime/ilcvm_cli/ilcvm_cli" "$bootstrap_runtime_ilb" --run
+    "${runtime_smoke_env[@]}" "$repo_root/build/runtime/ilcvm_cli/ilcvm_cli" "$bootstrap_runtime_ilb" --run
 
 log_status ""
 log_status "Verification complete."

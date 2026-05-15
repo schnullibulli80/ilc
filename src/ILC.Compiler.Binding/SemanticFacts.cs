@@ -5,6 +5,13 @@ using ILC.Compiler.Syntax;
 
 public static partial class SemanticFacts
 {
+    public static StringComparer NameComparer { get; } = StringComparer.OrdinalIgnoreCase;
+
+    public const StringComparison NameComparison = StringComparison.OrdinalIgnoreCase;
+
+    public static bool NameEquals(string? left, string? right) =>
+        string.Equals(left, right, NameComparison);
+
     public static string GetProjectorTypeName(string signature)
     {
         const ulong basis = 14695981039346656037UL;
@@ -61,13 +68,13 @@ public static partial class SemanticFacts
 
         return knownTypeList
             .OfType<NamedTypeSymbol>()
-            .FirstOrDefault(type => type.Name == GetProjectorTypeName(signature));
+            .FirstOrDefault(type => NameEquals(type.Name, GetProjectorTypeName(signature)));
     }
 
     private static IEnumerable<NamedTypeSymbol> GetTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
     {
         var current = ResolveNamedType(type ?? TypeSymbol.Object, knownTypes);
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(NameComparer);
 
         while (current is not null && visited.Add(current.Name))
         {
@@ -79,7 +86,7 @@ public static partial class SemanticFacts
     private static IEnumerable<NamedTypeSymbol> GetInterfaceHierarchy(TypeSymbol interfaceType, IEnumerable<TypeSymbol> knownTypes)
     {
         var pending = new Queue<NamedTypeSymbol>();
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(NameComparer);
         if (ResolveNamedType(interfaceType, knownTypes) is { IsInterface: true } rootInterface)
         {
             pending.Enqueue(rootInterface);

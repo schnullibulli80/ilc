@@ -678,7 +678,7 @@ public static partial class SemanticFacts
                 call.Target is MemberAccessExpressionSyntax { MemberName.Text: "Invoke" };
             isDirectDelegateInvoke =
                 !isExplicitInvokeMemberAccess &&
-                invocation.Method.Name == "Invoke" &&
+                NameEquals(invocation.Method.Name, "Invoke") &&
                 !invocation.Method.IsStatic &&
                 invocation.Method.DeclaringTypeName is not null &&
                 ResolveTypeReference(invocation.Method.DeclaringTypeName, knownTypes) is NamedTypeSymbol { IsDelegate: true };
@@ -739,7 +739,7 @@ public static partial class SemanticFacts
         if (receiver is NameExpressionSyntax nameExpression && nameExpression.Name.Parts.Count == 1)
         {
             var displayName = nameExpression.Name.ToDisplayString();
-            if (displayName == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+            if (NameEquals(displayName, "self") && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
             {
                 return new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self");
             }
@@ -797,7 +797,7 @@ public static partial class SemanticFacts
 
         var normalized = declaringType.Methods
             .Where(candidate =>
-                candidate.Name == method.Name &&
+                NameEquals(candidate.Name, method.Name )&&
                 candidate.IsStatic == method.IsStatic &&
                 candidate.IsConstructor == method.IsConstructor &&
                 candidate.Parameters.Count == method.Parameters.Count)
@@ -846,7 +846,7 @@ public static partial class SemanticFacts
         {
             var currentDeclaringTypeName = currentMethod?.DeclaringTypeName;
             if (currentDeclaringTypeName is not null &&
-                targetIndexerProperty.DeclaringTypeName == currentDeclaringTypeName)
+                NameEquals(targetIndexerProperty.DeclaringTypeName, currentDeclaringTypeName))
             {
                 return BindImplicitReceiver(currentMethod);
             }
@@ -910,7 +910,7 @@ public static partial class SemanticFacts
         var displayName = receiver.ToDisplayString();
         if (receiver.Parts.Count == 1)
         {
-            if (displayName == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+            if (NameEquals(displayName, "self") && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
             {
                 return new BoundReceiver(BoundReceiverKind.Self, new TypeSymbol(currentMethod.DeclaringTypeName, true), LocalName: "self");
             }

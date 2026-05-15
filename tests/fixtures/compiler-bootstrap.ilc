@@ -279,29 +279,29 @@ begin
 
     Program.TraceText('SECTION literals-casts-and-collections');
     var result := Program.Total;
-    var text := 'abcd';
-    var first := text[0];
-    var textSize := text.Length;
+    var sampleText := 'abcd';
+    var first := sampleText[0];
+    var textSize := sampleText.Length;
     var maybeProgram: Program := nil;
     var noProgram := maybeProgram = nil;
-    var sameText := text = 'abcd';
-    var differentText := text <> 'abce';
+    var sameText := sampleText = 'abcd';
+    var differentText := sampleText <> 'abce';
     var maybeText: String := nil;
     var noText := maybeText = nil;
     var hasMissingText := not noText;
     var invertedZero := not 0;
     var coalescedText := maybeText ?? 'xy';
     var preservedText := coalescedText ?? 'zz';
-    var hasTextType := text is String;
-    var castText := text as String;
+    var hasTextType := sampleText is String;
+    var castText := sampleText as String;
     var castTextOk := castText <> nil;
     var fixedValues: array[10] of Integer;
-    var matrix := new Integer[2, 2];
+    var localMatrix := new Integer[2, 2];
     var numbers: array of Integer := new Integer[4];
     numbers[0] := result;
     numbers[1] := numbers[0] + 2;
-    matrix[0, 1] := numbers[1];
-    var matrixCell := matrix[0, 1];
+    localMatrix[0, 1] := numbers[1];
+    var matrixCell := localMatrix[0, 1];
     var size := numbers.Length;
 
     Program.TraceText('SECTION object-model-properties-indexers');
@@ -341,7 +341,7 @@ begin
     var hasProgramType := programs[1] is Program;
     var castProgram := programs[1] as Program;
     var castProgramOk := castProgram <> nil;
-    var castMismatch := text as Program;
+    var castMismatch := sampleText as Program;
     var castMismatchNil := castMismatch = nil;
     programs[0].Value := programs[0].Value + 1;
     programs[0].Items[0] := programs[1].Current();
@@ -468,7 +468,7 @@ begin
     current := current + numberSlice.Length + numberSlice[0];
     Program.Trace('CHECKPOINT numeric-slice=', current);
 
-    var textSlice := text[1..2];
+    var textSlice := sampleText[1..2];
     current := current + textSlice.Length;
     if textSlice = 'bc' then
     begin
@@ -676,7 +676,7 @@ begin
     Program.Trace('CHECKPOINT coalescing=', current);
     Program.Trace('CHECKPOINT strings=', current);
 
-    foreach var ch in text do
+    foreach var ch in sampleText do
     begin
       current := current + 1;
     end;
@@ -732,7 +732,7 @@ begin
         current := current + 1;
     end;
 
-    case text of
+    case sampleText of
       'abcd':
         current := current + 1;
     else

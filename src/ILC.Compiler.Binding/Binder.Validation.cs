@@ -28,7 +28,7 @@ public sealed partial class Binder
             Dictionary<string, TypeSymbol> topLevelScope;
             using (Profile(profiler, "ValidateSemantics.BuildTopLevelScope"))
             {
-                topLevelScope = globals.ToDictionary(global => global.Name, global => global.Type, StringComparer.Ordinal);
+                topLevelScope = globals.ToDictionary(global => global.Name, global => global.Type, SemanticFacts.NameComparer);
             }
 
             foreach (var member in members)
@@ -196,7 +196,7 @@ public sealed partial class Binder
         {
             foreach (var constant in classDeclaration.Members.OfType<ConstantDeclarationSyntax>())
             {
-                ValidateConstantDeclarators(constant.Declarators, new Dictionary<string, TypeSymbol>(StringComparer.Ordinal), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
+                ValidateConstantDeclarators(constant.Declarators, new Dictionary<string, TypeSymbol>(SemanticFacts.NameComparer), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, null, diagnostics);
             }
         }
 
@@ -208,12 +208,27 @@ public sealed partial class Binder
                 var locals = method.Parameters.ToDictionary(
                     parameter => parameter.Identifier.Text,
                     parameter => BindType(parameter.TypeName, typeScope),
-                    StringComparer.Ordinal);
+                    SemanticFacts.NameComparer);
 
                 var boundMethod = FindMethod(knownMethods, classDeclaration.Identifier.Text, method.Identifier.Text, method.Parameters.Count);
                 if (boundMethod is not null && !boundMethod.IsStatic)
                 {
                     locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
+                }
+
+                var resultParameter = method.Parameters.FirstOrDefault(parameter => parameter.Identifier.Text == "Result");
+                if (resultParameter is not null)
+                {
+                    diagnostics.Report(
+                        "ILC2241",
+                        "Parameter name 'Result' is reserved for the implicit function result.",
+                        DiagnosticSeverity.Error,
+                        resultParameter.Identifier.Span);
+                }
+
+                if (boundMethod is not null && boundMethod.ReturnType != TypeSymbol.Void)
+                {
+                    locals["Result"] = boundMethod.ReturnType;
                 }
 
                 ValidateMethodInheritanceModifiers(
@@ -562,6 +577,15 @@ public sealed partial class Binder
                 case LocalVariableDeclarationStatementSyntax localVariable:
                     foreach (var declarator in localVariable.Declarators)
                     {
+                        if (declarator.Identifier.Text == "Result")
+                        {
+                            diagnostics.Report(
+                                "ILC2241",
+                                "Local variable name 'Result' is reserved for the implicit function result.",
+                                DiagnosticSeverity.Error,
+                                declarator.Identifier.Span);
+                        }
+
                         var declaredType = declarator.TypeName is not null ? BindType(declarator.TypeName, knownTypes) : null;
                         TypeSymbol? initializerType = null;
                         if (declarator.Initializer is not null)
@@ -645,7 +669,7 @@ public sealed partial class Binder
                     TypeSymbol? loopType = null;
                     if (forStatement.VarKeyword is not null)
                     {
-                        forLoopLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                        forLoopLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                         {
                             [forStatement.Identifier.Text] = TypeSymbol.Integer
                         };
@@ -742,7 +766,7 @@ public sealed partial class Binder
                     if (foreachStatement.VarKeyword is not null)
                     {
                         foreachType = elementType!;
-                        foreachLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                        foreachLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                         {
                             [foreachStatement.Identifier.Text] = foreachType
                         };
@@ -863,7 +887,7 @@ public sealed partial class Binder
                             }
                             else if (arm.Identifier is not null)
                             {
-                                armLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                                armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                                 {
                                     [arm.Identifier.Text] = armType
                                 };
@@ -923,7 +947,7 @@ public sealed partial class Binder
                                 continue;
                             }
 
-                            var clauseLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                            var clauseLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                             {
                                 [clause.Identifier.Text] = clauseType
                             };
@@ -1755,7 +1779,7 @@ public sealed partial class Binder
                         }
                         else if (arm.Identifier is not null)
                         {
-                            armLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                            armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                             {
                                 [arm.Identifier.Text] = typedArmType
                             };
@@ -1972,31 +1996,22 @@ public sealed partial class Binder
                     }
                 }
 
-                if (invocation?.Method.Name == "TryParse" &&
-                    invocation.Method.DeclaringTypeName == TypeSymbol.Integer.Name &&
-                    invocation.Method.IsStatic &&
+                if (invocation?.Method is { } resolvedMethod &&
+                    SemanticFacts.NameEquals(resolvedMethod.Name, "TryParse") &&
+                    SemanticFacts.NameEquals(resolvedMethod.DeclaringTypeName, TypeSymbol.Integer.Name) &&
+                    resolvedMethod.IsStatic &&
                     call.Arguments.Count == 2)
                 {
                     using (Profile(currentValidationProfiler, "ValidateCall.TryParseSpecialCase"))
                     {
                         var parseInputType = InferValidationExpressionType(call.Arguments[0].Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                        if (parseInputType != TypeSymbol.String)
+                        if (!SemanticFacts.NameEquals(parseInputType.Name, TypeSymbol.String.Name))
                         {
                             diagnostics.Report(
                                 "ILC2163",
                                 "Integer.TryParse expects a String as its first argument.",
                                 DiagnosticSeverity.Error,
                                 GetExpressionDiagnosticSpan(call.Arguments[0].Expression, knownTypes));
-                        }
-
-                        var parseTargetType = InferValidationExpressionType(call.Arguments[1].Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                        if (parseTargetType != TypeSymbol.Integer)
-                        {
-                            diagnostics.Report(
-                                "ILC2164",
-                                "Integer.TryParse expects an Integer assignment target as its second argument.",
-                                DiagnosticSeverity.Error,
-                                GetExpressionDiagnosticSpan(call.Arguments[1].Expression, knownTypes));
                         }
                     }
                 }
@@ -2015,7 +2030,7 @@ public sealed partial class Binder
                     break;
                 }
 
-                var queryLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                var queryLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                 {
                     [query.Identifier.Text] = enumerablePattern.ElementType
                 };
@@ -2171,7 +2186,7 @@ public sealed partial class Binder
                                     $"Grouping<{InferValidationExpressionType(query.GroupByExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}, {InferValidationExpressionType(query.GroupExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes).Name}>",
                                     true)
                             : InferValidationExpressionType(query.SelectExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-                    var continuationLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal)
+                    var continuationLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                     {
                         [query.IntoIdentifier.Text] = continuationRangeType
                     };
@@ -2918,6 +2933,12 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
+        if (IsResultName(name) && !IsResultAvailable(currentMethod))
+        {
+            ReportInvalidResultUsage(name.Parts[0].Span, diagnostics);
+            return;
+        }
+
         if (TryReportInvalidFieldAccess(name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes, diagnostics))
         {
             return;
@@ -3147,6 +3168,12 @@ public sealed partial class Binder
         if (targetName.Parts.Count == 1)
         {
             var name = targetName.ToDisplayString();
+            if (name == "Result" && !IsResultAvailable(currentMethod))
+            {
+                ReportInvalidResultUsage(targetName.Parts[0].Span, diagnostics);
+                return;
+            }
+
             var simpleResolution = SemanticFacts.ResolveName(targetName, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod);
             if (simpleResolution.Kind == NameResolutionKind.Constant)
             {
@@ -3303,6 +3330,23 @@ public sealed partial class Binder
                     indexSpan);
             }
         }
+    }
+
+    private static bool IsResultName(QualifiedNameSyntax name) =>
+        name.Parts.Count == 1 &&
+        name.Parts[0].Text == "Result";
+
+    private static bool IsResultAvailable(MethodSymbol? currentMethod) =>
+        currentMethod is not null &&
+        currentMethod.ReturnType != TypeSymbol.Void;
+
+    private static void ReportInvalidResultUsage(TextSpan span, DiagnosticBag diagnostics)
+    {
+        diagnostics.Report(
+            "ILC2242",
+            "'Result' is only available inside functions with a return value.",
+            DiagnosticSeverity.Error,
+            span);
     }
 
     private static void ValidateIncDecStatement(
@@ -3904,7 +3948,7 @@ public sealed partial class Binder
 
     private static bool CreatesTypeCycle(string declaredTypeName, TypeSymbol baseType, IReadOnlyList<TypeSymbol> knownTypes)
     {
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(SemanticFacts.NameComparer);
         var current = ResolveNamedType(baseType, knownTypes);
         while (current is not null && visited.Add(current.Name))
         {
@@ -3922,7 +3966,7 @@ public sealed partial class Binder
     private static IEnumerable<NamedTypeSymbol> GetTypeHierarchy(TypeSymbol? type, IEnumerable<TypeSymbol> knownTypes)
     {
         var current = ResolveNamedType(type ?? TypeSymbol.Object, knownTypes);
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(SemanticFacts.NameComparer);
 
         while (current is not null && visited.Add(current.Name))
         {
@@ -3934,7 +3978,7 @@ public sealed partial class Binder
     private static IEnumerable<NamedTypeSymbol> GetInterfaceHierarchy(TypeSymbol interfaceType, IEnumerable<TypeSymbol> knownTypes)
     {
         var pending = new Queue<NamedTypeSymbol>();
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(SemanticFacts.NameComparer);
         if (ResolveNamedType(interfaceType, knownTypes) is { IsInterface: true } rootInterface)
         {
             pending.Enqueue(rootInterface);
@@ -4021,7 +4065,7 @@ public sealed partial class Binder
                                 candidate.Name == interfaceMethod.Name &&
                                 !candidate.IsStatic)))
                         .Select(candidate => $"{candidate.DeclaringTypeName}.{candidate.Name}({string.Join(", ", candidate.Parameters.Select(parameter => $"{parameter.PassingKind}:{parameter.Type.Name}"))}):{candidate.ReturnType.Name}")
-                        .Distinct(StringComparer.Ordinal)
+                        .Distinct(SemanticFacts.NameComparer)
                         .ToArray();
                     diagnostics.Report(
                         "ILC2209",
@@ -4250,7 +4294,7 @@ public sealed partial class Binder
             return true;
         }
 
-        var lambdaLocals = new Dictionary<string, TypeSymbol>(locals, StringComparer.Ordinal);
+        var lambdaLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
         for (var parameterIndex = 0; parameterIndex < lambda.Parameters.Count; parameterIndex++)
         {
             var parameter = lambda.Parameters[parameterIndex];

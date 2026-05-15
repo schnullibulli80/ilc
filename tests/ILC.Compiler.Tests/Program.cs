@@ -1917,6 +1917,97 @@ else
     }
 }
 
+var resultAliasTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function Accumulate(value: Integer): Integer;
+  begin
+    Result := 1;
+    Result := Result + value;
+    return Result;
+  end;
+
+  public static method InvalidProcedureResult;
+  begin
+    Result := 1;
+  end;
+
+  public static function InvalidLocalResult: Integer;
+  begin
+    var Result := 1;
+    return Result;
+  end;
+end;
+""");
+
+var resultAliasBinding = new Binder().Bind(resultAliasTree);
+var resultAliasProgram = resultAliasBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+var resultAliasMethod = resultAliasProgram.Methods.First(method => method.Name == "Accumulate");
+var resultAliasDiagnostics = resultAliasBinding.Diagnostics.ToArray();
+if (resultAliasDiagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Id != "ILC2241" && diagnostic.Id != "ILC2242"))
+{
+    failures.Add("Result alias fixture should only report the expected invalid Result usages.");
+}
+
+if (!resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2242") ||
+    !resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2241"))
+{
+    failures.Add("Binder should allow implicit Result in functions and reject Result in invalid contexts.");
+}
+
+var resultAliasIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(resultAliasMethod);
+var resultAliasInstructions = resultAliasIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+if (resultAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
+    resultAliasInstructions.Last().OpCode != IrOpCode.Return ||
+    !resultAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.LoadConstant && Equals(instruction.Operand, 1)) ||
+    !resultAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
+{
+    failures.Add("Lowerer should map implicit Result reads and writes to the function return register.");
+}
+
+var caseInsensitiveTree = SyntaxTree.Parse("""
+PUBLIC CLASS Program
+BEGIN
+  public static var Counter: integer;
+
+  PUBLIC STATIC FUNCTION Add(Value: INTEGER): Integer;
+  BEGIN
+    result := value + counter;
+    RETURN result;
+  END;
+
+  PUBLIC STATIC METHOD Main;
+  BEGIN
+    counter := 2;
+    var total: integer := ADD(3);
+    if TOTAL <> 5 then
+    begin
+      raise 'case-insensitive lookup failed';
+    end;
+  END;
+END;
+""");
+
+var caseInsensitiveBinding = new Binder().Bind(caseInsensitiveTree);
+if (caseInsensitiveBinding.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+{
+    failures.Add("Compiler should parse and bind keywords and identifiers case-insensitively.");
+}
+
+var caseInsensitiveProgram = caseInsensitiveBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+var caseInsensitiveMain = caseInsensitiveProgram.Methods.First(method => method.Name == "Main");
+_ = new Lowerer(
+    caseInsensitiveProgram.Methods,
+    caseInsensitiveProgram.Fields,
+    caseInsensitiveBinding.Compilation.Types,
+    caseInsensitiveProgram.Properties,
+    caseInsensitiveProgram.Constants).Lower(caseInsensitiveMain);
+
 var invalidAssignmentTree = SyntaxTree.Parse("""
 public class Program
 begin

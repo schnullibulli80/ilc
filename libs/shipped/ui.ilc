@@ -275,10 +275,10 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(left: Integer; top: Integer; right: Integer; bottom: Integer);
   begin
-    Left := left;
-    Top := top;
-    Right := right;
-    Bottom := bottom;
+    self.Left := left;
+    self.Top := top;
+    self.Right := right;
+    self.Bottom := bottom;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

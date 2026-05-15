@@ -21,8 +21,8 @@ public static partial class SemanticFacts
             var staticIndexer = knownProperties.FirstOrDefault(property =>
                 property.IsIndexer &&
                 property.IsStatic &&
-                property.DeclaringTypeName == staticDeclaringTypeName &&
-                property.Name == target.Parts[^1].Text);
+                NameEquals(property.DeclaringTypeName, staticDeclaringTypeName )&&
+                NameEquals(property.Name, target.Parts[^1].Text));
             if (staticIndexer is not null)
             {
                 return staticIndexer;
@@ -56,7 +56,7 @@ public static partial class SemanticFacts
                 property.IsIndexer &&
                 !property.IsStatic &&
                 GetReceiverTypeHierarchy(valueType, knownTypes ?? [])
-                    .Any(type => type.Name == property.DeclaringTypeName));
+                    .Any(type => NameEquals(type.Name, property.DeclaringTypeName)));
             if (valueIndexer is not null)
             {
                 return valueIndexer;
@@ -68,7 +68,7 @@ public static partial class SemanticFacts
         {
             receiverType = localReceiverType;
         }
-        else if (target.Parts.Count >= 2 && target.Parts[0].Text != "self" && locals.TryGetValue(target.Parts[0].Text, out var qualifiedReceiverType))
+        else if (target.Parts.Count >= 2 && !NameEquals(target.Parts[0].Text, "self") && locals.TryGetValue(target.Parts[0].Text, out var qualifiedReceiverType))
         {
             receiverType = qualifiedReceiverType;
         }
@@ -76,7 +76,7 @@ public static partial class SemanticFacts
         {
             receiverType = new TypeSymbol(currentMethod.DeclaringTypeName, true);
         }
-        else if (target.Parts.Count >= 1 && target.Parts[0].Text == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+        else if (target.Parts.Count >= 1 && NameEquals(target.Parts[0].Text, "self") && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
         {
             receiverType = new TypeSymbol(currentMethod.DeclaringTypeName, true);
         }
@@ -91,7 +91,7 @@ public static partial class SemanticFacts
             .SelectMany(type => type.Properties.Where(property =>
                 property.IsIndexer &&
                 !property.IsStatic &&
-                (target.Parts.Count == 1 || property.Name == target.Parts[^1].Text)))
+                (target.Parts.Count == 1 || NameEquals(property.Name, target.Parts[^1].Text))))
             .FirstOrDefault();
         if (hierarchyIndexer is not null)
         {
@@ -101,8 +101,8 @@ public static partial class SemanticFacts
         return knownProperties.FirstOrDefault(property =>
             property.IsIndexer &&
             !property.IsStatic &&
-            receiverHierarchy.Any(type => type.Name == property.DeclaringTypeName) &&
-            (target.Parts.Count == 1 || property.Name == target.Parts[^1].Text));
+            receiverHierarchy.Any(type => NameEquals(type.Name, property.DeclaringTypeName)) &&
+            (target.Parts.Count == 1 || NameEquals(property.Name, target.Parts[^1].Text)));
     }
 
     public static PropertySymbol? ResolveIndexerReference(
@@ -142,7 +142,7 @@ public static partial class SemanticFacts
                         candidate.IsIndexer &&
                         !candidate.IsStatic &&
                         GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
-                            .Any(type => type.Name == candidate.DeclaringTypeName)),
+                            .Any(type => NameEquals(type.Name, candidate.DeclaringTypeName))),
             _ => GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
                     .SelectMany(type => type.Properties.Where(property => property.IsIndexer && !property.IsStatic))
                     .FirstOrDefault()
@@ -150,7 +150,7 @@ public static partial class SemanticFacts
                     property.IsIndexer &&
                     !property.IsStatic &&
                     GetReceiverTypeHierarchy(targetType, knownTypes ?? [])
-                        .Any(type => type.Name == property.DeclaringTypeName))
+                        .Any(type => NameEquals(type.Name, property.DeclaringTypeName)))
         };
     }
 
@@ -170,13 +170,13 @@ public static partial class SemanticFacts
         {
             return namedType.Methods.FirstOrDefault(method =>
                 method.IsConstructor &&
-                method.DeclaringTypeName == resolvedType.Name &&
+                NameEquals(method.DeclaringTypeName, resolvedType.Name )&&
                 method.Parameters.Count == argumentCount);
         }
 
         return knownMethods.FirstOrDefault(method =>
             method.IsConstructor &&
-            method.DeclaringTypeName == resolvedType.Name &&
+            NameEquals(method.DeclaringTypeName, resolvedType.Name )&&
             method.Parameters.Count == argumentCount);
     }
 
@@ -214,7 +214,7 @@ public static partial class SemanticFacts
                 instanceMethod = GetTypeHierarchy(valueReceiverType, knownTypes)
                     .SelectMany(knownType => FindMethodsByDeclaringType(knownMethods, knownType.Name)
                         .Where(method =>
-                            method.Name == target.Parts[^1].Text &&
+                            NameEquals(method.Name, target.Parts[^1].Text )&&
                             SupportsArgumentCount(method, argumentCount) &&
                             !method.IsStatic))
                     .FirstOrDefault();
@@ -262,7 +262,7 @@ public static partial class SemanticFacts
                     using (profiler?.Invoke("ResolveStaticTypeMethod"))
                     {
                         staticTargetMethod = namedTargetType.Methods.FirstOrDefault(method =>
-                            method.Name == target.Parts[^1].Text &&
+                            NameEquals(method.Name, target.Parts[^1].Text )&&
                             SupportsArgumentCount(method, argumentCount) &&
                             method.IsStatic);
                     }
@@ -298,7 +298,7 @@ public static partial class SemanticFacts
             if (ResolveTypeReference(qualifiedTarget.DeclaringTypeName, knownTypes) is NamedTypeSymbol targetType)
             {
                 var targetTypeMethod = targetType.Methods.FirstOrDefault(method =>
-                    method.Name == qualifiedTarget.MethodName &&
+                    NameEquals(method.Name, qualifiedTarget.MethodName )&&
                     SupportsArgumentCount(method, argumentCount) &&
                     method.IsStatic);
                 if (targetTypeMethod is not null)
@@ -312,7 +312,7 @@ public static partial class SemanticFacts
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
-            var sameTypeCandidate = candidates.FirstOrDefault(method => method.DeclaringTypeName == currentMethod.DeclaringTypeName && (method.IsStatic || !currentMethod.IsStatic));
+            var sameTypeCandidate = candidates.FirstOrDefault(method => NameEquals(method.DeclaringTypeName, currentMethod.DeclaringTypeName )&& (method.IsStatic || !currentMethod.IsStatic));
             if (sameTypeCandidate is not null)
             {
                 return sameTypeCandidate;
@@ -321,7 +321,7 @@ public static partial class SemanticFacts
             if (ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is NamedTypeSymbol currentDeclaringType)
             {
                 var currentTypeMethod = currentDeclaringType.Methods.FirstOrDefault(method =>
-                    method.Name == qualifiedTarget.MethodName &&
+                    NameEquals(method.Name, qualifiedTarget.MethodName )&&
                     SupportsArgumentCount(method, argumentCount) &&
                     (method.IsStatic || !currentMethod.IsStatic));
                 if (currentTypeMethod is not null)
@@ -348,7 +348,7 @@ public static partial class SemanticFacts
             if (ResolveTypeReference(qualifiedTarget.DeclaringTypeName, knownTypes) is NamedTypeSymbol targetType)
             {
                 var targetTypeMethod = targetType.Methods.FirstOrDefault(method =>
-                    method.Name == qualifiedTarget.MethodName &&
+                    NameEquals(method.Name, qualifiedTarget.MethodName )&&
                     SupportsArgumentCount(method, argumentCount));
                 if (targetTypeMethod is not null)
                 {
@@ -361,7 +361,7 @@ public static partial class SemanticFacts
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
-            var sameTypeCandidate = candidates.FirstOrDefault(method => method.DeclaringTypeName == currentMethod.DeclaringTypeName);
+            var sameTypeCandidate = candidates.FirstOrDefault(method => NameEquals(method.DeclaringTypeName, currentMethod.DeclaringTypeName));
             if (sameTypeCandidate is not null)
             {
                 return sameTypeCandidate;
@@ -370,7 +370,7 @@ public static partial class SemanticFacts
             if (ResolveTypeReference(currentMethod.DeclaringTypeName, knownTypes) is NamedTypeSymbol currentDeclaringType)
             {
                 var currentTypeMethod = currentDeclaringType.Methods.FirstOrDefault(method =>
-                    method.Name == qualifiedTarget.MethodName &&
+                    NameEquals(method.Name, qualifiedTarget.MethodName )&&
                     SupportsArgumentCount(method, argumentCount));
                 if (currentTypeMethod is not null)
                 {
@@ -399,11 +399,11 @@ public static partial class SemanticFacts
             var method = GetReceiverTypeHierarchy(valueReceiverType, knownTypes)
                 .SelectMany(knownType => knownType.Methods
                     .Where(candidate =>
-                        candidate.Name == target.Parts[^1].Text &&
+                        NameEquals(candidate.Name, target.Parts[^1].Text )&&
                         SupportsArgumentCount(candidate, argumentCount))
                     .Concat(FindMethodsByDeclaringType(knownMethods, knownType.Name)
                         .Where(candidate =>
-                            candidate.Name == target.Parts[^1].Text &&
+                            NameEquals(candidate.Name, target.Parts[^1].Text )&&
                             SupportsArgumentCount(candidate, argumentCount))))
                 .FirstOrDefault();
             if (method is not null)
@@ -425,7 +425,7 @@ public static partial class SemanticFacts
                 if (targetType is NamedTypeSymbol namedTargetType)
                 {
                     var staticTargetMethod = namedTargetType.Methods.FirstOrDefault(method =>
-                        method.Name == target.Parts[^1].Text &&
+                        NameEquals(method.Name, target.Parts[^1].Text )&&
                         SupportsArgumentCount(method, argumentCount));
                     if (staticTargetMethod is not null)
                     {
@@ -448,7 +448,7 @@ public static partial class SemanticFacts
         return FindMethodsByName(knownMethods, qualifiedTarget.MethodName)
             .Where(method =>
                 SupportsArgumentCount(method, argumentCount) &&
-                (qualifiedTarget.DeclaringTypeName is null || method.DeclaringTypeName == qualifiedTarget.DeclaringTypeName))
+                (qualifiedTarget.DeclaringTypeName is null || NameEquals(method.DeclaringTypeName, qualifiedTarget.DeclaringTypeName)))
             .ToArray();
     }
 
@@ -458,7 +458,7 @@ public static partial class SemanticFacts
         knownMethods is IIndexedSymbolList<MethodSymbol> indexedMethods &&
         indexedMethods.ByName.TryGetValue(methodName, out var methods)
             ? methods
-            : knownMethods.Where(method => method.Name == methodName);
+            : knownMethods.Where(method => NameEquals(method.Name, methodName));
 
     private static IEnumerable<MethodSymbol> FindMethodsByDeclaringType(
         IEnumerable<MethodSymbol> knownMethods,
@@ -466,7 +466,7 @@ public static partial class SemanticFacts
         knownMethods is IIndexedSymbolList<MethodSymbol> indexedMethods &&
         indexedMethods.ByDeclaringType.TryGetValue(declaringTypeName, out var methods)
             ? methods
-            : knownMethods.Where(method => method.DeclaringTypeName == declaringTypeName);
+            : knownMethods.Where(method => NameEquals(method.DeclaringTypeName, declaringTypeName));
 
     private static IEnumerable<FieldSymbol> FindFieldsByDeclaringType(
         IEnumerable<FieldSymbol> knownFields,
@@ -474,7 +474,7 @@ public static partial class SemanticFacts
         knownFields is IIndexedSymbolList<FieldSymbol> indexedFields &&
         indexedFields.ByDeclaringType.TryGetValue(declaringTypeName, out var fields)
             ? fields
-            : knownFields.Where(field => field.DeclaringTypeName == declaringTypeName);
+            : knownFields.Where(field => NameEquals(field.DeclaringTypeName, declaringTypeName));
 
     private static IEnumerable<PropertySymbol> FindPropertiesByDeclaringType(
         IEnumerable<PropertySymbol> knownProperties,
@@ -482,7 +482,7 @@ public static partial class SemanticFacts
         knownProperties is IIndexedSymbolList<PropertySymbol> indexedProperties &&
         indexedProperties.ByDeclaringType.TryGetValue(declaringTypeName, out var properties)
             ? properties
-            : knownProperties.Where(property => property.DeclaringTypeName == declaringTypeName);
+            : knownProperties.Where(property => NameEquals(property.DeclaringTypeName, declaringTypeName));
 
     private static IEnumerable<ConstantSymbol> FindConstantsByDeclaringType(
         IEnumerable<ConstantSymbol> knownConstants,
@@ -490,7 +490,7 @@ public static partial class SemanticFacts
         knownConstants is IIndexedSymbolList<ConstantSymbol> indexedConstants &&
         indexedConstants.ByDeclaringType.TryGetValue(declaringTypeName, out var constants)
             ? constants
-            : knownConstants.Where(constant => constant.DeclaringTypeName == declaringTypeName);
+            : knownConstants.Where(constant => NameEquals(constant.DeclaringTypeName, declaringTypeName));
 
     public static bool SupportsArgumentCount(MethodSymbol method, int argumentCount)
     {
@@ -526,11 +526,11 @@ public static partial class SemanticFacts
             var instanceField = hierarchy
                 .SelectMany(receiver => receiver.Fields
                     .Where(field =>
-                        field.Name == name.Parts[^1].Text &&
+                        NameEquals(field.Name, name.Parts[^1].Text )&&
                         !field.IsStatic)
                     .Concat(FindFieldsByDeclaringType(knownFields, receiver.Name)
                         .Where(field =>
-                            field.Name == name.Parts[^1].Text &&
+                            NameEquals(field.Name, name.Parts[^1].Text )&&
                             !field.IsStatic)))
                 .FirstOrDefault();
             if (instanceField is not null)
@@ -541,11 +541,11 @@ public static partial class SemanticFacts
             var instanceProperty = hierarchy
                 .SelectMany(receiver => receiver.Properties
                     .Where(property =>
-                        property.Name == name.Parts[^1].Text &&
+                        NameEquals(property.Name, name.Parts[^1].Text )&&
                         !property.IsStatic)
                     .Concat(FindPropertiesByDeclaringType(knownProperties, receiver.Name)
                         .Where(property =>
-                            property.Name == name.Parts[^1].Text &&
+                            NameEquals(property.Name, name.Parts[^1].Text )&&
                             !property.IsStatic)))
                 .FirstOrDefault();
             if (instanceProperty is not null)
@@ -557,7 +557,7 @@ public static partial class SemanticFacts
                 .SelectMany(receiver => FindConstantsByDeclaringType(knownConstants, receiver.Name)
                     .Where(constant =>
                         constant.IsStatic &&
-                        constant.Name == name.Parts[^1].Text))
+                        NameEquals(constant.Name, name.Parts[^1].Text)))
                 .FirstOrDefault();
             if (instanceConstant is not null)
             {
@@ -567,11 +567,11 @@ public static partial class SemanticFacts
             var instanceMethodGroup = hierarchy
                 .SelectMany(receiver => receiver.Methods
                     .Where(method =>
-                        method.Name == name.Parts[^1].Text &&
+                        NameEquals(method.Name, name.Parts[^1].Text )&&
                         !method.IsStatic)
                     .Concat(FindMethodsByDeclaringType(knownMethods, receiver.Name)
                         .Where(method =>
-                            method.Name == name.Parts[^1].Text &&
+                            NameEquals(method.Name, name.Parts[^1].Text )&&
                             !method.IsStatic)))
                 .FirstOrDefault();
             if (instanceMethodGroup is not null)

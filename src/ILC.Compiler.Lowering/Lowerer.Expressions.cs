@@ -310,7 +310,10 @@ public sealed partial class Lowerer
                 LowerBoundReadInto(boundRead, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 return;
             case NameExpressionSyntax name:
-                throw new InvalidOperationException($"Cannot lower unknown name '{name.Name.ToDisplayString()}'.");
+                throw new InvalidOperationException(
+                    $"Cannot lower unknown name '{name.Name.ToDisplayString()}' " +
+                    $"in method '{currentMethod?.DeclaringTypeName ?? "<global>"}.{currentMethod?.Name ?? "<unknown>"}' " +
+                    $"at span {name.Name.Parts[0].Span.Start}+{name.Name.Parts[^1].Span.End - name.Name.Parts[0].Span.Start}.");
             case AssignmentExpressionSyntax assignment when assignment.Target is NameExpressionSyntax assignmentName && registerByName.TryGetValue(assignmentName.Name.ToDisplayString(), out var targetRegister):
                 if (assignment.Expression is NewArrayExpressionSyntax assignedArray && assignedArray.LengthExpressions.Count > 1)
                 {
@@ -1003,7 +1006,13 @@ public sealed partial class Lowerer
             {
                 throw new InvalidOperationException(
                     $"Failed to lower lambda call argument for target '{SemanticFacts.GetExpressionDisplayName(call.Target)}' " +
+                    $"targetKind='{call.Target.Kind}' " +
+                    $"openParenSpan='{call.OpenParenToken.Span.Start}+{call.OpenParenToken.Span.Length}' " +
+                    $"argumentIndex='{argumentIndex}' " +
+                    $"resolvedMethod='{method.DeclaringTypeName ?? "<global>"}.{method.Name}' " +
+                    $"methodFlags='static={method.IsStatic},ctor={method.IsConstructor},synthetic={method.IsSynthetic}' " +
                     $"parameter='{parameter?.Name ?? "<none>"}:{parameter?.Type.Name ?? argumentType.Name}' " +
+                    $"parameters='[{string.Join(", ", method.Parameters.Select(parameter => $"{parameter.Name}:{parameter.Type.Name}/{parameter.PassingKind}"))}]' " +
                     $"currentMethod='{(currentMethod?.DeclaringTypeName is null ? currentMethod?.Name : $"{currentMethod.DeclaringTypeName}.{currentMethod.Name}")}' " +
                     $"lambdaReturn='{lambda.ReturnType?.ToDisplayString() ?? "<void>"}' " +
                     $"lambdaBody='{SemanticFacts.GetExpressionDisplayName(lambda.Body)}'. " +
@@ -1699,7 +1708,7 @@ public sealed partial class Lowerer
         foreach (var lengthExpression in newArrayExpression.LengthExpressions)
         {
             var lengthRegister = AllocateTemp(TypeSymbol.Integer, registers);
-            LowerExpressionInto(lengthExpression, lengthRegister, registerByName, new Dictionary<string, IReadOnlyList<IrValue>>(StringComparer.Ordinal), registers, instructions, currentMethod);
+            LowerExpressionInto(lengthExpression, lengthRegister, registerByName, new Dictionary<string, IReadOnlyList<IrValue>>(SemanticFacts.NameComparer), registers, instructions, currentMethod);
             shapeRegisters.Add(lengthRegister);
         }
 
@@ -2080,8 +2089,8 @@ public sealed partial class Lowerer
         List<IrValue> registers,
         List<IrInstruction> instructions)
     {
-        var armRegisters = new Dictionary<string, IrValue>(registerByName, StringComparer.Ordinal);
-        var armTypes = new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal);
+        var armRegisters = new Dictionary<string, IrValue>(registerByName, SemanticFacts.NameComparer);
+        var armTypes = new Dictionary<string, TypeSymbol>(localTypes, SemanticFacts.NameComparer);
         if (typeName is null || identifier is null)
         {
             return (armRegisters, armTypes);

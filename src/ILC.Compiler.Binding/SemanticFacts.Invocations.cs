@@ -83,7 +83,7 @@ public static partial class SemanticFacts
         }
 
         var invokeMethod = delegateType.Methods.FirstOrDefault(method =>
-            method.Name == "Invoke" &&
+            NameEquals(method.Name, "Invoke" )&&
             !method.IsStatic &&
             SupportsArgumentCount(method, argumentCount));
         return invokeMethod is null ? null : new InvocationResolution(invokeMethod, delegateType, true);
@@ -100,7 +100,8 @@ public static partial class SemanticFacts
         IReadOnlyList<TypeSymbol>? knownTypes = null)
     {
         var displayName = $"{GetExpressionDisplayName(memberAccess.Receiver)}.{memberAccess.MemberName.Text}";
-        var staticReceiverType = TryFlattenQualifiedTarget(memberAccess.Receiver) is { } staticReceiverName
+        var staticReceiverType = TryFlattenQualifiedTarget(memberAccess.Receiver) is { } staticReceiverName &&
+            !IsLocalQualifiedReceiver(staticReceiverName, locals)
             ? ResolveTypeReference(staticReceiverName.ToDisplayString(), knownTypes ?? [])
             : null;
         if (staticReceiverType is not null)
@@ -127,11 +128,11 @@ public static partial class SemanticFacts
             .SelectMany(knownType => knownType.Properties
                 .Where(candidate =>
                     !candidate.IsStatic &&
-                    candidate.Name == memberAccess.MemberName.Text)
+                    NameEquals(candidate.Name, memberAccess.MemberName.Text))
                 .Concat(FindPropertiesByDeclaringType(knownProperties, knownType.Name)
                     .Where(candidate =>
                         !candidate.IsStatic &&
-                        candidate.Name == memberAccess.MemberName.Text)))
+                        NameEquals(candidate.Name, memberAccess.MemberName.Text))))
             .FirstOrDefault();
         if (property is not null)
         {
@@ -142,11 +143,11 @@ public static partial class SemanticFacts
             .SelectMany(knownType => knownType.Fields
                 .Where(candidate =>
                     !candidate.IsStatic &&
-                    candidate.Name == memberAccess.MemberName.Text)
+                    NameEquals(candidate.Name, memberAccess.MemberName.Text))
                 .Concat(FindFieldsByDeclaringType(knownFields, knownType.Name)
                     .Where(candidate =>
                         !candidate.IsStatic &&
-                        candidate.Name == memberAccess.MemberName.Text)))
+                        NameEquals(candidate.Name, memberAccess.MemberName.Text))))
             .FirstOrDefault();
         if (field is not null)
         {
@@ -157,7 +158,7 @@ public static partial class SemanticFacts
             .SelectMany(knownType => FindConstantsByDeclaringType(knownConstants, knownType.Name)
                 .Where(candidate =>
                     candidate.IsStatic &&
-                    candidate.Name == memberAccess.MemberName.Text))
+                    NameEquals(candidate.Name, memberAccess.MemberName.Text)))
             .FirstOrDefault();
         if (constant is not null)
         {
@@ -168,11 +169,11 @@ public static partial class SemanticFacts
             .SelectMany(knownType => knownType.Methods
                 .Where(candidate =>
                     !candidate.IsStatic &&
-                    candidate.Name == memberAccess.MemberName.Text)
+                    NameEquals(candidate.Name, memberAccess.MemberName.Text))
                 .Concat(FindMethodsByDeclaringType(knownMethods, knownType.Name)
                     .Where(candidate =>
                         !candidate.IsStatic &&
-                        candidate.Name == memberAccess.MemberName.Text)))
+                        NameEquals(candidate.Name, memberAccess.MemberName.Text))))
             .FirstOrDefault();
         if (method is not null)
         {
@@ -195,11 +196,11 @@ public static partial class SemanticFacts
         var property =
             namedReceiverType?.Properties.FirstOrDefault(candidate =>
                 candidate.IsStatic &&
-                candidate.Name == memberName)
+                NameEquals(candidate.Name, memberName))
             ?? FindPropertiesByDeclaringType(knownProperties, receiverType.Name)
                 .FirstOrDefault(candidate =>
                     candidate.IsStatic &&
-                    candidate.Name == memberName);
+                    NameEquals(candidate.Name, memberName));
         if (property is not null)
         {
             return new MemberResolution(displayName, property.Type, property.ReadField, property, null);
@@ -208,11 +209,11 @@ public static partial class SemanticFacts
         var field =
             namedReceiverType?.Fields.FirstOrDefault(candidate =>
                 candidate.IsStatic &&
-                candidate.Name == memberName)
+                NameEquals(candidate.Name, memberName))
             ?? FindFieldsByDeclaringType(knownFields, receiverType.Name)
                 .FirstOrDefault(candidate =>
                     candidate.IsStatic &&
-                    candidate.Name == memberName);
+                    NameEquals(candidate.Name, memberName));
         if (field is not null)
         {
             return new MemberResolution(displayName, field.Type, field);
@@ -221,11 +222,11 @@ public static partial class SemanticFacts
         var constant =
             namedReceiverType?.Constants.FirstOrDefault(candidate =>
                 candidate.IsStatic &&
-                candidate.Name == memberName)
+                NameEquals(candidate.Name, memberName))
             ?? FindConstantsByDeclaringType(knownConstants, receiverType.Name)
                 .FirstOrDefault(candidate =>
                     candidate.IsStatic &&
-                    candidate.Name == memberName);
+                    NameEquals(candidate.Name, memberName));
         if (constant is not null)
         {
             return new MemberResolution(displayName, constant.Type, null, null, null, constant);
@@ -234,11 +235,11 @@ public static partial class SemanticFacts
         var method =
             namedReceiverType?.Methods.FirstOrDefault(candidate =>
                 candidate.IsStatic &&
-                candidate.Name == memberName)
+                NameEquals(candidate.Name, memberName))
             ?? FindMethodsByDeclaringType(knownMethods, receiverType.Name)
                 .FirstOrDefault(candidate =>
                     candidate.IsStatic &&
-                    candidate.Name == memberName);
+                    NameEquals(candidate.Name, memberName));
         return method is null
             ? null
             : new MemberResolution(displayName, method.ReturnType, Method: method);

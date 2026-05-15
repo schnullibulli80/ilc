@@ -8,7 +8,7 @@ internal sealed partial class Parser
 
     private ExpressionSyntax ParseAssignmentExpression()
     {
-        if (Current.Kind == SyntaxKind.IdentifierToken && IsAssignmentTarget())
+        if (IsIdentifierLike(Current.Kind) && IsAssignmentTarget())
         {
             var start = _position;
             var target = ParseAssignableTarget();
@@ -331,7 +331,7 @@ internal sealed partial class Parser
         }
 
         while (PeekAbsolute(position).Kind == SyntaxKind.DotToken &&
-               PeekAbsolute(position + 1).Kind == SyntaxKind.IdentifierToken)
+               IsIdentifierLike(PeekAbsolute(position + 1).Kind))
         {
             if (sawGeneric && PeekAbsolute(position + 2).Kind != SyntaxKind.LessToken)
             {
@@ -352,7 +352,7 @@ internal sealed partial class Parser
 
     private bool TryScanExpressionQualifiedTypeNamePart(int position, out int nextPosition, ref bool sawGeneric)
     {
-        if (PeekAbsolute(position).Kind != SyntaxKind.IdentifierToken)
+        if (!IsIdentifierLike(PeekAbsolute(position).Kind))
         {
             nextPosition = position;
             return false;
@@ -415,7 +415,7 @@ internal sealed partial class Parser
         {
             if (parts.Count > 0 &&
                 parts.Any(part => part.Text.Contains('<', StringComparison.Ordinal)) &&
-                Peek(1).Kind == SyntaxKind.IdentifierToken &&
+                IsIdentifierLike(Peek(1).Kind) &&
                 Peek(2).Kind != SyntaxKind.LessToken)
             {
                 break;
@@ -494,7 +494,7 @@ internal sealed partial class Parser
             joinSourceExpression = ParseExpression();
             joinOnKeyword = Match(SyntaxKind.OnKeyword);
             joinLeftExpression = ParseExpression();
-            if (Current.Kind == SyntaxKind.IdentifierToken &&
+            if (IsIdentifierLike(Current.Kind) &&
                 string.Equals(Current.Text, "equals", StringComparison.Ordinal))
             {
                 joinEqualsKeyword = NextToken();
@@ -555,7 +555,7 @@ internal sealed partial class Parser
         {
             orderByKeyword = Match(SyntaxKind.OrderByKeyword);
             orderByExpression = ParseExpression();
-            if (Current.Kind == SyntaxKind.IdentifierToken &&
+            if (IsIdentifierLike(Current.Kind) &&
                 string.Equals(Current.Text, "descending", StringComparison.Ordinal))
             {
                 descendingKeyword = NextToken();
@@ -565,18 +565,18 @@ internal sealed partial class Parser
             {
                 thenByCommaToken = Match(SyntaxKind.CommaToken);
                 thenByExpression = ParseExpression();
-                if (Current.Kind == SyntaxKind.IdentifierToken &&
+                if (IsIdentifierLike(Current.Kind) &&
                     string.Equals(Current.Text, "descending", StringComparison.Ordinal))
                 {
                     thenByDescendingKeyword = NextToken();
                 }
             }
-            else if (Current.Kind == SyntaxKind.IdentifierToken &&
+            else if (IsIdentifierLike(Current.Kind) &&
                      string.Equals(Current.Text, "thenby", StringComparison.Ordinal))
             {
                 thenByKeyword = NextToken();
                 thenByExpression = ParseExpression();
-                if (Current.Kind == SyntaxKind.IdentifierToken &&
+                if (IsIdentifierLike(Current.Kind) &&
                     string.Equals(Current.Text, "descending", StringComparison.Ordinal))
                 {
                     thenByDescendingKeyword = NextToken();
@@ -590,12 +590,12 @@ internal sealed partial class Parser
         ExpressionSyntax? groupByExpression = null;
         SyntaxToken selectKeyword;
         ExpressionSyntax selectExpression;
-        if (Current.Kind == SyntaxKind.IdentifierToken &&
+        if (IsIdentifierLike(Current.Kind) &&
             string.Equals(Current.Text, "group", StringComparison.Ordinal))
         {
             groupKeyword = NextToken();
             groupExpression = ParseExpression();
-            if (Current.Kind == SyntaxKind.IdentifierToken &&
+            if (IsIdentifierLike(Current.Kind) &&
                 string.Equals(Current.Text, "by", StringComparison.Ordinal))
             {
                 groupByKeyword = NextToken();
@@ -654,7 +654,7 @@ internal sealed partial class Parser
             {
                 continuationOrderByKeyword = Match(SyntaxKind.OrderByKeyword);
                 continuationOrderByExpression = ParseExpression();
-                if (Current.Kind == SyntaxKind.IdentifierToken &&
+                if (IsIdentifierLike(Current.Kind) &&
                     string.Equals(Current.Text, "descending", StringComparison.Ordinal))
                 {
                     continuationDescendingKeyword = NextToken();
@@ -664,18 +664,18 @@ internal sealed partial class Parser
                 {
                     continuationThenByCommaToken = Match(SyntaxKind.CommaToken);
                     continuationThenByExpression = ParseExpression();
-                    if (Current.Kind == SyntaxKind.IdentifierToken &&
+                    if (IsIdentifierLike(Current.Kind) &&
                         string.Equals(Current.Text, "descending", StringComparison.Ordinal))
                     {
                         continuationThenByDescendingKeyword = NextToken();
                     }
                 }
-                else if (Current.Kind == SyntaxKind.IdentifierToken &&
+                else if (IsIdentifierLike(Current.Kind) &&
                          string.Equals(Current.Text, "thenby", StringComparison.Ordinal))
                 {
                     continuationThenByKeyword = NextToken();
                     continuationThenByExpression = ParseExpression();
-                    if (Current.Kind == SyntaxKind.IdentifierToken &&
+                    if (IsIdentifierLike(Current.Kind) &&
                         string.Equals(Current.Text, "descending", StringComparison.Ordinal))
                     {
                         continuationThenByDescendingKeyword = NextToken();
@@ -803,7 +803,7 @@ internal sealed partial class Parser
                 continue;
             }
 
-            if (Current.Kind == SyntaxKind.DotToken && Peek(1).Kind == SyntaxKind.IdentifierToken)
+            if (Current.Kind == SyntaxKind.DotToken && IsIdentifierLike(Peek(1).Kind))
             {
                 var dotToken = NextToken();
                 var memberName = Match(SyntaxKind.IdentifierToken);

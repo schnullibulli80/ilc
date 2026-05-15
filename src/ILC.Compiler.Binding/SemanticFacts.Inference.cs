@@ -105,7 +105,7 @@ public static partial class SemanticFacts
                     matchExpression.Arms[0].TypeName is not null &&
                     matchExpression.Arms[0].Identifier is not null &&
                     ResolveTypeReference(matchExpression.Arms[0].TypeName!.ToDisplayString(), knownTypes ?? []) is { } matchArmType
-                        ? new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
+                        ? new Dictionary<string, TypeSymbol>(localTypes, NameComparer)
                         {
                             [matchExpression.Arms[0].Identifier!.Text] = matchArmType
                         }

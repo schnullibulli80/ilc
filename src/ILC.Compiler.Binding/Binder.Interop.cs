@@ -132,7 +132,7 @@ public sealed partial class Binder
 
         if (namedType.IsDelegate)
         {
-            return IsSupportedDllImportAbiDelegate(namedType, knownTypes, new HashSet<string>(StringComparer.Ordinal));
+            return IsSupportedDllImportAbiDelegate(namedType, knownTypes, new HashSet<string>(SemanticFacts.NameComparer));
         }
 
         if (!namedType.IsReferenceType && !namedType.IsRecord)
@@ -142,7 +142,7 @@ public sealed partial class Binder
 
         if (namedType.IsRecord && !namedType.IsReferenceType)
         {
-            return IsSupportedDllImportAbiRecord(namedType, knownTypes, new HashSet<string>(StringComparer.Ordinal));
+            return IsSupportedDllImportAbiRecord(namedType, knownTypes, new HashSet<string>(SemanticFacts.NameComparer));
         }
 
         return false;
@@ -212,7 +212,7 @@ public sealed partial class Binder
 
         if (namedType.IsRecord && !namedType.IsReferenceType)
         {
-            return IsSupportedDllImportAbiRecord(namedType, knownTypes, new HashSet<string>(StringComparer.Ordinal));
+            return IsSupportedDllImportAbiRecord(namedType, knownTypes, new HashSet<string>(SemanticFacts.NameComparer));
         }
 
         return false;

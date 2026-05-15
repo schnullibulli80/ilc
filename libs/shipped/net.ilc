@@ -221,7 +221,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Parse(text: String): Uri;
   begin
-    if Text.IsNullOrEmpty(text) then
+    if System.Text.Text.IsNullOrEmpty(text) then
     begin
       raise new NetException('Invalid URI text.');
     end;
@@ -283,7 +283,7 @@ begin
 
         host := authority.Substring(0, portSeparator);
         var portText := authority.Substring(portSeparator + 1, authority.Length - portSeparator - 1);
-        if Text.IsNullOrEmpty(portText) then
+        if System.Text.Text.IsNullOrEmpty(portText) then
         begin
           raise new NetException('Invalid URI port.');
         end;
@@ -349,7 +349,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function GetQueryParameter(name: String): String;
   begin
-    if Text.IsNullOrEmpty(name) or QueryValue = '' then
+    if System.Text.Text.IsNullOrEmpty(name) or QueryValue = '' then
     begin
       return nil;
     end;

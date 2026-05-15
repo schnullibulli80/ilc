@@ -300,7 +300,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; predicate: Predicate<T>);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     PredicateValue := predicate;
   end;
 
@@ -415,7 +415,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<TSource>; selector: Selector<TSource, TResult>);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     SelectorValue := selector;
   end;
 
@@ -522,7 +522,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; count: Integer);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     RemainingCount := count;
   end;
 
@@ -640,7 +640,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; count: Integer);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     RemainingSkipCount := count;
   end;
 
@@ -765,8 +765,8 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(firstEnumerator: IEnumerator<T>; secondEnumerator: IEnumerator<T>);
   begin
-    FirstEnumerator := firstEnumerator;
-    SecondEnumerator := secondEnumerator;
+    self.FirstEnumerator := firstEnumerator;
+    self.SecondEnumerator := secondEnumerator;
     UsingFirst := true;
   end;
 
@@ -884,7 +884,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     SeenValues := new List<T>();
   end;
 
@@ -1006,7 +1006,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; value: T);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     TailValue := value;
     TailAvailable := true;
     EmittingTail := false;
@@ -1139,7 +1139,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public constructor(sourceEnumerator: IEnumerator<T>; value: T);
   begin
-    SourceEnumerator := sourceEnumerator;
+    self.SourceEnumerator := sourceEnumerator;
     HeadValue := value;
     HeadAvailable := true;
     EmittingHead := false;

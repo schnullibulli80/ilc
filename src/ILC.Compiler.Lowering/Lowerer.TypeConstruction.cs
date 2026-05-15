@@ -200,7 +200,7 @@ public sealed partial class Lowerer
 
         var substitution = genericParameters
             .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
-            .ToDictionary(entry => entry.Name, entry => entry.argument, StringComparer.Ordinal);
+            .ToDictionary(entry => entry.Name, entry => entry.argument, SemanticFacts.NameComparer);
 
         TypeSymbol? ResolveWithSubstitution(string displayName)
         {
@@ -270,7 +270,7 @@ public sealed partial class Lowerer
 
         var substitution = definition.GenericParameters
             .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
-            .ToDictionary(entry => entry.Name, entry => entry.argument, StringComparer.Ordinal);
+            .ToDictionary(entry => entry.Name, entry => entry.argument, SemanticFacts.NameComparer);
 
         TypeSymbol Substitute(TypeSymbol type)
         {
@@ -461,7 +461,7 @@ public sealed partial class Lowerer
                 method.IsConstructor &&
                 method.DeclaringTypeName == candidateType.Name &&
                 method.Parameters.Count == argumentTypes.Count &&
-                method.Parameters.Select(parameter => parameter.Type.Name).SequenceEqual(argumentTypes.Select(type => type.Name), StringComparer.Ordinal));
+                method.Parameters.Select(parameter => parameter.Type.Name).SequenceEqual(argumentTypes.Select(type => type.Name), SemanticFacts.NameComparer));
             if (candidateConstructor is not null)
             {
                 return (candidateType, candidateConstructor);
@@ -520,7 +520,7 @@ public sealed partial class Lowerer
 
         var substitution = genericParameters
             .Zip(currentGenericArgumentNames, (parameter, argumentName) => (parameter.Name, argumentName))
-            .ToDictionary(entry => entry.Name, entry => entry.argumentName, StringComparer.Ordinal);
+            .ToDictionary(entry => entry.Name, entry => entry.argumentName, SemanticFacts.NameComparer);
 
         string? Substitute(string displayName)
         {

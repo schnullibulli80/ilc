@@ -26,7 +26,7 @@ public static partial class SemanticFacts
         }
 
         var rangeVariableType = enumerablePattern.ElementType;
-        var queryLocals = new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
+        var queryLocals = new Dictionary<string, TypeSymbol>(localTypes, NameComparer)
         {
             [query.Identifier.Text] = rangeVariableType
         };
@@ -132,7 +132,7 @@ public static partial class SemanticFacts
             : null;
         var continuationRangeType = groupedResultType ?? projectedType;
         var continuationLocals = query.IntoIdentifier is not null
-            ? new Dictionary<string, TypeSymbol>(localTypes, StringComparer.Ordinal)
+            ? new Dictionary<string, TypeSymbol>(localTypes, NameComparer)
                 {
                     [query.IntoIdentifier.Text] = continuationRangeType
                 }

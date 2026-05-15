@@ -39,11 +39,11 @@ internal sealed class IndexedSymbolList<TSymbol>(
         IEnumerable<TSymbol> symbols,
         Func<TSymbol, string?> getKey)
     {
-        var lookup = new Dictionary<string, IReadOnlyList<TSymbol>>(StringComparer.Ordinal);
+        var lookup = new Dictionary<string, IReadOnlyList<TSymbol>>(SemanticFacts.NameComparer);
         foreach (var group in symbols
             .Select(symbol => (Symbol: symbol, Key: getKey(symbol)))
             .Where(item => !string.IsNullOrEmpty(item.Key))
-            .GroupBy(item => item.Key!, item => item.Symbol, StringComparer.Ordinal))
+            .GroupBy(item => item.Key!, item => item.Symbol, SemanticFacts.NameComparer))
         {
             lookup[group.Key] = group.ToArray();
         }
@@ -328,11 +328,11 @@ public sealed record CompilationUnitSymbol(
         IEnumerable<TSymbol> symbols,
         Func<TSymbol, string?> getKey)
     {
-        var lookup = new Dictionary<string, IReadOnlyList<TSymbol>>(StringComparer.Ordinal);
+        var lookup = new Dictionary<string, IReadOnlyList<TSymbol>>(SemanticFacts.NameComparer);
         foreach (var group in symbols
             .Select(symbol => (Symbol: symbol, Key: getKey(symbol)))
             .Where(item => !string.IsNullOrEmpty(item.Key))
-            .GroupBy(item => item.Key!, item => item.Symbol, StringComparer.Ordinal))
+            .GroupBy(item => item.Key!, item => item.Symbol, SemanticFacts.NameComparer))
         {
             lookup[group.Key] = group.ToArray();
         }

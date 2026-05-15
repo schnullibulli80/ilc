@@ -394,7 +394,7 @@ internal sealed partial class Parser
 
     private (IReadOnlyList<ExpressionSyntax> Labels, bool IsWildcard, QualifiedNameSyntax? TypeName, SyntaxToken? Identifier, SyntaxToken? WhenKeyword, ExpressionSyntax? Guard) ParseMatchPattern()
     {
-        if (Current.Kind == SyntaxKind.IdentifierToken &&
+        if (IsIdentifierLike(Current.Kind) &&
             Current.Text == "_" &&
             (Peek(1).Kind == SyntaxKind.ArrowToken || Peek(1).Kind == SyntaxKind.WhenKeyword))
         {
@@ -445,18 +445,21 @@ internal sealed partial class Parser
 
     private bool IsMatchTypePattern()
     {
-        if (Current.Kind != SyntaxKind.IdentifierToken)
+        if (!IsIdentifierLike(Current.Kind))
         {
             return false;
         }
 
         var offset = 1;
-        while (Peek(offset).Kind == SyntaxKind.DotToken && Peek(offset + 1).Kind == SyntaxKind.IdentifierToken)
+        while (Peek(offset).Kind == SyntaxKind.DotToken && IsIdentifierLike(Peek(offset + 1).Kind))
         {
             offset += 2;
         }
 
-        return Peek(offset).Kind == SyntaxKind.IdentifierToken;
+        return IsIdentifierLike(Peek(offset).Kind) &&
+               Peek(offset).Kind is not SyntaxKind.OrKeyword
+                   and not SyntaxKind.AndKeyword
+                   and not SyntaxKind.WhenKeyword;
     }
 
     private ExpressionSyntax ParseMatchLabel()

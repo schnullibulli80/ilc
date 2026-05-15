@@ -255,7 +255,7 @@ public sealed partial class Lowerer
 
         var localSummary = string.Join(
             ", ",
-            locals.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}:{pair.Value.Name}"));
+            locals.OrderBy(pair => pair.Key, SemanticFacts.NameComparer).Select(pair => $"{pair.Key}:{pair.Value.Name}"));
 
         return
             $"Cannot lower unresolved call '{displayName}/{call.Arguments.Count}'. " +
@@ -1054,7 +1054,7 @@ public sealed partial class Lowerer
     private IEnumerable<NamedTypeSymbol> EnumerateTypeHierarchy(NamedTypeSymbol type)
     {
         var current = type;
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(SemanticFacts.NameComparer);
         while (visited.Add(current.Name))
         {
             yield return current;
@@ -1108,12 +1108,12 @@ public sealed partial class Lowerer
                 {
                     var staticMethod = (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(method =>
                             method.IsStatic &&
-                            method.Name == qualifiedTarget.Parts[^1].Text &&
+                            SemanticFacts.NameEquals(method.Name, qualifiedTarget.Parts[^1].Text) &&
                             SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count))
                         ?? _knownMethods.FirstOrDefault(method =>
                             method.IsStatic &&
-                            method.DeclaringTypeName == targetType.Name &&
-                            method.Name == qualifiedTarget.Parts[^1].Text &&
+                            SemanticFacts.NameEquals(method.DeclaringTypeName, targetType.Name) &&
+                            SemanticFacts.NameEquals(method.Name, qualifiedTarget.Parts[^1].Text) &&
                             SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
                     if (staticMethod is not null)
                     {
@@ -1124,14 +1124,14 @@ public sealed partial class Lowerer
 
             if (SemanticFacts.TryResolveValueReceiverType(qualifiedTarget, locals, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes) is { } valueReceiverType)
             {
-                var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == valueReceiverType.Name);
+                var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => SemanticFacts.NameEquals(type.Name, valueReceiverType.Name));
                 if (namedReceiverType is not null)
                 {
                     var instanceMethod = EnumerateTypeHierarchy(namedReceiverType)
                         .SelectMany(type => _knownMethods.Where(method =>
                             !method.IsStatic &&
-                            method.DeclaringTypeName == type.Name &&
-                            method.Name == qualifiedTarget.Parts[^1].Text &&
+                            SemanticFacts.NameEquals(method.DeclaringTypeName, type.Name) &&
+                            SemanticFacts.NameEquals(method.Name, qualifiedTarget.Parts[^1].Text) &&
                             SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count)))
                         .FirstOrDefault();
                     if (instanceMethod is not null)
@@ -1149,12 +1149,12 @@ public sealed partial class Lowerer
             {
                 var staticMethod = (targetType as NamedTypeSymbol)?.Methods.FirstOrDefault(method =>
                         method.IsStatic &&
-                        method.Name == memberAccess.MemberName.Text &&
+                        SemanticFacts.NameEquals(method.Name, memberAccess.MemberName.Text) &&
                         SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count))
                     ?? _knownMethods.FirstOrDefault(method =>
                         method.IsStatic &&
-                        method.DeclaringTypeName == targetType.Name &&
-                        method.Name == memberAccess.MemberName.Text &&
+                        SemanticFacts.NameEquals(method.DeclaringTypeName, targetType.Name) &&
+                        SemanticFacts.NameEquals(method.Name, memberAccess.MemberName.Text) &&
                         SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count));
                 if (staticMethod is not null)
                 {
@@ -1163,14 +1163,14 @@ public sealed partial class Lowerer
             }
 
             var receiverType = SemanticFacts.InferExpressionType(memberAccess.Receiver, locals, _knownMethods, _knownFields, _knownConstants, _knownProperties, currentMethod, _knownTypes);
-            var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == receiverType.Name);
+            var namedReceiverType = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => SemanticFacts.NameEquals(type.Name, receiverType.Name));
             if (namedReceiverType is not null)
             {
                 var instanceMethod = EnumerateTypeHierarchy(namedReceiverType)
                     .SelectMany(type => _knownMethods.Where(method =>
                         !method.IsStatic &&
-                        method.DeclaringTypeName == type.Name &&
-                        method.Name == memberAccess.MemberName.Text &&
+                        SemanticFacts.NameEquals(method.DeclaringTypeName, type.Name) &&
+                        SemanticFacts.NameEquals(method.Name, memberAccess.MemberName.Text) &&
                         SemanticFacts.SupportsArgumentCount(method, call.Arguments.Count)))
                     .FirstOrDefault();
                 if (instanceMethod is not null)

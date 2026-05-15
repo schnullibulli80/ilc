@@ -15,8 +15,8 @@ public static partial class SemanticFacts
         if (name.Parts.Count == 1 && currentMethod?.DeclaringTypeName is not null)
         {
             var sameTypeField = knownFields.FirstOrDefault(field =>
-                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                field.Name == displayName &&
+                NameEquals(field.DeclaringTypeName, currentMethod.DeclaringTypeName )&&
+                NameEquals(field.Name, displayName )&&
                 (field.IsStatic || !currentMethod.IsStatic));
             if (sameTypeField is not null)
             {
@@ -25,7 +25,7 @@ public static partial class SemanticFacts
         }
 
         var fields = knownFields.ToArray();
-        var locals = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
+        var locals = new Dictionary<string, TypeSymbol>(NameComparer);
         if (currentMethod?.DeclaringTypeName is not null)
         {
             foreach (var parameter in currentMethod.Parameters)
@@ -45,8 +45,8 @@ public static partial class SemanticFacts
             var instanceField = GetTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => fields.Where(field =>
                     !field.IsStatic &&
-                    field.DeclaringTypeName == knownType.Name &&
-                    field.Name == name.Parts[^1].Text))
+                    NameEquals(field.DeclaringTypeName, knownType.Name )&&
+                    NameEquals(field.Name, name.Parts[^1].Text)))
                 .FirstOrDefault();
             if (instanceField is not null)
             {
@@ -54,12 +54,12 @@ public static partial class SemanticFacts
             }
         }
 
-        if (name.Parts.Count >= 2 && name.Parts[0].Text == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+        if (name.Parts.Count >= 2 && NameEquals(name.Parts[0].Text, "self") && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
         {
             return fields.FirstOrDefault(field =>
                 !field.IsStatic &&
-                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                field.Name == name.Parts[1].Text);
+                NameEquals(field.DeclaringTypeName, currentMethod.DeclaringTypeName )&&
+                NameEquals(field.Name, name.Parts[1].Text));
         }
 
         var lastSeparator = displayName.LastIndexOf('.');
@@ -73,14 +73,14 @@ public static partial class SemanticFacts
                 : qualifier;
 
             return FindFieldsByDeclaringType(fields, declaringTypeName)
-                .FirstOrDefault(field => field.IsStatic && field.Name == fieldName);
+                .FirstOrDefault(field => field.IsStatic && NameEquals(field.Name, fieldName));
         }
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
             var sameTypeField = FindFieldsByDeclaringType(fields, currentMethod.DeclaringTypeName)
                 .FirstOrDefault(field =>
-                    field.Name == displayName &&
+                    NameEquals(field.Name, displayName )&&
                     (field.IsStatic || !currentMethod.IsStatic));
             if (sameTypeField is not null)
             {
@@ -97,11 +97,11 @@ public static partial class SemanticFacts
         MethodSymbol? currentMethod)
     {
         var displayName = name.ToDisplayString();
-        if (name.Parts.Count >= 2 && name.Parts[0].Text == "self" && currentMethod?.DeclaringTypeName is not null)
+        if (name.Parts.Count >= 2 && NameEquals(name.Parts[0].Text, "self") && currentMethod?.DeclaringTypeName is not null)
         {
             return knownFields.FirstOrDefault(field =>
-                field.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                field.Name == name.Parts[1].Text);
+                NameEquals(field.DeclaringTypeName, currentMethod.DeclaringTypeName )&&
+                NameEquals(field.Name, name.Parts[1].Text));
         }
 
         var lastSeparator = displayName.LastIndexOf('.');
@@ -115,13 +115,13 @@ public static partial class SemanticFacts
                 : qualifier;
 
             return FindFieldsByDeclaringType(knownFields, declaringTypeName)
-                .FirstOrDefault(field => field.Name == fieldName);
+                .FirstOrDefault(field => NameEquals(field.Name, fieldName));
         }
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
             return FindFieldsByDeclaringType(knownFields, currentMethod.DeclaringTypeName)
-                .FirstOrDefault(field => field.Name == displayName);
+                .FirstOrDefault(field => NameEquals(field.Name, displayName));
         }
 
         return null;
@@ -143,20 +143,20 @@ public static partial class SemanticFacts
             return GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => knownType.Properties
                     .Where(property =>
-                        property.Name == name.Parts[^1].Text &&
+                        NameEquals(property.Name, name.Parts[^1].Text )&&
                         !property.IsStatic)
                     .Concat(properties.Where(property =>
-                        property.DeclaringTypeName == knownType.Name &&
-                        property.Name == name.Parts[^1].Text &&
+                        NameEquals(property.DeclaringTypeName, knownType.Name )&&
+                        NameEquals(property.Name, name.Parts[^1].Text )&&
                         !property.IsStatic)))
                 .FirstOrDefault();
         }
 
-        if (name.Parts.Count >= 2 && name.Parts[0].Text == "self" && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
+        if (name.Parts.Count >= 2 && NameEquals(name.Parts[0].Text, "self") && currentMethod?.DeclaringTypeName is not null && !currentMethod.IsStatic)
         {
             return properties.FirstOrDefault(property =>
-                property.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                property.Name == name.Parts[^1].Text &&
+                NameEquals(property.DeclaringTypeName, currentMethod.DeclaringTypeName )&&
+                NameEquals(property.Name, name.Parts[^1].Text )&&
                 !property.IsStatic);
         }
 
@@ -173,15 +173,15 @@ public static partial class SemanticFacts
 
             return properties.FirstOrDefault(property =>
                 property.IsStatic &&
-                property.DeclaringTypeName == declaringTypeName &&
-                property.Name == propertyName);
+                NameEquals(property.DeclaringTypeName, declaringTypeName )&&
+                NameEquals(property.Name, propertyName));
         }
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
             return properties.FirstOrDefault(property =>
-                property.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                property.Name == displayName &&
+                NameEquals(property.DeclaringTypeName, currentMethod.DeclaringTypeName )&&
+                NameEquals(property.Name, displayName )&&
                 (property.IsStatic || !currentMethod.IsStatic));
         }
 
@@ -203,8 +203,8 @@ public static partial class SemanticFacts
         {
             var instanceConstant = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => constants.Where(constant =>
-                    constant.DeclaringTypeName == knownType.Name &&
-                    constant.Name == name.Parts[^1].Text &&
+                    NameEquals(constant.DeclaringTypeName, knownType.Name )&&
+                    NameEquals(constant.Name, name.Parts[^1].Text )&&
                     constant.IsStatic))
                 .FirstOrDefault();
             if (instanceConstant is not null)
@@ -226,15 +226,15 @@ public static partial class SemanticFacts
 
             return constants.FirstOrDefault(constant =>
                 constant.IsStatic &&
-                constant.DeclaringTypeName == declaringTypeName &&
-                constant.Name == constantName);
+                NameEquals(constant.DeclaringTypeName, declaringTypeName )&&
+                NameEquals(constant.Name, constantName));
         }
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
             var sameTypeConstant = constants.FirstOrDefault(constant =>
-                constant.DeclaringTypeName == currentMethod.DeclaringTypeName &&
-                constant.Name == displayName &&
+                NameEquals(constant.DeclaringTypeName, currentMethod.DeclaringTypeName )&&
+                NameEquals(constant.Name, displayName )&&
                 constant.IsStatic);
             if (sameTypeConstant is not null)
             {
@@ -244,7 +244,7 @@ public static partial class SemanticFacts
 
         return constants.FirstOrDefault(constant =>
             constant.DeclaringTypeName is null &&
-            constant.Name == displayName);
+            NameEquals(constant.Name, displayName));
     }
 
     public static bool IsConstantExpression(
@@ -348,7 +348,7 @@ public static partial class SemanticFacts
         }
 
         if (name.Parts.Count == 1 &&
-            displayName == "self" &&
+            NameEquals(displayName, "self") &&
             currentMethod?.DeclaringTypeName is not null &&
             !currentMethod.IsStatic)
         {
@@ -361,7 +361,7 @@ public static partial class SemanticFacts
         {
             var sameTypeProperty = FindPropertiesByDeclaringType(knownProperties, currentMethod.DeclaringTypeName)
                 .FirstOrDefault(property =>
-                    property.Name == displayName &&
+                    NameEquals(property.Name, displayName )&&
                     (property.IsStatic || !currentMethod.IsStatic));
             if (sameTypeProperty is not null)
             {
@@ -370,7 +370,7 @@ public static partial class SemanticFacts
 
             var sameTypeField = FindFieldsByDeclaringType(knownFields, currentMethod.DeclaringTypeName)
                 .FirstOrDefault(field =>
-                    field.Name == displayName &&
+                    NameEquals(field.Name, displayName )&&
                     (field.IsStatic || !currentMethod.IsStatic));
             if (sameTypeField is not null)
             {
@@ -379,7 +379,7 @@ public static partial class SemanticFacts
 
             var sameTypeConstant = FindConstantsByDeclaringType(knownConstants, currentMethod.DeclaringTypeName)
                 .FirstOrDefault(constant =>
-                    constant.Name == displayName &&
+                    NameEquals(constant.Name, displayName )&&
                     constant.IsStatic);
             if (sameTypeConstant is not null)
             {
@@ -409,11 +409,11 @@ public static partial class SemanticFacts
             var instanceProperty = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => knownType.Properties
                     .Where(property =>
-                        property.Name == name.Parts[^1].Text &&
+                        NameEquals(property.Name, name.Parts[^1].Text )&&
                         !property.IsStatic)
                     .Concat(FindPropertiesByDeclaringType(knownProperties, knownType.Name)
                         .Where(property =>
-                            property.Name == name.Parts[^1].Text &&
+                            NameEquals(property.Name, name.Parts[^1].Text )&&
                             !property.IsStatic)))
                 .FirstOrDefault();
             if (instanceProperty is not null)
@@ -424,11 +424,11 @@ public static partial class SemanticFacts
             var instanceField = GetReceiverTypeHierarchy(valueReceiverType, knownTypes ?? [])
                 .SelectMany(knownType => knownType.Fields
                     .Where(field =>
-                        field.Name == name.Parts[^1].Text &&
+                        NameEquals(field.Name, name.Parts[^1].Text )&&
                         !field.IsStatic)
                     .Concat(FindFieldsByDeclaringType(knownFields, knownType.Name)
                         .Where(field =>
-                            field.Name == name.Parts[^1].Text &&
+                            NameEquals(field.Name, name.Parts[^1].Text )&&
                             !field.IsStatic)))
                 .FirstOrDefault();
             if (instanceField is not null)
@@ -446,7 +446,7 @@ public static partial class SemanticFacts
         var staticProperty = FindPropertiesByDeclaringType(knownProperties, declaringTypeName)
             .FirstOrDefault(property =>
                 property.IsStatic &&
-                property.Name == memberName);
+                NameEquals(property.Name, memberName));
         if (staticProperty is not null)
         {
             return staticProperty.Type;
@@ -455,7 +455,7 @@ public static partial class SemanticFacts
         var staticField = FindFieldsByDeclaringType(knownFields, declaringTypeName)
             .FirstOrDefault(field =>
                 field.IsStatic &&
-                field.Name == memberName);
+                NameEquals(field.Name, memberName));
         return staticField?.Type;
     }
 
@@ -472,7 +472,7 @@ public static partial class SemanticFacts
         var qualifiedTarget = ParseQualifiedMethodTarget(name);
         var candidates = FindMethodsByName(knownMethods, qualifiedTarget.MethodName)
             .Where(method =>
-                (qualifiedTarget.DeclaringTypeName is null || method.DeclaringTypeName == qualifiedTarget.DeclaringTypeName))
+                (qualifiedTarget.DeclaringTypeName is null || NameEquals(method.DeclaringTypeName, qualifiedTarget.DeclaringTypeName)))
             .ToArray();
 
         if (qualifiedTarget.DeclaringTypeName is not null)
@@ -482,7 +482,7 @@ public static partial class SemanticFacts
 
         if (currentMethod?.DeclaringTypeName is not null)
         {
-            var sameTypeCandidate = candidates.FirstOrDefault(method => method.DeclaringTypeName == currentMethod.DeclaringTypeName);
+            var sameTypeCandidate = candidates.FirstOrDefault(method => NameEquals(method.DeclaringTypeName, currentMethod.DeclaringTypeName));
             if (sameTypeCandidate is not null)
             {
                 return sameTypeCandidate;

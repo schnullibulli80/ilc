@@ -211,6 +211,12 @@ Supported statement forms in the bootstrap compiler:
 - `try` with `except` and/or `finally`, including `on`
 - `include(...)` / `exclude(...)`
 
+Functions expose an implicit `Result` value with the function return type.
+`Result := ...` updates the function result and continues executing. `return`
+and `exit` terminate the routine; `return <expression>` and `exit <expression>`
+also assign the function result before terminating. Procedures do not expose
+`Result`.
+
 `with` is implemented as a compile-time rewrite that scopes member access to the
 active receiver.
 

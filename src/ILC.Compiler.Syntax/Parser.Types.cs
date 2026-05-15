@@ -172,7 +172,7 @@ internal sealed partial class Parser
                 continue;
             }
 
-            if (Current.Kind == SyntaxKind.DotToken && Peek(1).Kind == SyntaxKind.IdentifierToken)
+            if (Current.Kind == SyntaxKind.DotToken && IsIdentifierLike(Peek(1).Kind))
             {
                 var dotToken = NextToken();
                 var memberName = Match(SyntaxKind.IdentifierToken);

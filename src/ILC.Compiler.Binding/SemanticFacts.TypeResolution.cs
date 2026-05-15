@@ -7,7 +7,7 @@ public static partial class SemanticFacts
 {
     public static TypeSymbol? ResolveTypeReference(string displayName, IEnumerable<TypeSymbol> knownTypes)
     {
-        if (displayName.StartsWith("set of ", StringComparison.Ordinal))
+        if (displayName.StartsWith("set of ", NameComparison))
         {
             var elementType = ResolveTypeReference(displayName["set of ".Length..], knownTypes);
             return elementType is not null ? CreateSetType(elementType) : null;
@@ -33,7 +33,7 @@ public static partial class SemanticFacts
                 : genericTypeName;
             var definition = FindTypesByName(knownTypes, simpleTypeName)
                 .OfType<NamedTypeSymbol>()
-                .Where(type => type.Name == simpleTypeName && type.GenericArity == resolvedArguments.Length)
+                .Where(type => NameEquals(type.Name, simpleTypeName) && type.GenericArity == resolvedArguments.Length)
                 .OrderByDescending(GetGenericDefinitionRichness)
                 .FirstOrDefault();
             if (definition is null)
@@ -77,7 +77,7 @@ public static partial class SemanticFacts
 
         var substitution = genericParameters
             .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
-            .ToDictionary(entry => entry.Name, entry => entry.argument, StringComparer.Ordinal);
+            .ToDictionary(entry => entry.Name, entry => entry.argument, NameComparer);
 
         return ResolveTypeReferenceWithSubstitution(displayName, substitution, knownTypes);
     }
@@ -88,7 +88,7 @@ public static partial class SemanticFacts
             ? displayName[(displayName.LastIndexOf('.') + 1)..]
             : displayName;
 
-        return TypeSymbol.BuiltInTypes.FirstOrDefault(type => type.Name == typeName);
+        return TypeSymbol.BuiltInTypes.FirstOrDefault(type => NameEquals(type.Name, typeName));
     }
 
     public static bool IsCompatibleReferenceType(TypeSymbol sourceType, TypeSymbol targetType, IReadOnlyList<TypeSymbol>? knownTypes = null)
@@ -103,7 +103,7 @@ public static partial class SemanticFacts
             return false;
         }
 
-        if (targetType.Name == TypeSymbol.Object.Name || sourceType.Name == targetType.Name)
+        if (NameEquals(targetType.Name, TypeSymbol.Object.Name) || NameEquals(sourceType.Name, targetType.Name))
         {
             return true;
         }
@@ -120,19 +120,19 @@ public static partial class SemanticFacts
         {
             if (resolvedSourceType.IsInterface)
             {
-                return GetInterfaceHierarchy(resolvedSourceType, resolvedTypes).Any(candidate => candidate.Name == resolvedTargetType.Name);
+                return GetInterfaceHierarchy(resolvedSourceType, resolvedTypes).Any(candidate => NameEquals(candidate.Name, resolvedTargetType.Name));
             }
 
             foreach (var candidateType in GetTypeHierarchy(resolvedSourceType, resolvedTypes))
             {
-                if (candidateType.Name == resolvedTargetType.Name)
+                if (NameEquals(candidateType.Name, resolvedTargetType.Name))
                 {
                     return true;
                 }
 
                 foreach (var implementedInterface in candidateType.InterfaceTypes)
                 {
-                    if (GetInterfaceHierarchy(implementedInterface, resolvedTypes).Any(candidate => candidate.Name == resolvedTargetType.Name))
+                    if (GetInterfaceHierarchy(implementedInterface, resolvedTypes).Any(candidate => NameEquals(candidate.Name, resolvedTargetType.Name)))
                     {
                         return true;
                     }
@@ -142,7 +142,7 @@ public static partial class SemanticFacts
             return false;
         }
 
-        return GetTypeHierarchy(resolvedSourceType, resolvedTypes).Any(candidate => candidate.Name == resolvedTargetType.Name);
+        return GetTypeHierarchy(resolvedSourceType, resolvedTypes).Any(candidate => NameEquals(candidate.Name, resolvedTargetType.Name));
     }
 
     public static bool IsOpenGenericDefinition(TypeSymbol type) =>
@@ -176,7 +176,7 @@ public static partial class SemanticFacts
             return exactReplacement;
         }
 
-        if (displayName.StartsWith("set of ", StringComparison.Ordinal))
+        if (displayName.StartsWith("set of ", NameComparison))
         {
             var elementType = ResolveTypeReferenceWithSubstitution(displayName["set of ".Length..], substitution, knownTypes);
             return elementType is not null ? CreateSetType(elementType) : null;
@@ -203,7 +203,7 @@ public static partial class SemanticFacts
                 : genericTypeName;
             var definition = FindTypesByName(knownTypes, simpleTypeName)
                 .OfType<NamedTypeSymbol>()
-                .FirstOrDefault(type => type.Name == simpleTypeName && type.GenericArity == resolvedArguments.Length);
+                .FirstOrDefault(type => NameEquals(type.Name, simpleTypeName) && type.GenericArity == resolvedArguments.Length);
             if (definition is null)
             {
                 return null;
@@ -221,7 +221,7 @@ public static partial class SemanticFacts
         knownTypes is IIndexedSymbolList<TypeSymbol> indexedTypes &&
         indexedTypes.ByName.TryGetValue(typeName, out var types)
             ? types
-            : knownTypes.Where(type => type.Name == typeName);
+            : knownTypes.Where(type => NameEquals(type.Name, typeName));
 
     private static TypeSymbol? TryResolveExactTypeReference(
         string displayName,
@@ -286,7 +286,7 @@ public static partial class SemanticFacts
     {
         definition = knownTypes
             .OfType<NamedTypeSymbol>()
-            .Where(candidate => candidate.Name == definition.Name && candidate.GenericArity == definition.GenericArity)
+            .Where(candidate => NameEquals(candidate.Name, definition.Name) && candidate.GenericArity == definition.GenericArity)
             .OrderByDescending(GetGenericDefinitionRichness)
             .FirstOrDefault() ?? definition;
 
@@ -297,7 +297,7 @@ public static partial class SemanticFacts
 
         var substitution = definition.GenericParameters
             .Zip(typeArguments, (parameter, argument) => (parameter.Name, argument))
-            .ToDictionary(entry => entry.Name, entry => entry.argument);
+            .ToDictionary(entry => entry.Name, entry => entry.argument, NameComparer);
 
         var closedName = $"{definition.Name}<{string.Join(", ", typeArguments.Select(argument => argument.Name))}>";
         var fields = definition.Fields
@@ -332,16 +332,16 @@ public static partial class SemanticFacts
                     },
                 GetterMethod = property.GetterMethod is null
                     ? null
-                    : methods.FirstOrDefault(method => method.Name == property.GetterMethod.Name && method.Parameters.Count == property.GetterMethod.Parameters.Count),
+                    : methods.FirstOrDefault(method => NameEquals(method.Name, property.GetterMethod.Name) && method.Parameters.Count == property.GetterMethod.Parameters.Count),
                 SetterMethod = property.SetterMethod is null
                     ? null
-                    : methods.FirstOrDefault(method => method.Name == property.SetterMethod.Name && method.Parameters.Count == property.SetterMethod.Parameters.Count),
+                    : methods.FirstOrDefault(method => NameEquals(method.Name, property.SetterMethod.Name) && method.Parameters.Count == property.SetterMethod.Parameters.Count),
                 ReadField = property.ReadField is null
                     ? null
-                    : fields.FirstOrDefault(field => field.Name == property.ReadField.Name),
+                    : fields.FirstOrDefault(field => NameEquals(field.Name, property.ReadField.Name)),
                 WriteField = property.WriteField is null
                     ? null
-                    : fields.FirstOrDefault(field => field.Name == property.WriteField.Name),
+                    : fields.FirstOrDefault(field => NameEquals(field.Name, property.WriteField.Name)),
                 DeclaringTypeName = closedName
             })
             .ToArray();
@@ -414,7 +414,7 @@ public static partial class SemanticFacts
                 : genericTypeName;
             var definition = knownTypes
                 .OfType<NamedTypeSymbol>()
-                .Where(candidate => candidate.Name == simpleTypeName && candidate.GenericArity == substitutedArguments.Length)
+                .Where(candidate => NameEquals(candidate.Name, simpleTypeName) && candidate.GenericArity == substitutedArguments.Length)
                 .OrderByDescending(GetGenericDefinitionRichness)
                 .FirstOrDefault();
             if (definition is not null)

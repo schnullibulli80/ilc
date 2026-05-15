@@ -33,7 +33,7 @@ public sealed partial class Lowerer
     private static readonly object SyntaxNodePropertyCacheLock = new();
     private readonly LoweringProfiler? _profiler;
     private readonly Stack<(string BreakLabel, string ContinueLabel)> _loopLabels = new();
-    private readonly Dictionary<string, TypeSymbol?> _typeReferenceCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TypeSymbol?> _typeReferenceCache = new(SemanticFacts.NameComparer);
     private Dictionary<string, IrValue>? _localTypeCacheSource;
     private Dictionary<string, TypeSymbol>? _localTypeCache;
     private readonly Dictionary<object, TextSpan?> _syntaxSpanCache = new(ReferenceEqualityComparer.Instance);
@@ -100,9 +100,9 @@ public sealed partial class Lowerer
 
         InvalidateLocalTypeCache();
         var registers = new List<IrValue>();
-        var registerByName = new Dictionary<string, IrValue>(StringComparer.Ordinal);
-        var localTypes = new Dictionary<string, TypeSymbol>(StringComparer.Ordinal);
-        var arrayShapesByName = new Dictionary<string, IReadOnlyList<IrValue>>(StringComparer.Ordinal);
+        var registerByName = new Dictionary<string, IrValue>(SemanticFacts.NameComparer);
+        var localTypes = new Dictionary<string, TypeSymbol>(SemanticFacts.NameComparer);
+        var arrayShapesByName = new Dictionary<string, IReadOnlyList<IrValue>>(SemanticFacts.NameComparer);
         var exceptionHandlers = new List<IrExceptionHandler>();
         var debugVariables = new List<DebugVariableBuilder>();
         var debugSourceMaps = new List<IrDebugSourceMap>();
@@ -139,6 +139,9 @@ public sealed partial class Lowerer
             var returnIndex = (ushort)registers.Count;
             returnRegister = new IrValue($"r{returnIndex}", method.ReturnType, returnIndex);
             registers.Add(returnRegister);
+            SetRegisterLocalType(registerByName, "Result", returnRegister);
+            localTypes["Result"] = method.ReturnType;
+            debugVariables.Add(new DebugVariableBuilder("Result", method.ReturnType, returnRegister.Index, 0, IrDebugVariableKind.Local));
         }
 
         if (method.Declaration is null)
@@ -193,12 +196,12 @@ public sealed partial class Lowerer
 
         _localTypeCacheSource = registerByName;
         _localTypeCacheCount = registerByName.Count;
-        _localTypeCache = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        _localTypeCache = registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, SemanticFacts.NameComparer);
         return _localTypeCache;
     }
 
     private static Dictionary<string, TypeSymbol> GetLocalTypes(IReadOnlyDictionary<string, IrValue> registerByName) =>
-        registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
+        registerByName.ToDictionary(pair => pair.Key, pair => pair.Value.Type, SemanticFacts.NameComparer);
 
     private LoweringProfiler.ProfileScope Profile(string name) =>
         _profiler?.Enter(name) ?? default;
