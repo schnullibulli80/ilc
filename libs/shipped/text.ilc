@@ -177,20 +177,20 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Join(separator: String; values: array of String): String;
   begin
-    var result := '';
+    Result := '';
     var index := 0;
     while index < values.Length do
     begin
       if index > 0 then
       begin
-        result := result + separator;
+        Result := Result + separator;
       end;
 
-      result := result + values[index];
+      Result := Result + values[index];
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -208,15 +208,15 @@ begin
       return '';
     end;
 
-    var result := '';
+    Result := '';
     var index := 0;
     while index < count do
     begin
-      result := result + value;
+      Result := Result + value;
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -354,7 +354,7 @@ begin
     end;
 
     var normalized := NormalizeLineEndings(value);
-    var result := '';
+    Result := '';
     var sawWhitespace := false;
     var index := 0;
     while index < normalized.Length do
@@ -362,23 +362,23 @@ begin
       var current := normalized.Substring(index, 1);
       if IsWhitespaceChar(current) then
       begin
-        sawWhitespace := result <> '';
+        sawWhitespace := Result <> '';
       end
       else
       begin
         if sawWhitespace then
         begin
-          result := result + ' ';
+          Result := Result + ' ';
           sawWhitespace := false;
         end;
 
-        result := result + current;
+        Result := Result + current;
       end;
 
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————

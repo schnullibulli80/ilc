@@ -401,7 +401,7 @@ public static partial class SemanticFacts
         var valueReceiverType = TryResolveValueReferenceType(qualifier, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
         if (valueReceiverType is not null)
         {
-            if (name.Parts[^1].Text == "Length" && HasLengthProperty(valueReceiverType))
+            if (NameEquals(name.Parts[^1].Text, "Length") && HasLengthProperty(valueReceiverType))
             {
                 return TypeSymbol.Integer;
             }

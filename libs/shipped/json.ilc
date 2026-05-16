@@ -674,13 +674,13 @@ begin
   begin
     Expect('"');
 
-    var result := '';
+    Result := '';
     while HasMore() do
     begin
       var current := Read();
       if current = '"' then
       begin
-        return result;
+        return Result;
       end;
 
       if current = '\' then
@@ -688,23 +688,23 @@ begin
         var escaped := Read();
         if escaped = '"' or escaped = '\' or escaped = '/' then
         begin
-          result := result + escaped;
+          Result := Result + escaped;
         end
         else if escaped = 'n' then
         begin
-          result := result + NewLine();
+          Result := Result + NewLine();
         end
         else if escaped = 'r' then
         begin
-          result := result + NewLine();
+          Result := Result + NewLine();
         end
         else if escaped = 't' then
         begin
-          result := result + Tab();
+          Result := Result + Tab();
         end
         else if escaped = 'b' or escaped = 'f' then
         begin
-          result := result + ' ';
+          Result := Result + ' ';
         end
         else
         begin
@@ -713,7 +713,7 @@ begin
       end
       else
       begin
-        result := result + current;
+        Result := Result + current;
       end;
     end;
 
@@ -780,20 +780,20 @@ begin
   private function ParseArray: JsonValue;
   begin
     Expect('[');
-    var result := new JsonArray();
+    var arrayResult := new JsonArray();
     SkipWhitespace();
     if HasMore() then
     begin
       if Peek() = ']' then
       begin
         Index := Index + 1;
-        return result;
+        return arrayResult;
       end;
     end;
 
     while true do
     begin
-      result.Add(ParseValue());
+      arrayResult.Add(ParseValue());
       SkipWhitespace();
       if HasMore() then
       begin
@@ -814,7 +814,7 @@ begin
     end;
 
     Expect(']');
-    return result;
+    return arrayResult;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -827,14 +827,14 @@ begin
   private function ParseObject: JsonValue;
   begin
     Expect('{');
-    var result := new JsonObject();
+    var objectResult := new JsonObject();
     SkipWhitespace();
     if HasMore() then
     begin
       if Peek() = '}' then
       begin
         Index := Index + 1;
-        return result;
+        return objectResult;
       end;
     end;
 
@@ -845,7 +845,7 @@ begin
       SkipWhitespace();
       Expect(':');
       SkipWhitespace();
-      result.Add(name, ParseValue());
+      objectResult.Add(name, ParseValue());
       SkipWhitespace();
       if HasMore() then
       begin
@@ -866,7 +866,7 @@ begin
     end;
 
     Expect('}');
-    return result;
+    return objectResult;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -937,14 +937,14 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function ParseDocument: JsonValue;
   begin
-    var result := ParseValue();
+    Result := ParseValue();
     SkipWhitespace();
     if HasMore() then
     begin
       raise new JsonException('Unexpected trailing JSON content.');
     end;
 
-    return result;
+    return Result;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -993,36 +993,36 @@ begin
       return '';
     end;
 
-    var result := '';
+    Result := '';
     var index := 0;
     while index < text.Length do
     begin
       var current := text.Substring(index, 1);
       if current = '"' then
       begin
-        result := result + '\' + '"';
+        Result := Result + '\' + '"';
       end
       else if current = '\' then
       begin
-        result := result + '\' + '\';
+        Result := Result + '\' + '\';
       end
       else if current = NewLine() then
       begin
-        result := result + '\' + 'n';
+        Result := Result + '\' + 'n';
       end
       else if current = Tab() then
       begin
-        result := result + '\' + 't';
+        Result := Result + '\' + 't';
       end
       else
       begin
-        result := result + current;
+        Result := Result + current;
       end;
 
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1034,20 +1034,20 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function StringifyArray(value: JsonArray): String;
   begin
-    var result := '[';
+    Result := '[';
     var index := 0;
     while index < value.Count do
     begin
       if index > 0 then
       begin
-        result := result + ',';
+        Result := Result + ',';
       end;
 
-      result := result + Stringify(value[index]);
+      Result := Result + Stringify(value[index]);
       index := index + 1;
     end;
 
-    return result + ']';
+    return Result + ']';
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1059,20 +1059,20 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   private static function StringifyObject(value: JsonObject): String;
   begin
-    var result := '{';
+    Result := '{';
     var index := 0;
     while index < value.Count do
     begin
       if index > 0 then
       begin
-        result := result + ',';
+        Result := Result + ',';
       end;
 
-      result := result + '"' + EscapeString(value.NameAt(index)) + '":' + Stringify(value.ValueAt(index));
+      Result := Result + '"' + EscapeString(value.NameAt(index)) + '":' + Stringify(value.ValueAt(index));
       index := index + 1;
     end;
 
-    return result + '}';
+    return Result + '}';
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————

@@ -25,10 +25,15 @@ public sealed partial class Binder
         currentValidationProfiler = profiler;
         try
         {
+            using (Profile(profiler, "ValidateSemantics.DeclarationNameCollisions"))
+            {
+                ValidateDeclarationNameCollisions(members, diagnostics);
+            }
+
             Dictionary<string, TypeSymbol> topLevelScope;
             using (Profile(profiler, "ValidateSemantics.BuildTopLevelScope"))
             {
-                topLevelScope = globals.ToDictionary(global => global.Name, global => global.Type, SemanticFacts.NameComparer);
+                topLevelScope = BuildTopLevelScope(globals);
             }
 
             foreach (var member in members)
@@ -81,6 +86,99 @@ public sealed partial class Binder
         finally
         {
             currentValidationProfiler = previousValidationProfiler;
+        }
+    }
+
+    private static Dictionary<string, TypeSymbol> BuildTopLevelScope(IReadOnlyList<GlobalVariableSymbol> globals)
+    {
+        var scope = new Dictionary<string, TypeSymbol>(SemanticFacts.NameComparer);
+        foreach (var global in globals)
+        {
+            scope[global.Name] = global.Type;
+        }
+
+        return scope;
+    }
+
+    private static void ValidateDeclarationNameCollisions(
+        IReadOnlyList<MemberSyntax> members,
+        DiagnosticBag diagnostics)
+    {
+        var typeNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        var topLevelValueNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+
+        foreach (var member in members)
+        {
+            switch (member)
+            {
+                case TopLevelVariableDeclarationSyntax variableDeclaration:
+                    foreach (var declarator in variableDeclaration.Declarators)
+                    {
+                        ReportNameCollisionIfNeeded(topLevelValueNames, declarator.Identifier, "top-level value declarations", diagnostics, reportExactDuplicate: true);
+                    }
+                    break;
+                case TopLevelConstantDeclarationSyntax constantDeclaration:
+                    foreach (var declarator in constantDeclaration.Declarators)
+                    {
+                        ReportNameCollisionIfNeeded(topLevelValueNames, declarator.Identifier, "top-level value declarations", diagnostics, reportExactDuplicate: true);
+                    }
+                    break;
+                case ClassDeclarationSyntax classDeclaration:
+                    ReportTypeDeclarationNameCollisionIfNeeded(typeNames, classDeclaration.Identifier, classDeclaration.TypeParameters, diagnostics);
+                    ValidateTypeParameterNameCollisions(classDeclaration.Identifier.Text, classDeclaration.TypeParameters, diagnostics);
+                    break;
+                case InterfaceDeclarationSyntax interfaceDeclaration:
+                    ReportTypeDeclarationNameCollisionIfNeeded(typeNames, interfaceDeclaration.Identifier, interfaceDeclaration.TypeParameters, diagnostics);
+                    ValidateTypeParameterNameCollisions(interfaceDeclaration.Identifier.Text, interfaceDeclaration.TypeParameters, diagnostics);
+                    break;
+                case DelegateDeclarationSyntax delegateDeclaration:
+                    ReportTypeDeclarationNameCollisionIfNeeded(typeNames, delegateDeclaration.Identifier, delegateDeclaration.TypeParameters, diagnostics);
+                    ValidateTypeParameterNameCollisions(delegateDeclaration.Identifier.Text, delegateDeclaration.TypeParameters, diagnostics);
+                    break;
+                case EnumDeclarationSyntax enumDeclaration:
+                    ReportTypeDeclarationNameCollisionIfNeeded(typeNames, enumDeclaration.Identifier, null, diagnostics);
+                    ValidateEnumMemberNameCollisions(enumDeclaration, diagnostics);
+                    break;
+            }
+        }
+    }
+
+    private static void ReportTypeDeclarationNameCollisionIfNeeded(
+        Dictionary<string, SyntaxToken> typeNames,
+        SyntaxToken identifier,
+        TypeParameterListSyntax? typeParameters,
+        DiagnosticBag diagnostics)
+    {
+        var arity = typeParameters?.Parameters.Count ?? 0;
+        var key = $"{identifier.Text}/{arity}";
+        ReportNameCollisionIfNeeded(typeNames, key, identifier, "top-level type declarations", diagnostics, reportExactDuplicate: true);
+    }
+
+    private static void ValidateTypeParameterNameCollisions(
+        string declarationName,
+        TypeParameterListSyntax? typeParameters,
+        DiagnosticBag diagnostics)
+    {
+        if (typeParameters is null)
+        {
+            return;
+        }
+
+        var names = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        foreach (var parameter in typeParameters.Parameters)
+        {
+            ReportNameCollisionIfNeeded(names, parameter, $"type parameters of '{declarationName}'", diagnostics, reportExactDuplicate: true);
+        }
+    }
+
+    private static void ValidateEnumMemberNameCollisions(
+        EnumDeclarationSyntax enumDeclaration,
+        DiagnosticBag diagnostics)
+    {
+        var names = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        foreach (var member in enumDeclaration.Members)
+        {
+            ReportNameCollisionIfNeeded(names, member.Identifier, $"enum '{enumDeclaration.Identifier.Text}'", diagnostics, reportExactDuplicate: true);
         }
     }
 
@@ -164,6 +262,11 @@ public sealed partial class Binder
             (baseType, interfaceTypes) = ResolveClassInheritanceTargets(classDeclaration, typeScope);
         }
 
+        using (Profile(profiler, "ValidateClass.NameCollisions"))
+        {
+            ValidateTypeMemberNameCollisions(classDeclaration.Identifier.Text, classDeclaration.Members, diagnostics);
+        }
+
         using (Profile(profiler, "ValidateClass.InterfaceImplementations"))
         {
             foreach (var interfaceType in interfaceTypes)
@@ -205,10 +308,7 @@ public sealed partial class Binder
             foreach (var method in classDeclaration.Members.OfType<MethodDeclarationSyntax>())
             {
                 using var methodProfile = Profile(profiler, $"ValidateClass.Method:{method.Identifier.Text}");
-                var locals = method.Parameters.ToDictionary(
-                    parameter => parameter.Identifier.Text,
-                    parameter => BindType(parameter.TypeName, typeScope),
-                    SemanticFacts.NameComparer);
+                var locals = BuildMethodParameterLocals(method, typeScope, diagnostics);
 
                 var boundMethod = FindMethod(knownMethods, classDeclaration.Identifier.Text, method.Identifier.Text, method.Parameters.Count);
                 if (boundMethod is not null && !boundMethod.IsStatic)
@@ -216,8 +316,8 @@ public sealed partial class Binder
                     locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
                 }
 
-                var resultParameter = method.Parameters.FirstOrDefault(parameter => parameter.Identifier.Text == "Result");
-                if (resultParameter is not null)
+                var resultParameter = method.Parameters.FirstOrDefault(parameter => SemanticFacts.NameEquals(parameter.Identifier.Text, "Result"));
+                if (resultParameter is not null && boundMethod is not null && IsResultAvailable(boundMethod))
                 {
                     diagnostics.Report(
                         "ILC2241",
@@ -315,9 +415,42 @@ public sealed partial class Binder
                     false,
                     false,
                     diagnostics,
-                    profiler);
+                    profiler,
+                    [BuildInitialMethodLocalScope(method)]);
             }
         }
+    }
+
+    private static List<Dictionary<string, SyntaxToken>> CreateNestedLocalScopes(
+        List<Dictionary<string, SyntaxToken>> activeLocalScopes)
+    {
+        var nestedScopes = new List<Dictionary<string, SyntaxToken>>(activeLocalScopes)
+        {
+            new(SemanticFacts.NameComparer)
+        };
+        return nestedScopes;
+    }
+
+    private static List<Dictionary<string, SyntaxToken>> CreateNestedLocalScopesWithName(
+        List<Dictionary<string, SyntaxToken>> activeLocalScopes,
+        SyntaxToken identifier,
+        DiagnosticBag diagnostics)
+    {
+        ReportLocalScopeNameCollisionIfNeeded(activeLocalScopes, identifier, diagnostics);
+        var nestedScopes = CreateNestedLocalScopes(activeLocalScopes);
+        nestedScopes[^1][identifier.Text] = identifier;
+        return nestedScopes;
+    }
+
+    private static Dictionary<string, SyntaxToken> BuildInitialMethodLocalScope(MethodDeclarationSyntax method)
+    {
+        var scopeNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        foreach (var parameter in method.Parameters)
+        {
+            scopeNames[parameter.Identifier.Text] = parameter.Identifier;
+        }
+
+        return scopeNames;
     }
 
     private static void ValidateInterfaceSemantics(
@@ -364,6 +497,8 @@ public sealed partial class Binder
 
         using (Profile(profiler, "ValidateInterface.Members"))
         {
+            ValidateTypeMemberNameCollisions(interfaceDeclaration.Identifier.Text, interfaceDeclaration.Members, diagnostics);
+
             foreach (var member in interfaceDeclaration.Members)
             {
                 switch (member)
@@ -415,6 +550,212 @@ public sealed partial class Binder
                         break;
                 }
             }
+        }
+    }
+
+    private static Dictionary<string, TypeSymbol> BuildMethodParameterLocals(
+        MethodDeclarationSyntax method,
+        IReadOnlyList<TypeSymbol> typeScope,
+        DiagnosticBag diagnostics)
+    {
+        var locals = new Dictionary<string, TypeSymbol>(SemanticFacts.NameComparer);
+        var parameterNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        foreach (var parameter in method.Parameters)
+        {
+            ReportCaseOnlyNameCollisionIfNeeded(
+                parameterNames,
+                parameter.Identifier,
+                $"parameter list of method '{method.Identifier.Text}'",
+                diagnostics,
+                reportExactDuplicate: true);
+            locals[parameter.Identifier.Text] = BindType(parameter.TypeName, typeScope);
+        }
+
+        return locals;
+    }
+
+    private static void ValidateTypeMemberNameCollisions(
+        string typeName,
+        IReadOnlyList<TypeMemberSyntax> members,
+        DiagnosticBag diagnostics)
+    {
+        var valueMembers = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        var methodMembersByArity = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+        var methodSignatures = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
+
+        foreach (var member in members)
+        {
+            switch (member)
+            {
+                case FieldDeclarationSyntax field:
+                    foreach (var declarator in field.Declarators)
+                    {
+                        ReportNameCollisionIfNeeded(valueMembers, declarator.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
+                    }
+                    break;
+                case ConstantDeclarationSyntax constant:
+                    foreach (var declarator in constant.Declarators)
+                    {
+                        ReportNameCollisionIfNeeded(valueMembers, declarator.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
+                    }
+                    break;
+                case PropertyDeclarationSyntax property:
+                    ReportNameCollisionIfNeeded(valueMembers, property.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
+                    break;
+                case MethodDeclarationSyntax method:
+                    ReportCaseOnlyMethodCollisionIfNeeded(methodMembersByArity, method, typeName, diagnostics);
+                    ReportDuplicateMethodSignatureIfNeeded(methodSignatures, method, typeName, diagnostics);
+                    break;
+            }
+        }
+    }
+
+    private static void ReportCaseOnlyMethodCollisionIfNeeded(
+        Dictionary<string, SyntaxToken> methodMembersByArity,
+        MethodDeclarationSyntax method,
+        string typeName,
+        DiagnosticBag diagnostics)
+    {
+        if (method.Keyword.Kind == SyntaxKind.ConstructorKeyword)
+        {
+            return;
+        }
+
+        var signatureKey = $"{method.Identifier.Text}/{method.Parameters.Count}";
+        ReportCaseOnlyNameCollisionIfNeeded(methodMembersByArity, signatureKey, method.Identifier, $"method overload set of type '{typeName}'", diagnostics);
+    }
+
+    private static void ReportDuplicateMethodSignatureIfNeeded(
+        Dictionary<string, SyntaxToken> methodSignatures,
+        MethodDeclarationSyntax method,
+        string typeName,
+        DiagnosticBag diagnostics)
+    {
+        var signatureKey = GetMethodSignatureKey(method);
+        if (!methodSignatures.TryGetValue(signatureKey, out _))
+        {
+            methodSignatures[signatureKey] = method.Identifier;
+            return;
+        }
+
+        diagnostics.Report(
+            "ILC2244",
+            $"Duplicate method signature '{GetMethodSignatureDisplay(method)}' in type '{typeName}'. ILC names are case-insensitive.",
+            DiagnosticSeverity.Error,
+            method.Identifier.Span);
+    }
+
+    private static string GetMethodSignatureKey(MethodDeclarationSyntax method)
+    {
+        var methodName = method.Keyword.Kind == SyntaxKind.ConstructorKeyword
+            ? ".ctor"
+            : method.Identifier.Text;
+        var parameterTypes = string.Join(
+            ";",
+            method.Parameters.Select(parameter => $"{BindParameterPassingKind(parameter.ModifierKeyword)}:{parameter.TypeName.ToDisplayString()}"));
+        return $"{methodName}({parameterTypes})";
+    }
+
+    private static string GetMethodSignatureDisplay(MethodDeclarationSyntax method)
+    {
+        var methodName = method.Keyword.Kind == SyntaxKind.ConstructorKeyword
+            ? "constructor"
+            : method.Identifier.Text;
+        return $"{methodName}({string.Join(", ", method.Parameters.Select(parameter => parameter.TypeName.ToDisplayString()))})";
+    }
+
+    private static void ReportCaseOnlyNameCollisionIfNeeded(
+        Dictionary<string, SyntaxToken> knownNames,
+        SyntaxToken identifier,
+        string scopeDescription,
+        DiagnosticBag diagnostics,
+        bool reportExactDuplicate = false) =>
+        ReportNameCollisionIfNeeded(knownNames, identifier.Text, identifier, scopeDescription, diagnostics, reportExactDuplicate);
+
+    private static void ReportCaseOnlyNameCollisionIfNeeded(
+        Dictionary<string, SyntaxToken> knownNames,
+        string key,
+        SyntaxToken identifier,
+        string scopeDescription,
+        DiagnosticBag diagnostics,
+        bool reportExactDuplicate = false) =>
+        ReportNameCollisionIfNeeded(knownNames, key, identifier, scopeDescription, diagnostics, reportExactDuplicate);
+
+    private static void ReportNameCollisionIfNeeded(
+        Dictionary<string, SyntaxToken> knownNames,
+        SyntaxToken identifier,
+        string scopeDescription,
+        DiagnosticBag diagnostics,
+        bool reportExactDuplicate = false) =>
+        ReportNameCollisionIfNeeded(knownNames, identifier.Text, identifier, scopeDescription, diagnostics, reportExactDuplicate);
+
+    private static void ReportNameCollisionIfNeeded(
+        Dictionary<string, SyntaxToken> knownNames,
+        string key,
+        SyntaxToken identifier,
+        string scopeDescription,
+        DiagnosticBag diagnostics,
+        bool reportExactDuplicate = false)
+    {
+        if (knownNames.TryGetValue(key, out var existing))
+        {
+            if (string.Equals(existing.Text, identifier.Text, StringComparison.Ordinal))
+            {
+                if (reportExactDuplicate)
+                {
+                    diagnostics.Report(
+                        "ILC2244",
+                        $"Duplicate name '{identifier.Text}' in {scopeDescription}. ILC names are case-insensitive.",
+                        DiagnosticSeverity.Error,
+                        identifier.Span);
+                }
+            }
+            else
+            {
+                diagnostics.Report(
+                    "ILC2243",
+                    $"Name '{identifier.Text}' differs only by case from '{existing.Text}' in {scopeDescription}. ILC names are case-insensitive.",
+                    DiagnosticSeverity.Warning,
+                    identifier.Span);
+            }
+
+            return;
+        }
+
+        knownNames[key] = identifier;
+    }
+
+    private static void ReportLocalScopeNameCollisionIfNeeded(
+        List<Dictionary<string, SyntaxToken>> activeLocalScopes,
+        SyntaxToken identifier,
+        DiagnosticBag diagnostics)
+    {
+        for (var scopeIndex = activeLocalScopes.Count - 1; scopeIndex >= 0; scopeIndex--)
+        {
+            var scope = activeLocalScopes[scopeIndex];
+            if (!scope.TryGetValue(identifier.Text, out var existingInScope))
+            {
+                continue;
+            }
+
+            if (string.Equals(existingInScope.Text, identifier.Text, StringComparison.Ordinal))
+            {
+                diagnostics.Report(
+                    "ILC2244",
+                    $"Duplicate local name '{identifier.Text}' in an active scope. ILC names are case-insensitive.",
+                    DiagnosticSeverity.Error,
+                    identifier.Span);
+            }
+            else
+            {
+                diagnostics.Report(
+                    "ILC2243",
+                    $"Name '{identifier.Text}' differs only by case from '{existingInScope.Text}' in local scope. ILC names are case-insensitive.",
+                    DiagnosticSeverity.Warning,
+                    identifier.Span);
+            }
+
+            return;
         }
     }
 
@@ -496,7 +837,7 @@ public sealed partial class Binder
         DiagnosticBag diagnostics)
     {
         var fieldName = target.Parts[^1].Text;
-        var field = typeFields.FirstOrDefault(candidate => candidate.Name == fieldName);
+        var field = typeFields.FirstOrDefault(candidate => SemanticFacts.NameEquals(candidate.Name, fieldName));
         if (field is null)
         {
             diagnostics.Report(
@@ -564,26 +905,33 @@ public sealed partial class Binder
         bool inExceptionHandler,
         bool inLoop,
         DiagnosticBag diagnostics,
-        BindingProfiler? profiler = null)
+        BindingProfiler? profiler = null,
+        List<Dictionary<string, SyntaxToken>>? activeLocalScopes = null)
     {
+        activeLocalScopes ??= [new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer)];
+        var localScopeNames = activeLocalScopes[^1];
         foreach (var statement in statements)
         {
             using var statementProfile = Profile(profiler, $"ValidateStatements.{statement.GetType().Name}");
             switch (statement)
             {
                 case BlockStatementSyntax block:
-                    ValidateStatements(block.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                    ValidateStatements(block.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, CreateNestedLocalScopes(activeLocalScopes));
                     break;
                 case LocalVariableDeclarationStatementSyntax localVariable:
                     foreach (var declarator in localVariable.Declarators)
                     {
-                        if (declarator.Identifier.Text == "Result")
+                        if (IsResultAvailable(currentMethod) && SemanticFacts.NameEquals(declarator.Identifier.Text, "Result"))
                         {
                             diagnostics.Report(
                                 "ILC2241",
                                 "Local variable name 'Result' is reserved for the implicit function result.",
                                 DiagnosticSeverity.Error,
                                 declarator.Identifier.Span);
+                        }
+                        else
+                        {
+                            ReportLocalScopeNameCollisionIfNeeded(activeLocalScopes, declarator.Identifier, diagnostics);
                         }
 
                         var declaredType = declarator.TypeName is not null ? BindType(declarator.TypeName, knownTypes) : null;
@@ -604,6 +952,7 @@ public sealed partial class Binder
                         }
 
                         locals[declarator.Identifier.Text] = declaredType ?? initializerType ?? TypeSymbol.Unknown;
+                        localScopeNames[declarator.Identifier.Text] = declarator.Identifier;
                     }
                     break;
                 case ReturnStatementSyntax returnStatement when returnStatement.Expression is not null:
@@ -650,22 +999,23 @@ public sealed partial class Binder
                     break;
                 case IfStatementSyntax ifStatement:
                     ValidateExpression(ifStatement.Condition, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    ValidateStatements([ifStatement.ThenStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                    ValidateStatements([ifStatement.ThenStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     if (ifStatement.ElseStatement is not null)
                     {
-                        ValidateStatements([ifStatement.ElseStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                        ValidateStatements([ifStatement.ElseStatement], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     }
                     break;
                 case WhileStatementSyntax whileStatement:
                     ValidateExpression(whileStatement.Condition, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
-                    ValidateStatements([whileStatement.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
+                    ValidateStatements([whileStatement.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler, activeLocalScopes);
                     break;
                 case RepeatStatementSyntax repeatStatement:
-                    ValidateStatements(repeatStatement.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
+                    ValidateStatements(repeatStatement.Statements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler, activeLocalScopes);
                     ValidateExpression(repeatStatement.Condition, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
                 case ForStatementSyntax forStatement:
                     var forLoopLocals = locals;
+                    var forLoopScopes = activeLocalScopes;
                     TypeSymbol? loopType = null;
                     if (forStatement.VarKeyword is not null)
                     {
@@ -673,6 +1023,7 @@ public sealed partial class Binder
                         {
                             [forStatement.Identifier.Text] = TypeSymbol.Integer
                         };
+                        forLoopScopes = CreateNestedLocalScopesWithName(activeLocalScopes, forStatement.Identifier, diagnostics);
                     }
                     else if (!locals.TryGetValue(forStatement.Identifier.Text, out loopType))
                     {
@@ -728,7 +1079,7 @@ public sealed partial class Binder
                             GetExpressionDiagnosticSpan(forStatement.StepExpression, knownTypes));
                     }
 
-                    ValidateStatements([forStatement.Body], forLoopLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
+                    ValidateStatements([forStatement.Body], forLoopLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler, forLoopScopes);
                     break;
                 case ForeachStatementSyntax foreachStatement:
                     ValidateExpression(foreachStatement.Collection, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -762,6 +1113,7 @@ public sealed partial class Binder
                     }
 
                     var foreachLocals = locals;
+                    var foreachScopes = activeLocalScopes;
                     TypeSymbol foreachType;
                     if (foreachStatement.VarKeyword is not null)
                     {
@@ -770,6 +1122,7 @@ public sealed partial class Binder
                         {
                             [foreachStatement.Identifier.Text] = foreachType
                         };
+                        foreachScopes = CreateNestedLocalScopesWithName(activeLocalScopes, foreachStatement.Identifier, diagnostics);
                     }
                     else if (!locals.TryGetValue(foreachStatement.Identifier.Text, out var resolvedForeachType))
                     {
@@ -794,12 +1147,12 @@ public sealed partial class Binder
                             foreachStatement.Identifier.Span);
                     }
 
-                    ValidateStatements([foreachStatement.Body], foreachLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler);
+                    ValidateStatements([foreachStatement.Body], foreachLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, true, diagnostics, profiler, foreachScopes);
                     break;
                 case WithStatementSyntax withStatement:
                     ValidateExpression(withStatement.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var rewrittenWithBody = RewriteWithStatement(withStatement.Body, withStatement.Receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod);
-                    ValidateStatements([rewrittenWithBody], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                    ValidateStatements([rewrittenWithBody], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     break;
                 case CaseStatementSyntax caseStatement:
                     ValidateExpression(caseStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -835,10 +1188,10 @@ public sealed partial class Binder
                             }
                         }
 
-                        ValidateStatements([clause.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                        ValidateStatements([clause.Body], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     }
 
-                    ValidateStatements(caseStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                    ValidateStatements(caseStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     break;
                 case MatchStatementSyntax matchStatement:
                     ValidateExpression(matchStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -858,6 +1211,7 @@ public sealed partial class Binder
                     foreach (var arm in matchStatement.Arms)
                     {
                         var armLocals = locals;
+                        var armScopes = activeLocalScopes;
                         if (arm.TypeName is not null)
                         {
                             var armType = SemanticFacts.ResolveTypeReference(arm.TypeName.ToDisplayString(), knownTypes);
@@ -891,6 +1245,7 @@ public sealed partial class Binder
                                 {
                                     [arm.Identifier.Text] = armType
                                 };
+                                armScopes = CreateNestedLocalScopesWithName(activeLocalScopes, arm.Identifier, diagnostics);
                             }
                         }
                         else if (!arm.IsWildcard)
@@ -915,13 +1270,13 @@ public sealed partial class Binder
                             }
                         }
 
-                        ValidateStatements([arm.Body], armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                        ValidateStatements([arm.Body], armLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, armScopes);
                     }
 
-                    ValidateStatements(matchStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                    ValidateStatements(matchStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     break;
                 case TryStatementSyntax tryStatement:
-                    ValidateStatements(tryStatement.TryStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler);
+                    ValidateStatements(tryStatement.TryStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     if (tryStatement.ExceptKeyword is not null)
                     {
                         foreach (var clause in tryStatement.ExceptionClauses)
@@ -951,35 +1306,36 @@ public sealed partial class Binder
                             {
                                 [clause.Identifier.Text] = clauseType
                             };
-                            ValidateStatements([clause.Body], clauseLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler);
+                            var clauseScopes = CreateNestedLocalScopesWithName(activeLocalScopes, clause.Identifier, diagnostics);
+                            ValidateStatements([clause.Body], clauseLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler, clauseScopes);
                         }
 
-                        ValidateStatements(tryStatement.ExceptStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler);
+                        ValidateStatements(tryStatement.ExceptStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler, activeLocalScopes);
                     }
 
                     if (tryStatement.FinallyKeyword is not null)
                     {
-                        var containsReturnInProtectedRegions =
-                            ContainsReturn(tryStatement.TryStatements) ||
-                            tryStatement.ExceptionClauses.Any(clause => ContainsReturn([clause.Body])) ||
-                            ContainsReturn(tryStatement.ExceptStatements);
-                        if (containsReturnInProtectedRegions)
+                        var containsRoutineExitInProtectedRegions =
+                            ContainsRoutineExit(tryStatement.TryStatements) ||
+                            tryStatement.ExceptionClauses.Any(clause => ContainsRoutineExit([clause.Body])) ||
+                            ContainsRoutineExit(tryStatement.ExceptStatements);
+                        if (containsRoutineExitInProtectedRegions)
                         {
                             diagnostics.Report(
                                 "ILC2134",
-                                "Return inside try/finally is not supported yet.",
+                                "Early routine exit inside try/finally is not supported yet.",
                                 DiagnosticSeverity.Error,
                                 tryStatement.FinallyKeyword.Span);
                         }
 
-                        ValidateStatements(tryStatement.FinallyStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, false, inLoop, diagnostics, profiler);
+                        ValidateStatements(tryStatement.FinallyStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, false, inLoop, diagnostics, profiler, activeLocalScopes);
                     }
                     break;
             }
         }
     }
 
-    private static bool ContainsReturn(IReadOnlyList<StatementSyntax> statements)
+    private static bool ContainsRoutineExit(IReadOnlyList<StatementSyntax> statements)
     {
         foreach (var statement in statements)
         {
@@ -987,23 +1343,23 @@ public sealed partial class Binder
             {
                 case ReturnStatementSyntax:
                     return true;
-                case BlockStatementSyntax block when ContainsReturn(block.Statements):
+                case BlockStatementSyntax block when ContainsRoutineExit(block.Statements):
                     return true;
-                case IfStatementSyntax ifStatement when ContainsReturn([ifStatement.ThenStatement]) || (ifStatement.ElseStatement is not null && ContainsReturn([ifStatement.ElseStatement])):
+                case IfStatementSyntax ifStatement when ContainsRoutineExit([ifStatement.ThenStatement]) || (ifStatement.ElseStatement is not null && ContainsRoutineExit([ifStatement.ElseStatement])):
                     return true;
-                case WhileStatementSyntax whileStatement when ContainsReturn([whileStatement.Body]):
+                case WhileStatementSyntax whileStatement when ContainsRoutineExit([whileStatement.Body]):
                     return true;
-                case RepeatStatementSyntax repeatStatement when ContainsReturn(repeatStatement.Statements):
+                case RepeatStatementSyntax repeatStatement when ContainsRoutineExit(repeatStatement.Statements):
                     return true;
-                case ForStatementSyntax forStatement when ContainsReturn([forStatement.Body]):
+                case ForStatementSyntax forStatement when ContainsRoutineExit([forStatement.Body]):
                     return true;
-                case ForeachStatementSyntax foreachStatement when ContainsReturn([foreachStatement.Body]):
+                case ForeachStatementSyntax foreachStatement when ContainsRoutineExit([foreachStatement.Body]):
                     return true;
-                case CaseStatementSyntax caseStatement when caseStatement.Clauses.Any(clause => ContainsReturn([clause.Body])) || ContainsReturn(caseStatement.ElseStatements):
+                case CaseStatementSyntax caseStatement when caseStatement.Clauses.Any(clause => ContainsRoutineExit([clause.Body])) || ContainsRoutineExit(caseStatement.ElseStatements):
                     return true;
-                case MatchStatementSyntax matchStatement when matchStatement.Arms.Any(arm => ContainsReturn([arm.Body])) || ContainsReturn(matchStatement.ElseStatements):
+                case MatchStatementSyntax matchStatement when matchStatement.Arms.Any(arm => ContainsRoutineExit([arm.Body])) || ContainsRoutineExit(matchStatement.ElseStatements):
                     return true;
-                case TryStatementSyntax tryStatement when ContainsReturn(tryStatement.TryStatements) || ContainsReturn(tryStatement.ExceptStatements) || ContainsReturn(tryStatement.FinallyStatements):
+                case TryStatementSyntax tryStatement when ContainsRoutineExit(tryStatement.TryStatements) || ContainsRoutineExit(tryStatement.ExceptStatements) || ContainsRoutineExit(tryStatement.FinallyStatements):
                     return true;
             }
         }
@@ -2460,7 +2816,7 @@ public sealed partial class Binder
         var targetDefinitionName = targetType.Name[..targetGenericStart];
         var sourceCandidates = knownTypes
             .OfType<NamedTypeSymbol>()
-            .Where(type => type.Name == sourceType.Name || type.Name.StartsWith(sourceType.Name + "<", StringComparison.Ordinal))
+            .Where(type => SemanticFacts.NameEquals(type.Name, sourceType.Name) || type.Name.StartsWith(sourceType.Name + "<", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (SemanticFacts.ResolveTypeReference(sourceType.Name, knownTypes) is NamedTypeSymbol resolvedSource &&
             !sourceCandidates.Contains(resolvedSource))
@@ -2471,7 +2827,7 @@ public sealed partial class Binder
         return sourceCandidates.Any(sourceNamedType => sourceNamedType.InterfaceTypes.Any(interfaceType =>
         {
             var interfaceGenericStart = interfaceType.Name.IndexOf('<', StringComparison.Ordinal);
-            return interfaceGenericStart > 0 && interfaceType.Name[..interfaceGenericStart] == targetDefinitionName;
+            return interfaceGenericStart > 0 && SemanticFacts.NameEquals(interfaceType.Name[..interfaceGenericStart], targetDefinitionName);
         }));
     }
 
@@ -2484,7 +2840,7 @@ public sealed partial class Binder
 
         var sourceBracket = sourceName.IndexOf('[', StringComparison.Ordinal);
         var targetBracket = targetName.IndexOf('[', StringComparison.Ordinal);
-        if (sourceBracket <= 0 || targetBracket <= 0 || sourceName[..sourceBracket] != targetName[..targetBracket])
+        if (sourceBracket <= 0 || targetBracket <= 0 || !SemanticFacts.NameEquals(sourceName[..sourceBracket], targetName[..targetBracket]))
         {
             return false;
         }
@@ -2499,27 +2855,27 @@ public sealed partial class Binder
         var sourceGenericStart = sourceType.Name.IndexOf('<', StringComparison.Ordinal);
         var targetGenericStart = targetType.Name.IndexOf('<', StringComparison.Ordinal);
         if (sourceGenericStart > 0 && targetGenericStart > 0 &&
-            sourceType.Name[..sourceGenericStart] == targetType.Name[..targetGenericStart])
+            SemanticFacts.NameEquals(sourceType.Name[..sourceGenericStart], targetType.Name[..targetGenericStart]))
         {
             return true;
         }
 
-        if (targetType.Name == "IEnumerable" && sourceType.IsReferenceType)
+        if (SemanticFacts.NameEquals(targetType.Name, "IEnumerable") && sourceType.IsReferenceType)
         {
             return true;
         }
 
-        if (targetType.Name.Contains('<', StringComparison.Ordinal) && sourceType.Name == targetType.Name[..targetType.Name.IndexOf('<', StringComparison.Ordinal)])
+        if (targetType.Name.Contains('<', StringComparison.Ordinal) && SemanticFacts.NameEquals(sourceType.Name, targetType.Name[..targetType.Name.IndexOf('<', StringComparison.Ordinal)]))
         {
             return true;
         }
 
-        if (targetGenericStart > 0 && sourceType.Name == targetType.Name[..targetGenericStart])
+        if (targetGenericStart > 0 && SemanticFacts.NameEquals(sourceType.Name, targetType.Name[..targetGenericStart]))
         {
             return true;
         }
 
-        if (sourceGenericStart > 0 && targetType.Name == sourceType.Name[..sourceGenericStart])
+        if (sourceGenericStart > 0 && SemanticFacts.NameEquals(targetType.Name, sourceType.Name[..sourceGenericStart]))
         {
             return true;
         }
@@ -2545,7 +2901,7 @@ public sealed partial class Binder
             return false;
         }
 
-        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, "Invoke") && !method.IsStatic);
         if (invokeMethod is null)
         {
             return false;
@@ -3084,7 +3440,7 @@ public sealed partial class Binder
                     }
 
                     if (memberResolution.Property.IsInitOnly &&
-                        !(currentMethod?.IsConstructor == true && currentMethod.DeclaringTypeName == memberResolution.Property.DeclaringTypeName))
+                        !(currentMethod?.IsConstructor == true && SemanticFacts.NameEquals(currentMethod.DeclaringTypeName, memberResolution.Property.DeclaringTypeName)))
                     {
                         diagnostics.Report(
                             "ILC2123",
@@ -3094,7 +3450,7 @@ public sealed partial class Binder
                         return;
                     }
 
-                    if (memberResolution.Property.IsSetterPrivate && memberResolution.Property.DeclaringTypeName != currentMethod?.DeclaringTypeName)
+                    if (memberResolution.Property.IsSetterPrivate && !SemanticFacts.NameEquals(memberResolution.Property.DeclaringTypeName, currentMethod?.DeclaringTypeName))
                     {
                         diagnostics.Report(
                             "ILC2122",
@@ -3145,7 +3501,7 @@ public sealed partial class Binder
         }
 
         if (property is not null && property.IsInitOnly &&
-            !(currentMethod?.IsConstructor == true && currentMethod.DeclaringTypeName == property.DeclaringTypeName))
+            !(currentMethod?.IsConstructor == true && SemanticFacts.NameEquals(currentMethod.DeclaringTypeName, property.DeclaringTypeName)))
         {
             diagnostics.Report(
                 "ILC2123",
@@ -3168,7 +3524,7 @@ public sealed partial class Binder
         if (targetName.Parts.Count == 1)
         {
             var name = targetName.ToDisplayString();
-            if (name == "Result" && !IsResultAvailable(currentMethod))
+            if (SemanticFacts.NameEquals(name, "Result") && !IsResultAvailable(currentMethod))
             {
                 ReportInvalidResultUsage(targetName.Parts[0].Span, diagnostics);
                 return;
@@ -3334,7 +3690,7 @@ public sealed partial class Binder
 
     private static bool IsResultName(QualifiedNameSyntax name) =>
         name.Parts.Count == 1 &&
-        name.Parts[0].Text == "Result";
+        SemanticFacts.NameEquals(name.Parts[0].Text, "Result");
 
     private static bool IsResultAvailable(MethodSymbol? currentMethod) =>
         currentMethod is not null &&
@@ -3552,14 +3908,14 @@ public sealed partial class Binder
         IReadOnlyList<TypeSymbol> knownTypes,
         DiagnosticBag diagnostics)
     {
-        var receiverType = target.Parts.Count >= 2 && target.Parts[0].Text != "self"
+        var receiverType = target.Parts.Count >= 2 && !SemanticFacts.NameEquals(target.Parts[0].Text, "self")
             ? SemanticFacts.TryResolveValueReceiverType(target, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
             : null;
         if (receiverType is not null)
         {
             var field = knownFields.FirstOrDefault(candidate =>
-                candidate.DeclaringTypeName == receiverType.Name &&
-                candidate.Name == target.Parts[^1].Text);
+                SemanticFacts.NameEquals(candidate.DeclaringTypeName, receiverType.Name) &&
+                SemanticFacts.NameEquals(candidate.Name, target.Parts[^1].Text));
             if (field is not null && field.IsStatic)
             {
                 diagnostics.Report(
@@ -3589,7 +3945,7 @@ public sealed partial class Binder
         }
 
         var qualifier = target.Parts.Count > 1 ? target.Parts[^2].Text : null;
-        if (target.Parts.Count > 1 && qualifier == "self" && candidate.IsStatic)
+        if (target.Parts.Count > 1 && SemanticFacts.NameEquals(qualifier, "self") && candidate.IsStatic)
         {
             diagnostics.Report(
                 "ILC2111",
@@ -3599,7 +3955,7 @@ public sealed partial class Binder
             return true;
         }
 
-        if (target.Parts.Count > 1 && qualifier is not null && qualifier != "self" && !candidate.IsStatic)
+        if (target.Parts.Count > 1 && qualifier is not null && !SemanticFacts.NameEquals(qualifier, "self") && !candidate.IsStatic)
         {
             diagnostics.Report(
                 "ILC2110",
@@ -3673,7 +4029,7 @@ public sealed partial class Binder
         if (target.Receiver is NameExpressionSyntax receiverName)
         {
             var receiverDisplayName = receiverName.Name.ToDisplayString();
-            if (candidate is not null && receiverDisplayName == "self" && candidate.Method.IsStatic)
+            if (candidate is not null && SemanticFacts.NameEquals(receiverDisplayName, "self") && candidate.Method.IsStatic)
             {
                 diagnostics.Report(
                     "ILC2108",
@@ -3686,8 +4042,8 @@ public sealed partial class Binder
             if (SemanticFacts.ResolveTypeReference(receiverDisplayName, knownTypes) is { } receiverType)
             {
                 var instanceMethod = knownMethods.FirstOrDefault(method =>
-                    method.DeclaringTypeName == receiverType.Name &&
-                    method.Name == target.MemberName.Text &&
+                    SemanticFacts.NameEquals(method.DeclaringTypeName, receiverType.Name) &&
+                    SemanticFacts.NameEquals(method.Name, target.MemberName.Text) &&
                     SemanticFacts.SupportsArgumentCount(method, argumentCount) &&
                     !method.IsStatic);
                 if (instanceMethod is not null)
@@ -3735,7 +4091,7 @@ public sealed partial class Binder
         }
 
         var qualifier = target.Parts.Count > 1 ? target.Parts[^2].Text : null;
-        if (target.Parts.Count > 1 && qualifier == "self" && candidate.Method.IsStatic)
+        if (target.Parts.Count > 1 && SemanticFacts.NameEquals(qualifier, "self") && candidate.Method.IsStatic)
         {
             diagnostics.Report(
                 "ILC2108",
@@ -3745,7 +4101,7 @@ public sealed partial class Binder
             return true;
         }
 
-        if (target.Parts.Count > 1 && qualifier is not null && qualifier != "self" && !candidate.Method.IsStatic)
+        if (target.Parts.Count > 1 && qualifier is not null && !SemanticFacts.NameEquals(qualifier, "self") && !candidate.Method.IsStatic)
         {
             diagnostics.Report(
                 "ILC2107",
@@ -3843,7 +4199,7 @@ public sealed partial class Binder
             return name.Parts[0].Span;
         }
 
-        if (knownTypes.Any(type => type.Name == name.Parts[0].Text))
+        if (knownTypes.Any(type => SemanticFacts.NameEquals(type.Name, name.Parts[0].Text)))
         {
             return name.Parts.Count > 1 ? name.Parts[1].Span : name.Parts[0].Span;
         }
@@ -3900,29 +4256,29 @@ public sealed partial class Binder
         string name,
         int parameterCount) =>
         knownMethods.FirstOrDefault(method =>
-            method.DeclaringTypeName == declaringTypeName &&
-            method.Name == name &&
+            SemanticFacts.NameEquals(method.DeclaringTypeName, declaringTypeName) &&
+            SemanticFacts.NameEquals(method.Name, name) &&
             method.Parameters.Count == parameterCount);
 
     private static IReadOnlyList<FieldSymbol> FindFields(
         IEnumerable<FieldSymbol> knownFields,
         string? declaringTypeName) =>
         knownFields
-            .Where(field => field.DeclaringTypeName == declaringTypeName)
+            .Where(field => SemanticFacts.NameEquals(field.DeclaringTypeName, declaringTypeName))
             .ToArray();
 
     private static IReadOnlyList<FieldSymbol> FindInstanceFields(
         IEnumerable<FieldSymbol> knownFields,
         string? declaringTypeName) =>
         knownFields
-            .Where(field => field.DeclaringTypeName == declaringTypeName && !field.IsStatic)
+            .Where(field => SemanticFacts.NameEquals(field.DeclaringTypeName, declaringTypeName) && !field.IsStatic)
             .ToArray();
 
     private static IReadOnlyList<ConstantSymbol> FindConstants(
         IEnumerable<ConstantSymbol> knownConstants,
         string? declaringTypeName) =>
         knownConstants
-            .Where(constant => constant.DeclaringTypeName == declaringTypeName)
+            .Where(constant => SemanticFacts.NameEquals(constant.DeclaringTypeName, declaringTypeName))
             .ToArray();
 
     private static bool HasDeclaredConstructors(
@@ -3931,7 +4287,7 @@ public sealed partial class Binder
         IEnumerable<MethodSymbol> knownMethods)
     {
         var resolvedType = SemanticFacts.ResolveTypeReference(typeName.ToDisplayString(), knownTypes);
-        return resolvedType is not null && knownMethods.Any(method => method.DeclaringTypeName == resolvedType.Name && method.IsConstructor);
+        return resolvedType is not null && knownMethods.Any(method => SemanticFacts.NameEquals(method.DeclaringTypeName, resolvedType.Name) && method.IsConstructor);
     }
 
     private static bool IsReferenceClassOrInterfaceType(TypeSymbol type) =>
@@ -3942,7 +4298,7 @@ public sealed partial class Binder
         });
 
     private static NamedTypeSymbol? ResolveNamedType(TypeSymbol type, IEnumerable<TypeSymbol> knownTypes) =>
-        knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == type.Name) ??
+        knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => SemanticFacts.NameEquals(candidate.Name, type.Name)) ??
         (SemanticFacts.ResolveTypeReference(type.Name, knownTypes) as NamedTypeSymbol) ??
         (type as NamedTypeSymbol);
 
@@ -3952,7 +4308,7 @@ public sealed partial class Binder
         var current = ResolveNamedType(baseType, knownTypes);
         while (current is not null && visited.Add(current.Name))
         {
-            if (current.Name == declaredTypeName)
+            if (SemanticFacts.NameEquals(current.Name, declaredTypeName))
             {
                 return true;
             }
@@ -4044,11 +4400,11 @@ public sealed partial class Binder
                 var implementation = GetTypeHierarchy(new TypeSymbol(declaringTypeName, true), knownTypes)
                     .SelectMany(type => type.Methods
                         .Where(candidate =>
-                            candidate.Name == interfaceMethod.Name &&
+                            SemanticFacts.NameEquals(candidate.Name, interfaceMethod.Name) &&
                             !candidate.IsStatic)
                         .Concat(knownMethods.Where(candidate =>
-                            candidate.DeclaringTypeName == type.Name &&
-                            candidate.Name == interfaceMethod.Name &&
+                            SemanticFacts.NameEquals(candidate.DeclaringTypeName, type.Name) &&
+                            SemanticFacts.NameEquals(candidate.Name, interfaceMethod.Name) &&
                             !candidate.IsStatic)))
                     .FirstOrDefault(candidate => AreInterfaceMethodSignaturesCompatible(interfaceMethod, candidate, knownTypes));
 
@@ -4058,11 +4414,11 @@ public sealed partial class Binder
                     var candidates = hierarchy
                         .SelectMany(type => type.Methods
                             .Where(candidate =>
-                                candidate.Name == interfaceMethod.Name &&
+                                SemanticFacts.NameEquals(candidate.Name, interfaceMethod.Name) &&
                                 !candidate.IsStatic)
                             .Concat(knownMethods.Where(candidate =>
-                                candidate.DeclaringTypeName == type.Name &&
-                                candidate.Name == interfaceMethod.Name &&
+                                SemanticFacts.NameEquals(candidate.DeclaringTypeName, type.Name) &&
+                                SemanticFacts.NameEquals(candidate.Name, interfaceMethod.Name) &&
                                 !candidate.IsStatic)))
                         .Select(candidate => $"{candidate.DeclaringTypeName}.{candidate.Name}({string.Join(", ", candidate.Parameters.Select(parameter => $"{parameter.PassingKind}:{parameter.Type.Name}"))}):{candidate.ReturnType.Name}")
                         .Distinct(SemanticFacts.NameComparer)
@@ -4199,8 +4555,8 @@ public sealed partial class Binder
         foreach (var baseTypeEntry in GetTypeHierarchy(baseType, knownTypes))
         {
             var candidate = knownMethods.FirstOrDefault(knownMethod =>
-                knownMethod.DeclaringTypeName == baseTypeEntry.Name &&
-                knownMethod.Name == method.Name);
+                SemanticFacts.NameEquals(knownMethod.DeclaringTypeName, baseTypeEntry.Name) &&
+                SemanticFacts.NameEquals(knownMethod.Name, method.Name));
 
             if (candidate is not null)
             {
@@ -4219,8 +4575,8 @@ public sealed partial class Binder
         IReadOnlyList<ParameterSymbol> parameterTypes)
     {
         return knownMethods.FirstOrDefault(candidate =>
-            candidate.DeclaringTypeName == declaringTypeName &&
-            candidate.Name == name &&
+            SemanticFacts.NameEquals(candidate.DeclaringTypeName, declaringTypeName) &&
+            SemanticFacts.NameEquals(candidate.Name, name) &&
             candidate.Parameters.Count == parameterCount &&
             candidate.Parameters.Select(parameter => parameter.Type).SequenceEqual(parameterTypes.Select(parameter => parameter.Type)));
     }
@@ -4273,7 +4629,7 @@ public sealed partial class Binder
             return true;
         }
 
-        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, "Invoke") && !method.IsStatic);
         if (invokeMethod is null)
         {
             diagnostics.Report(
@@ -4295,11 +4651,18 @@ public sealed partial class Binder
         }
 
         var lambdaLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+        var lambdaParameterNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
         for (var parameterIndex = 0; parameterIndex < lambda.Parameters.Count; parameterIndex++)
         {
             var parameter = lambda.Parameters[parameterIndex];
             var delegateParameter = invokeMethod.Parameters[parameterIndex];
             var parameterType = BindType(parameter.TypeName, knownTypes);
+            ReportNameCollisionIfNeeded(
+                lambdaParameterNames,
+                parameter.Identifier,
+                "lambda parameter list",
+                diagnostics,
+                reportExactDuplicate: true);
             if (parameterType != delegateParameter.Type)
             {
                 diagnostics.Report(

@@ -30,10 +30,10 @@ public static partial class SemanticFacts
 
     private static bool IsEnumerableInterface(NamedTypeSymbol type) =>
         type.IsInterface &&
-        (type.Name == "IEnumerable" || type.Name.StartsWith("IEnumerable<", StringComparison.Ordinal));
+        (NameEquals(type.Name, "IEnumerable") || type.Name.StartsWith("IEnumerable<", StringComparison.OrdinalIgnoreCase));
 
     public static bool IsSetType(TypeSymbol type) =>
-        type.Name.StartsWith("set of ", StringComparison.Ordinal);
+        type.Name.StartsWith("set of ", StringComparison.OrdinalIgnoreCase);
 
     public static TypeSymbol? GetSetElementType(TypeSymbol type)
     {
@@ -112,7 +112,7 @@ public static partial class SemanticFacts
         EnumerablePatternResolution? CreatePattern(NamedTypeSymbol enumerableType)
         {
             var getEnumeratorMethod = enumerableType.Methods.FirstOrDefault(method =>
-                method.Name == "GetEnumerator" &&
+                NameEquals(method.Name, "GetEnumerator") &&
                 method.Parameters.Count == 0 &&
                 !method.IsConstructor);
             if (getEnumeratorMethod is null)
@@ -130,13 +130,13 @@ public static partial class SemanticFacts
             var moveNextMethod = GetReceiverTypeHierarchy(resolvedEnumeratorType, knownTypes)
                 .SelectMany(type => type.Methods)
                 .FirstOrDefault(method =>
-                    method.Name == "MoveNext" &&
+                    NameEquals(method.Name, "MoveNext") &&
                     method.Parameters.Count == 0 &&
                     method.ReturnType == TypeSymbol.Boolean);
             var currentProperty = GetReceiverTypeHierarchy(resolvedEnumeratorType, knownTypes)
                 .SelectMany(type => type.Properties)
                 .FirstOrDefault(property =>
-                    property.Name == "Current" &&
+                    NameEquals(property.Name, "Current") &&
                     property.GetterMethod is not null &&
                     property.IndexParameter is null);
             if (moveNextMethod is null || currentProperty?.GetterMethod is null)

@@ -67,12 +67,12 @@ public sealed partial class Lowerer
         {
             var instanceField = _knownTypes
                 .OfType<NamedTypeSymbol>()
-                .Where(type => type.Name == receiverType.Name || type == receiverType)
+                .Where(type => SemanticFacts.NameEquals(type.Name, receiverType.Name) || type == receiverType)
                 .SelectMany(type => EnumerateTypeHierarchy(type))
                 .SelectMany(type => _knownFields.Where(field =>
                     !field.IsStatic &&
-                    field.DeclaringTypeName == type.Name &&
-                    field.Name == name.Parts[^1].Text))
+                    SemanticFacts.NameEquals(field.DeclaringTypeName, type.Name) &&
+                    SemanticFacts.NameEquals(field.Name, name.Parts[^1].Text)))
                 .FirstOrDefault();
             if (instanceField is not null)
             {
@@ -138,7 +138,7 @@ public sealed partial class Lowerer
         foreach (var type in EnumerateTypeHierarchy(declaringType))
         {
             var writableProperty = type.Properties.FirstOrDefault(property =>
-                property.Name == displayName &&
+                SemanticFacts.NameEquals(property.Name, displayName) &&
                 !property.IsStatic &&
                 (property.WriteField is not null || property.SetterMethod is not null));
             if (writableProperty is not null)
@@ -146,7 +146,7 @@ public sealed partial class Lowerer
                 return false;
             }
 
-            var field = type.Fields.FirstOrDefault(field => !field.IsStatic && field.Name == displayName);
+            var field = type.Fields.FirstOrDefault(field => !field.IsStatic && SemanticFacts.NameEquals(field.Name, displayName));
             if (field is not null)
             {
                 boundTarget = new BoundWriteTarget(
@@ -250,7 +250,7 @@ public sealed partial class Lowerer
             : string.Join(
                 ", ",
                 _knownMethods
-                    .Where(method => method.DeclaringTypeName == receiverType.Name)
+                    .Where(method => SemanticFacts.NameEquals(method.DeclaringTypeName, receiverType.Name))
                     .Select(method => $"{method.DeclaringTypeName}.{method.Name}/{method.Parameters.Count}[static={method.IsStatic},virtual={method.IsVirtual},override={method.IsOverride}]"));
 
         var localSummary = string.Join(
@@ -284,20 +284,20 @@ public sealed partial class Lowerer
                 : string.Join(
                     ", ",
                     namedTargetType.Methods
-                        .Where(method => method.Name == qualifiedTarget.Parts[^1].Text)
+                        .Where(method => SemanticFacts.NameEquals(method.Name, qualifiedTarget.Parts[^1].Text))
                         .Select(method => $"{method.DeclaringTypeName}.{method.Name}/{method.Parameters.Count}[static={method.IsStatic}]"));
             var knownMethodSummary = string.Join(
                 ", ",
                 _knownMethods
                     .Where(method =>
-                        method.DeclaringTypeName == (targetType?.Name ?? declaringTypeName) &&
-                        method.Name == qualifiedTarget.Parts[^1].Text)
+                        SemanticFacts.NameEquals(method.DeclaringTypeName, targetType?.Name ?? declaringTypeName) &&
+                        SemanticFacts.NameEquals(method.Name, qualifiedTarget.Parts[^1].Text))
                     .Select(method => $"{method.DeclaringTypeName}.{method.Name}/{method.Parameters.Count}[static={method.IsStatic}]"));
             var relatedTypes = string.Join(
                 ", ",
                 _knownTypes
                     .OfType<NamedTypeSymbol>()
-                    .Where(type => type.Name == qualifiedTarget.Parts[0].Text)
+                    .Where(type => SemanticFacts.NameEquals(type.Name, qualifiedTarget.Parts[0].Text))
                     .Select(type => $"{type.Name}[arity={type.GenericArity}]"));
 
             return
@@ -706,7 +706,7 @@ public sealed partial class Lowerer
             qualifiedNameTarget.Name.Parts.Count > 1)
         {
             var receiverName = qualifiedNameTarget.Name.Parts[0].Text;
-            if (receiverName == "self" || registerByName.ContainsKey(receiverName))
+            if (SemanticFacts.NameEquals(receiverName, "self") || registerByName.ContainsKey(receiverName))
             {
                 return ResolvePropertyReceiver(qualifiedNameTarget, registerByName, arrayShapesByName, registers, instructions, currentMethod);
             }
@@ -777,7 +777,7 @@ public sealed partial class Lowerer
             qualifiedNameTarget.Name.Parts.Count > 1)
         {
             var receiverName = qualifiedNameTarget.Name.Parts[0].Text;
-            if (receiverName == "self" || registerByName.ContainsKey(receiverName))
+            if (SemanticFacts.NameEquals(receiverName, "self") || registerByName.ContainsKey(receiverName))
             {
                 return ResolvePropertyReceiver(qualifiedNameTarget, registerByName, arrayShapesByName, registers, instructions, currentMethod);
             }
@@ -1063,7 +1063,7 @@ public sealed partial class Lowerer
                 yield break;
             }
 
-            current = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => candidate.Name == current.BaseType.Name);
+            current = _knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(candidate => SemanticFacts.NameEquals(candidate.Name, current.BaseType.Name));
             if (current is null)
             {
                 yield break;
@@ -1376,7 +1376,7 @@ public sealed partial class Lowerer
             return existing;
         }
 
-        if (displayName == "self" && registerByName.TryGetValue("self", out var explicitSelf))
+        if (SemanticFacts.NameEquals(displayName, "self") && registerByName.TryGetValue("self", out var explicitSelf))
         {
             return explicitSelf;
         }

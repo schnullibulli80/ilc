@@ -560,7 +560,7 @@ if (dialogResultType is null || dialogResultType.IsReferenceType)
 
 if (dialogType is null || dialogType.BaseType?.Name != "Window" || !dialogType.Properties.Any(property => property.Name == "Message" && property.Type == TypeSymbol.String) || !dialogType.Properties.Any(property => property.Name == "Result" && property.Type.Name == "DialogResult") || !dialogType.Properties.Any(property => property.Name == "IsModal" && property.Type.Name == "Boolean") || !dialogType.Methods.Any(method => method.Name == "ShowDialog" && method.Parameters.Count == 0 && method.ReturnType.Name == "DialogResult") || !dialogType.Methods.Any(method => method.Name == "Accept" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void) || !dialogType.Methods.Any(method => method.Name == "Cancel" && method.Parameters.Count == 0 && method.ReturnType == TypeSymbol.Void))
 {
-    failures.Add("Binder should surface System.Ui.Dialog with result and modal control members.");
+    failures.Add("Binder should surface System.Ui.Dialog with Result and modal control members.");
 }
 
 if (textBlockType is null || !textBlockType.Properties.Any(property => property.Name == "Foreground" && property.Type.Name == "Color"))
@@ -1298,7 +1298,7 @@ else
         }
         else if (mainMethod.Declaration?.Body?.Statements.OfType<LocalVariableDeclarationStatementSyntax>().FirstOrDefault()?.Declarators[0].TypeName is not null)
         {
-            failures.Add("The test fixture expects local 'var result := Program.Total;' to remain implicitly typed.");
+            failures.Add("The test fixture expects local 'var localResult := Program.Total;' to remain implicitly typed.");
         }
 
         var invalidMainInstanceFieldLoad = mainBytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.LdField && instruction.Left == 0);
@@ -1378,7 +1378,7 @@ else
 
         if (!mainBytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.SubI32))
         {
-            failures.Add("Bytecode emission should lower 'result := result - 1' to subtraction.");
+            failures.Add("Bytecode emission should lower 'localResult := localResult - 1' to subtraction.");
         }
 
         if (!mainBytecode.Instructions.Any(instruction => instruction.OpCode == OpCode.NewObj) ||
@@ -1927,6 +1927,12 @@ begin
     return Result;
   end;
 
+  public static function AccumulateWithExit(value: Integer): Integer;
+  begin
+    Result := 1;
+    exit Result + value;
+  end;
+
   public static method InvalidProcedureResult;
   begin
     Result := 1;
@@ -1943,6 +1949,7 @@ end;
 var resultAliasBinding = new Binder().Bind(resultAliasTree);
 var resultAliasProgram = resultAliasBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
 var resultAliasMethod = resultAliasProgram.Methods.First(method => method.Name == "Accumulate");
+var exitAliasMethod = resultAliasProgram.Methods.First(method => method.Name == "AccumulateWithExit");
 var resultAliasDiagnostics = resultAliasBinding.Diagnostics.ToArray();
 if (resultAliasDiagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Id != "ILC2241" && diagnostic.Id != "ILC2242"))
 {
@@ -1961,13 +1968,27 @@ var resultAliasIr = new Lowerer(
     resultAliasBinding.Compilation.Types,
     resultAliasProgram.Properties,
     resultAliasProgram.Constants).Lower(resultAliasMethod);
+var exitAliasIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(exitAliasMethod);
 var resultAliasInstructions = resultAliasIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+var exitAliasInstructions = exitAliasIr.Blocks.SelectMany(block => block.Instructions).ToArray();
 if (resultAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
     resultAliasInstructions.Last().OpCode != IrOpCode.Return ||
     !resultAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.LoadConstant && Equals(instruction.Operand, 1)) ||
     !resultAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
 {
     failures.Add("Lowerer should map implicit Result reads and writes to the function return register.");
+}
+
+if (exitAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
+    exitAliasInstructions.Last().OpCode != IrOpCode.Return ||
+    !exitAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
+{
+    failures.Add("Lowerer should treat exit expressions as early routine exits that assign the function return register.");
 }
 
 var caseInsensitiveTree = SyntaxTree.Parse("""
@@ -2007,6 +2028,219 @@ _ = new Lowerer(
     caseInsensitiveBinding.Compilation.Types,
     caseInsensitiveProgram.Properties,
     caseInsensitiveProgram.Constants).Lower(caseInsensitiveMain);
+
+var caseInsensitiveCollisionTree = SyntaxTree.Parse("""
+public var GlobalValue: Integer;
+public var globalValue: Integer;
+
+public enum Mode
+begin
+  Ready;
+  ready;
+end;
+
+public interface program
+begin
+end;
+
+public interface PROGRAM
+begin
+end;
+
+public delegate signature Mapper<TInput, tinput>(value: TInput): TInput;
+
+public class Program<TValue, tvalue>
+begin
+  public var Value: Integer;
+  public var value: Integer;
+
+  public function Calculate(Name: String; name: String): Integer;
+  begin
+    var TEMP := 1;
+    var temp := TEMP + 1;
+    Result := temp;
+    return Result;
+  end;
+end;
+""");
+
+var caseInsensitiveCollisionBinding = new Binder().Bind(caseInsensitiveCollisionTree);
+if (caseInsensitiveCollisionBinding.Diagnostics.Count(diagnostic => diagnostic.Id == "ILC2243") < 8)
+{
+    failures.Add("Binder should warn when names differ only by case in case-insensitive declaration and local scopes.");
+}
+
+var duplicateNameTree = SyntaxTree.Parse("""
+public var DuplicateValue: Integer;
+public var DuplicateValue: Integer;
+
+public enum DuplicateMode
+begin
+  Ready;
+  Ready;
+end;
+
+public class DuplicateNames<T, T>
+begin
+  public constructor;
+  begin
+  end;
+
+  public constructor;
+  begin
+  end;
+
+  public var Item: Integer;
+  public var Item: Integer;
+
+  public method Use(value: Integer; value: Integer);
+  begin
+  end;
+
+  public method Repeat(value: Integer);
+  begin
+  end;
+
+  public method Repeat(value: Integer);
+  begin
+  end;
+end;
+""");
+
+var duplicateNameBinding = new Binder().Bind(duplicateNameTree);
+if (duplicateNameBinding.Diagnostics.Count(diagnostic => diagnostic.Id == "ILC2244") < 7)
+{
+    failures.Add("Binder should reject exact duplicate names in case-insensitive declaration scopes.");
+}
+
+var duplicateLocalScopeTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public method Main;
+  begin
+    var localValue := 1;
+    var localValue := 2;
+  end;
+end;
+""");
+
+var duplicateLocalScopeBinding = new Binder().Bind(duplicateLocalScopeTree);
+if (!duplicateLocalScopeBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
+{
+    failures.Add("Binder should reject exact duplicate local names in the same scope.");
+}
+
+var nestedLocalShadowTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public method Main;
+  begin
+    var localValue := 1;
+    begin
+      var localValue := 2;
+    end;
+  end;
+end;
+""");
+
+var nestedLocalShadowBinding = new Binder().Bind(nestedLocalShadowTree);
+if (!nestedLocalShadowBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
+{
+    failures.Add("Binder should reject local names that shadow an active outer scope.");
+}
+
+var siblingLocalReuseTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public method Main;
+  begin
+    begin
+      var localValue := 1;
+    end;
+    var localValue := 2;
+  end;
+end;
+""");
+
+var siblingLocalReuseBinding = new Binder().Bind(siblingLocalReuseTree);
+if (siblingLocalReuseBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
+{
+    failures.Add("Binder should allow local names to be reused after the earlier scope has ended.");
+}
+
+var implicitLocalShadowTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public method Main;
+  begin
+    var localValue := 1;
+    for var localValue := 0 to 1 do
+    begin
+    end;
+
+    foreach var localValue in 'ab' do
+    begin
+    end;
+
+    var source: String := 'abcd';
+    match source with
+      String localValue => localValue := localValue;
+      _ => return;
+    end;
+  end;
+end;
+""");
+
+var implicitLocalShadowBinding = new Binder().Bind(implicitLocalShadowTree);
+if (implicitLocalShadowBinding.Diagnostics.Count(diagnostic => diagnostic.Id == "ILC2244") < 3)
+{
+    failures.Add("Binder should reject implicit local names that shadow an active outer scope.");
+}
+
+var exceptionLocalShadowTree = SyntaxTree.Parse("""
+public class Exception
+begin
+end;
+
+public class Program
+begin
+  public method Main;
+  begin
+    var localValue := 1;
+    try
+      raise 'boom';
+    except
+      on localValue: Exception do
+      begin
+      end;
+    end;
+  end;
+end;
+""");
+
+var exceptionLocalShadowBinding = new Binder().Bind(exceptionLocalShadowTree);
+if (!exceptionLocalShadowBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
+{
+    failures.Add("Binder should reject exception handler names that shadow an active outer scope.");
+}
+
+var duplicateLambdaParameterTree = SyntaxTree.Parse("""
+public delegate signature Combiner(left: Integer; right: Integer): Integer;
+
+public class Program
+begin
+  public method Main;
+  begin
+    var combiner: Combiner := function(value: Integer; value: Integer): Integer => value;
+  end;
+end;
+""");
+
+var duplicateLambdaParameterBinding = new Binder().Bind(duplicateLambdaParameterTree);
+if (!duplicateLambdaParameterBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
+{
+    failures.Add("Binder should reject exact duplicate lambda parameter names.");
+}
 
 var invalidAssignmentTree = SyntaxTree.Parse("""
 public class Program
@@ -3095,10 +3329,26 @@ begin
 end;
 """);
 
+var invalidFinallyExitTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public method Main: Integer;
+  begin
+    try
+      exit 1;
+    finally
+      Result := 2;
+    end;
+  end;
+end;
+""");
+
 var invalidFinallyBinding = new Binder().Bind(invalidFinallyTree);
-if (!invalidFinallyBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2134"))
+var invalidFinallyExitBinding = new Binder().Bind(invalidFinallyExitTree);
+if (!invalidFinallyBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2134") ||
+    !invalidFinallyExitBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2134"))
 {
-    failures.Add("Binder should report unsupported return inside try/finally.");
+    failures.Add("Binder should report unsupported early routine exit inside try/finally.");
 }
 
 var invalidTypedCatchTree = SyntaxTree.Parse("""

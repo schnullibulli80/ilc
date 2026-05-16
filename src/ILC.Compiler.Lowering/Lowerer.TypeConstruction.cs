@@ -131,7 +131,7 @@ public sealed partial class Lowerer
             var currentGenericDefinition = knownTypes
                 .OfType<NamedTypeSymbol>()
                 .Where(candidate =>
-                    candidate.Name == simpleTypeName &&
+                    SemanticFacts.NameEquals(candidate.Name, simpleTypeName) &&
                     candidate.GenericArity == currentGenericArgumentNames.Count &&
                     candidate.GenericDefinition is null)
                 .OrderByDescending(GetGenericDefinitionRichnessLocal)
@@ -153,9 +153,9 @@ public sealed partial class Lowerer
         {
             var openTemplateCandidates = _knownMethods.Where(candidate =>
                 !string.IsNullOrWhiteSpace(candidate.DeclaringTypeName) &&
-                candidate.Name == currentMethod.Name &&
+                SemanticFacts.NameEquals(candidate.Name, currentMethod.Name) &&
                 candidate.Parameters.Count == currentMethod.Parameters.Count &&
-                candidate.DeclaringTypeName != currentMethod.DeclaringTypeName &&
+                !SemanticFacts.NameEquals(candidate.DeclaringTypeName, currentMethod.DeclaringTypeName) &&
                 TryParseConstructedTypeReference(candidate.DeclaringTypeName!, out _, out _))
                 .ToArray();
             var openTemplateMethod = openTemplateCandidates.FirstOrDefault(candidate =>
@@ -189,9 +189,9 @@ public sealed partial class Lowerer
                     $"typeArgumentCount={(typeArguments?.Count ?? 0)}, " +
                     $"templateMatches=[{string.Join(" | ", _knownMethods.Where(candidate =>
                         !string.IsNullOrWhiteSpace(candidate.DeclaringTypeName) &&
-                        candidate.Name == currentMethod.Name &&
+                        SemanticFacts.NameEquals(candidate.Name, currentMethod.Name) &&
                         candidate.Parameters.Count == currentMethod.Parameters.Count &&
-                        candidate.DeclaringTypeName != currentMethod.DeclaringTypeName &&
+                        !SemanticFacts.NameEquals(candidate.DeclaringTypeName, currentMethod.DeclaringTypeName) &&
                         TryParseConstructedTypeReference(candidate.DeclaringTypeName!, out _, out _))
                         .Select(candidate => $"{candidate.DeclaringTypeName}.{candidate.Name} declMatch={ReferenceEquals(candidate.Declaration, currentMethod.Declaration)} params=[{string.Join(", ", candidate.Parameters.Select(parameter => parameter.Type.Name))}] return={candidate.ReturnType.Name}"))}]");
             }
@@ -228,7 +228,7 @@ public sealed partial class Lowerer
             var definition = knownTypes
                 .OfType<NamedTypeSymbol>()
                 .Where(candidate =>
-                    candidate.Name == simpleTypeName &&
+                    SemanticFacts.NameEquals(candidate.Name, simpleTypeName) &&
                     candidate.GenericArity == resolvedArguments.Length &&
                     candidate.GenericDefinition is null)
                 .OrderByDescending(GetGenericDefinitionRichnessLocal)
@@ -245,7 +245,7 @@ public sealed partial class Lowerer
         if (currentMethod.DeclaringTypeName.StartsWith("Enumerable<", StringComparison.Ordinal) &&
             (type.Name.StartsWith("WhereEnumerable<", StringComparison.Ordinal) || type.Name.StartsWith("SelectEnumerable<", StringComparison.Ordinal)) &&
             ContainsOpenGenericPlaceholder(type) &&
-            (resolved is null || resolved.Name == type.Name))
+            (resolved is null || SemanticFacts.NameEquals(resolved.Name, type.Name)))
         {
             throw new InvalidOperationException(
                 "TryCloseTypeReferenceForCurrentMethod did not specialize enumerable pipeline helper type: " +
@@ -307,7 +307,7 @@ public sealed partial class Lowerer
                 var genericDefinition = knownTypes
                     .OfType<NamedTypeSymbol>()
                     .Where(candidate =>
-                        candidate.Name == simpleTypeName &&
+                        SemanticFacts.NameEquals(candidate.Name, simpleTypeName) &&
                         candidate.GenericArity == substitutedArguments.Length &&
                         candidate.GenericDefinition is null)
                     .OrderByDescending(GetGenericDefinitionRichnessLocal)
@@ -354,16 +354,16 @@ public sealed partial class Lowerer
                     },
                 GetterMethod = property.GetterMethod is null
                     ? null
-                    : methods.FirstOrDefault(method => method.Name == property.GetterMethod.Name && method.Parameters.Count == property.GetterMethod.Parameters.Count),
+                    : methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, property.GetterMethod.Name) && method.Parameters.Count == property.GetterMethod.Parameters.Count),
                 SetterMethod = property.SetterMethod is null
                     ? null
-                    : methods.FirstOrDefault(method => method.Name == property.SetterMethod.Name && method.Parameters.Count == property.SetterMethod.Parameters.Count),
+                    : methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, property.SetterMethod.Name) && method.Parameters.Count == property.SetterMethod.Parameters.Count),
                 ReadField = property.ReadField is null
                     ? null
-                    : fields.FirstOrDefault(field => field.Name == property.ReadField.Name),
+                    : fields.FirstOrDefault(field => SemanticFacts.NameEquals(field.Name, property.ReadField.Name)),
                 WriteField = property.WriteField is null
                     ? null
-                    : fields.FirstOrDefault(field => field.Name == property.WriteField.Name),
+                    : fields.FirstOrDefault(field => SemanticFacts.NameEquals(field.Name, property.WriteField.Name)),
                 DeclaringTypeName = closedName
             })
             .ToArray();
@@ -452,14 +452,14 @@ public sealed partial class Lowerer
                 candidateSimpleName = candidateSimpleName[(candidateSimpleName.LastIndexOf('.') + 1)..];
             }
 
-            if (!string.Equals(candidateSimpleName, simpleTypeName, StringComparison.Ordinal))
+            if (!SemanticFacts.NameEquals(candidateSimpleName, simpleTypeName))
             {
                 continue;
             }
 
             var candidateConstructor = candidateType.Methods.FirstOrDefault(method =>
                 method.IsConstructor &&
-                method.DeclaringTypeName == candidateType.Name &&
+                SemanticFacts.NameEquals(method.DeclaringTypeName, candidateType.Name) &&
                 method.Parameters.Count == argumentTypes.Count &&
                 method.Parameters.Select(parameter => parameter.Type.Name).SequenceEqual(argumentTypes.Select(type => type.Name), SemanticFacts.NameComparer));
             if (candidateConstructor is not null)

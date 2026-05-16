@@ -238,7 +238,7 @@ public sealed partial class Binder
             return true;
         }
 
-        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, "Invoke") && !method.IsStatic);
         if (invokeMethod is null)
         {
             return false;
@@ -336,42 +336,42 @@ public sealed partial class Binder
                 _ => null
             };
 
-            if (string.Equals(targetName, "EntryPoint", StringComparison.Ordinal))
+            if (SemanticFacts.NameEquals(targetName, "EntryPoint"))
             {
                 if (argument.Expression is LiteralExpressionSyntax { LiteralToken.Kind: SyntaxKind.StringToken, LiteralToken.Value: string value })
                 {
                     entryPoint = value;
                 }
             }
-            else if (string.Equals(targetName, "CallingConvention", StringComparison.Ordinal))
+            else if (SemanticFacts.NameEquals(targetName, "CallingConvention"))
             {
                 switch (argument.Expression)
                 {
-                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "StdCall", StringComparison.Ordinal):
-                    case MemberAccessExpressionSyntax { MemberName.Text: "StdCall" }:
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when SemanticFacts.NameEquals(name.Name.Parts[^1].Text, "StdCall"):
+                    case MemberAccessExpressionSyntax memberAccess when SemanticFacts.NameEquals(memberAccess.MemberName.Text, "StdCall"):
                         callingConvention = NativeCallingConvention.StdCall;
                         break;
-                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "Cdecl", StringComparison.Ordinal):
-                    case MemberAccessExpressionSyntax { MemberName.Text: "Cdecl" }:
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when SemanticFacts.NameEquals(name.Name.Parts[^1].Text, "Cdecl"):
+                    case MemberAccessExpressionSyntax memberAccess when SemanticFacts.NameEquals(memberAccess.MemberName.Text, "Cdecl"):
                         callingConvention = NativeCallingConvention.Cdecl;
                         break;
                 }
             }
-            else if (string.Equals(targetName, "StringReturn", StringComparison.Ordinal))
+            else if (SemanticFacts.NameEquals(targetName, "StringReturn"))
             {
                 switch (argument.Expression)
                 {
-                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "Utf8Owned", StringComparison.Ordinal):
-                    case MemberAccessExpressionSyntax { MemberName.Text: "Utf8Owned" }:
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when SemanticFacts.NameEquals(name.Name.Parts[^1].Text, "Utf8Owned"):
+                    case MemberAccessExpressionSyntax memberAccess when SemanticFacts.NameEquals(memberAccess.MemberName.Text, "Utf8Owned"):
                         stringReturnMarshalling = NativeStringReturnMarshalling.Utf8Owned;
                         break;
-                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when string.Equals(name.Name.Parts[^1].Text, "None", StringComparison.Ordinal):
-                    case MemberAccessExpressionSyntax { MemberName.Text: "None" }:
+                    case NameExpressionSyntax { Name.Parts.Count: > 0 } name when SemanticFacts.NameEquals(name.Name.Parts[^1].Text, "None"):
+                    case MemberAccessExpressionSyntax memberAccess when SemanticFacts.NameEquals(memberAccess.MemberName.Text, "None"):
                         stringReturnMarshalling = NativeStringReturnMarshalling.None;
                         break;
                 }
             }
-            else if (string.Equals(targetName, "StringFreeEntryPoint", StringComparison.Ordinal))
+            else if (SemanticFacts.NameEquals(targetName, "StringFreeEntryPoint"))
             {
                 if (argument.Expression is LiteralExpressionSyntax { LiteralToken.Kind: SyntaxKind.StringToken, LiteralToken.Value: string value })
                 {
@@ -386,7 +386,7 @@ public sealed partial class Binder
     }
 
     private static bool IsDllImportAttribute(AttributeSyntax attribute) =>
-        string.Equals(attribute.Name.Parts[^1].Text, "DllImport", StringComparison.Ordinal);
+        SemanticFacts.NameEquals(attribute.Name.Parts[^1].Text, "DllImport");
 
     private sealed record HostImportSignature(
         HostImportKind Kind,
@@ -454,9 +454,9 @@ public sealed partial class Binder
         }
 
         return HostImportSignatures.FirstOrDefault(signature =>
-            signature.DeclaringTypeName == declaringTypeName &&
-            signature.MethodName == methodName &&
-            signature.ReturnTypeName == returnType.Name &&
+            SemanticFacts.NameEquals(signature.DeclaringTypeName, declaringTypeName) &&
+            SemanticFacts.NameEquals(signature.MethodName, methodName) &&
+            SemanticFacts.NameEquals(signature.ReturnTypeName, returnType.Name) &&
             HostImportParameterTypesMatch(signature.ParameterTypeNames, parameters))?.Kind ?? HostImportKind.None;
     }
 

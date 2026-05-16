@@ -72,7 +72,7 @@ public sealed partial class Lowerer
 
                 var projectorConstructor = projectorType.Methods.FirstOrDefault(method =>
                     method.IsConstructor &&
-                    method.DeclaringTypeName == projectorType.Name &&
+                    SemanticFacts.NameEquals(method.DeclaringTypeName, projectorType.Name) &&
                     method.Parameters.Count == projectorExpression.Members.Count);
                 var projectorArgs = new List<IrValue>();
                 for (var memberIndex = 0; memberIndex < projectorExpression.Members.Count; memberIndex++)
@@ -152,7 +152,7 @@ public sealed partial class Lowerer
                     constructor = resolvedConstructedObjectType is NamedTypeSymbol namedConstructedType
                         ? namedConstructedType.Methods.FirstOrDefault(method =>
                             method.IsConstructor &&
-                            method.DeclaringTypeName == resolvedConstructedObjectType.Name &&
+                            SemanticFacts.NameEquals(method.DeclaringTypeName, resolvedConstructedObjectType.Name) &&
                             method.Parameters.Count == newExpression.Arguments.Count)
                         : SemanticFacts.ResolveConstructor(newExpression.TypeName, newExpression.Arguments.Count, _knownTypes, _knownMethods);
                 }
@@ -623,9 +623,11 @@ public sealed partial class Lowerer
         var constructor = delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2);
         if (targetMethod is null || constructor is null)
         {
-            if (currentMethod?.DeclaringTypeName == "Program" && currentMethod.Name == "Main")
+            if (currentMethod is not null &&
+                SemanticFacts.NameEquals(currentMethod.DeclaringTypeName, "Program") &&
+                SemanticFacts.NameEquals(currentMethod.Name, "Main"))
             {
-                var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+                var invokeMethod = delegateType.Methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, "Invoke") && !method.IsStatic);
                 var lambdaCandidates = _knownMethods
                     .Where(method => method.LambdaSource is not null)
                     .Select(method => $"{method.DeclaringTypeName}.{method.Name}({string.Join(", ", method.Parameters.Select(parameter => parameter.Type.Name))}):{method.ReturnType.Name}")
@@ -688,7 +690,7 @@ public sealed partial class Lowerer
 
         static bool TypesMatch(TypeSymbol left, TypeSymbol right) =>
             ReferenceEquals(left, right) ||
-            string.Equals(left.Name, right.Name, StringComparison.Ordinal);
+            SemanticFacts.NameEquals(left.Name, right.Name);
 
         MethodSymbol? targetMethod;
         using (Profile("TryLowerDelegateLambdaInto.ResolveTargetMethod"))
@@ -704,10 +706,11 @@ public sealed partial class Lowerer
             () => delegateType.Methods.FirstOrDefault(method => method.IsConstructor && method.Parameters.Count == 2));
         if (targetMethod is null || constructor is null)
         {
-            if (currentMethod?.DeclaringTypeName == "Program" &&
-                currentMethod.Name == "Main")
+            if (currentMethod is not null &&
+                SemanticFacts.NameEquals(currentMethod.DeclaringTypeName, "Program") &&
+                SemanticFacts.NameEquals(currentMethod.Name, "Main"))
             {
-                var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+                var invokeMethod = delegateType.Methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, "Invoke") && !method.IsStatic);
                 var helperCandidates = _knownLambdaMethods
                     .Select(method =>
                     {
@@ -734,7 +737,7 @@ public sealed partial class Lowerer
 
         IrValue targetObjectRegister;
         if (!targetMethod.IsStatic &&
-            _knownTypes.FirstOrDefault(type => type.Name == targetMethod.DeclaringTypeName) is NamedTypeSymbol closureType &&
+            _knownTypes.FirstOrDefault(type => SemanticFacts.NameEquals(type.Name, targetMethod.DeclaringTypeName)) is NamedTypeSymbol closureType &&
             closureType.Fields.Count > 0)
         {
             using (Profile("TryLowerDelegateLambdaInto.EmitClosure"))
@@ -784,7 +787,7 @@ public sealed partial class Lowerer
         Func<TypeSymbol, TypeSymbol, bool> typesMatch)
     {
         using var profile = Profile("TryLowerDelegateLambdaInto.ResolveTargetFallback");
-        var invokeMethod = delegateType.Methods.FirstOrDefault(method => method.Name == "Invoke" && !method.IsStatic);
+        var invokeMethod = delegateType.Methods.FirstOrDefault(method => SemanticFacts.NameEquals(method.Name, "Invoke") && !method.IsStatic);
         if (invokeMethod is null)
         {
             return null;
@@ -1466,7 +1469,7 @@ public sealed partial class Lowerer
         var candidates = receiverType.Methods
             .Where(method =>
                 method.IsStatic &&
-                method.Name == memberAccess.MemberName.Text &&
+                SemanticFacts.NameEquals(method.Name, memberAccess.MemberName.Text) &&
                 SemanticFacts.SupportsArgumentCount(method, argumentCount))
             .Concat(EnumerateKnownMethodsByDeclaringTypeName(receiverType.Name, memberAccess.MemberName.Text, true, argumentCount));
         return TrySelectSimpleCallReturnType(candidates, currentMethod, out type);
@@ -1490,7 +1493,7 @@ public sealed partial class Lowerer
             .SelectMany(knownType => knownType.Methods
                 .Where(method =>
                     !method.IsStatic &&
-                    method.Name == memberAccess.MemberName.Text &&
+                    SemanticFacts.NameEquals(method.Name, memberAccess.MemberName.Text) &&
                     SemanticFacts.SupportsArgumentCount(method, argumentCount))
                 .Concat(EnumerateKnownMethodsByDeclaringTypeName(knownType.Name, memberAccess.MemberName.Text, false, argumentCount)));
         return TrySelectSimpleCallReturnType(candidates, currentMethod, out type);
@@ -2561,13 +2564,13 @@ public sealed partial class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        if (invocation.Method.Name == "Parse" && invocation.Method.DeclaringTypeName == TypeSymbol.Integer.Name && invocation.Method.IsStatic && arguments.Count == 1)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "Parse") && SemanticFacts.NameEquals(invocation.Method.DeclaringTypeName, TypeSymbol.Integer.Name) && invocation.Method.IsStatic && arguments.Count == 1)
         {
             instructions.Add(new IrInstruction(IrOpCode.ParseStringToInteger, destination, arguments[0]));
             return true;
         }
 
-        if (invocation.Method.Name == "ToString" && invocation.Method.DeclaringTypeName == TypeSymbol.Integer.Name && arguments.Count == 0)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "ToString") && SemanticFacts.NameEquals(invocation.Method.DeclaringTypeName, TypeSymbol.Integer.Name) && arguments.Count == 0)
         {
             var integerReceiver = boundCall is null
                 ? ResolveCallReceiver(target, registerByName, arrayShapesByName, registers, instructions, currentMethod)
@@ -2582,7 +2585,7 @@ public sealed partial class Lowerer
             return true;
         }
 
-        if (invocation.Method.DeclaringTypeName != TypeSymbol.String.Name)
+        if (!SemanticFacts.NameEquals(invocation.Method.DeclaringTypeName, TypeSymbol.String.Name))
         {
             return false;
         }
@@ -2596,7 +2599,7 @@ public sealed partial class Lowerer
             return false;
         }
 
-        if (invocation.Method.Name == "Substring" && arguments.Count == 2)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "Substring") && arguments.Count == 2)
         {
             var oneRegister = AllocateTemp(TypeSymbol.Integer, registers);
             instructions.Add(new IrInstruction(IrOpCode.LoadConstant, oneRegister, 1));
@@ -2608,49 +2611,49 @@ public sealed partial class Lowerer
             return true;
         }
 
-        if (invocation.Method.Name == "Replace" && arguments.Count == 2)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "Replace") && arguments.Count == 2)
         {
             instructions.Add(new IrInstruction(IrOpCode.ReplaceString, destination, new IrStringReplaceTarget(receiver, arguments[0], arguments[1])));
             return true;
         }
 
-        if (invocation.Method.Name == "Insert" && arguments.Count == 2)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "Insert") && arguments.Count == 2)
         {
             instructions.Add(new IrInstruction(IrOpCode.InsertString, destination, new IrStringInsertTarget(receiver, arguments[0], arguments[1])));
             return true;
         }
 
-        if (invocation.Method.Name == "Remove" && arguments.Count == 2)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "Remove") && arguments.Count == 2)
         {
             instructions.Add(new IrInstruction(IrOpCode.RemoveString, destination, new IrStringRemoveTarget(receiver, arguments[0], arguments[1])));
             return true;
         }
 
-        if (invocation.Method.Name == "ToUpper" && arguments.Count == 0)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "ToUpper") && arguments.Count == 0)
         {
             instructions.Add(new IrInstruction(IrOpCode.ToUpperString, destination, receiver));
             return true;
         }
 
-        if (invocation.Method.Name == "ToLower" && arguments.Count == 0)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "ToLower") && arguments.Count == 0)
         {
             instructions.Add(new IrInstruction(IrOpCode.ToLowerString, destination, receiver));
             return true;
         }
 
-        if (invocation.Method.Name == "Trim" && arguments.Count == 0)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "Trim") && arguments.Count == 0)
         {
             instructions.Add(new IrInstruction(IrOpCode.TrimString, destination, receiver));
             return true;
         }
 
-        if (invocation.Method.Name == "TrimStart" && arguments.Count == 0)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "TrimStart") && arguments.Count == 0)
         {
             instructions.Add(new IrInstruction(IrOpCode.TrimStartString, destination, receiver));
             return true;
         }
 
-        if (invocation.Method.Name == "TrimEnd" && arguments.Count == 0)
+        if (SemanticFacts.NameEquals(invocation.Method.Name, "TrimEnd") && arguments.Count == 0)
         {
             instructions.Add(new IrInstruction(IrOpCode.TrimEndString, destination, receiver));
             return true;
@@ -2661,15 +2664,12 @@ public sealed partial class Lowerer
             return false;
         }
 
-        var opcode = invocation.Method.Name switch
-        {
-            "StartsWith" => IrOpCode.StartsWithString,
-            "EndsWith" => IrOpCode.EndsWithString,
-            "Contains" => IrOpCode.ContainsString,
-            "IndexOf" => IrOpCode.IndexOfString,
-            "LastIndexOf" => IrOpCode.LastIndexOfString,
-            _ => (IrOpCode?)null
-        };
+        var opcode = SemanticFacts.NameEquals(invocation.Method.Name, "StartsWith") ? IrOpCode.StartsWithString :
+            SemanticFacts.NameEquals(invocation.Method.Name, "EndsWith") ? IrOpCode.EndsWithString :
+            SemanticFacts.NameEquals(invocation.Method.Name, "Contains") ? IrOpCode.ContainsString :
+            SemanticFacts.NameEquals(invocation.Method.Name, "IndexOf") ? IrOpCode.IndexOfString :
+            SemanticFacts.NameEquals(invocation.Method.Name, "LastIndexOf") ? IrOpCode.LastIndexOfString :
+            (IrOpCode?)null;
         if (opcode is null)
         {
             return false;
@@ -2689,8 +2689,8 @@ public sealed partial class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        if (invocation.Method.Name != "TryParse" ||
-            invocation.Method.DeclaringTypeName != TypeSymbol.Integer.Name ||
+        if (!SemanticFacts.NameEquals(invocation.Method.Name, "TryParse") ||
+            !SemanticFacts.NameEquals(invocation.Method.DeclaringTypeName, TypeSymbol.Integer.Name) ||
             !invocation.Method.IsStatic ||
             call.Arguments.Count != 2)
         {
@@ -2717,7 +2717,7 @@ public sealed partial class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        if (invocation.Method.Name != "TryGetValue" ||
+        if (!SemanticFacts.NameEquals(invocation.Method.Name, "TryGetValue") ||
             invocation.Method.IsStatic ||
             invocation.Method.Parameters.Count != 2 ||
             invocation.Method.Parameters[1].PassingKind != ParameterPassingKind.Out ||
@@ -2738,19 +2738,19 @@ public sealed partial class Lowerer
         LowerExpressionInto(call.Arguments[0].Expression, keyRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
 
         var indexOfKeyMethod = _knownMethods.FirstOrDefault(method =>
-            method.DeclaringTypeName == receiverType.Name &&
-            method.Name == "IndexOfKey" &&
+            SemanticFacts.NameEquals(method.DeclaringTypeName, receiverType.Name) &&
+            SemanticFacts.NameEquals(method.Name, "IndexOfKey") &&
             !method.IsStatic &&
             method.Parameters.Count == 1 &&
-            method.Parameters[0].Type.Name == keyType.Name);
+            SemanticFacts.NameEquals(method.Parameters[0].Type.Name, keyType.Name));
         if (indexOfKeyMethod is null)
         {
             throw new InvalidOperationException($"Cannot lower dictionary TryGetValue without '{receiverType.Name}.IndexOfKey'.");
         }
 
         var valuesField = _knownFields.FirstOrDefault(field =>
-            field.DeclaringTypeName == receiverType.Name &&
-            field.Name == "Values" &&
+            SemanticFacts.NameEquals(field.DeclaringTypeName, receiverType.Name) &&
+            SemanticFacts.NameEquals(field.Name, "Values") &&
             !field.IsStatic);
         if (valuesField is null)
         {
@@ -2807,8 +2807,8 @@ public sealed partial class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
-        if (invocation.Method.Name != "TryToInteger" ||
-            invocation.Method.DeclaringTypeName != "Convert" ||
+        if (!SemanticFacts.NameEquals(invocation.Method.Name, "TryToInteger") ||
+            !SemanticFacts.NameEquals(invocation.Method.DeclaringTypeName, "Convert") ||
             !invocation.Method.IsStatic ||
             invocation.Method.Parameters.Count != 2 ||
             invocation.Method.Parameters[1].PassingKind != ParameterPassingKind.Out ||
@@ -2828,8 +2828,8 @@ public sealed partial class Lowerer
 
     private static bool IsDictionaryType(TypeSymbol? type) =>
         type is NamedTypeSymbol namedType
-            ? namedType.Name == "Dictionary" || namedType.GenericDefinition?.Name == "Dictionary"
-            : type?.Name == "Dictionary" || (type?.Name?.StartsWith("Dictionary<", StringComparison.Ordinal) ?? false);
+            ? SemanticFacts.NameEquals(namedType.Name, "Dictionary") || SemanticFacts.NameEquals(namedType.GenericDefinition?.Name, "Dictionary")
+            : SemanticFacts.NameEquals(type?.Name, "Dictionary") || (type?.Name?.StartsWith("Dictionary<", StringComparison.OrdinalIgnoreCase) ?? false);
 
     private void StoreValueIntoTarget(
         ExpressionSyntax target,
@@ -3031,7 +3031,7 @@ public sealed partial class Lowerer
 
         return _knownTypes
             .OfType<NamedTypeSymbol>()
-            .FirstOrDefault(type => type.IsRecord && type.Name == leftType.Name);
+            .FirstOrDefault(type => type.IsRecord && SemanticFacts.NameEquals(type.Name, leftType.Name));
     }
 
     private static IrOpCode GetEqualityCompareOp(TypeSymbol type)

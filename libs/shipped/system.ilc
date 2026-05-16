@@ -112,20 +112,20 @@ begin
       return '';
     end;
 
-    var result := '';
+    Result := '';
     var index := 0;
     while index < lines.Length do
     begin
       if index > 0 then
       begin
-        result := result + NewLine();
+        Result := Result + NewLine();
       end;
 
-      result := result + lines[index];
+      Result := Result + lines[index];
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -509,12 +509,12 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Attempts to convert a string to an integer.</summary>
   /// <param name="value">The string to convert.</param>
-  /// <param name="result">The integer representation of the string.</param>
+  /// <param name="parsedValue">The integer representation of the string.</param>
   /// <returns>true if the conversion was successful; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public static function TryToInteger(value: String; out result: Integer): Boolean;
+  public static function TryToInteger(value: String; out parsedValue: Integer): Boolean;
   begin
-    return Integer.TryParse(value, result);
+    return Integer.TryParse(value, parsedValue);
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————

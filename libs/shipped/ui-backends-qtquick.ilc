@@ -44,7 +44,7 @@ end;
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 /// <summary>Represents a callback function for Qt Quick interactions.</summary>
 /// <param name="interactionToken">An integer token representing the interaction.</param>
-/// <returns>An integer result from handling the interaction.</returns>
+/// <returns>An integer Result from handling the interaction.</returns>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function QtQuickInteractionCallback(interactionToken: Integer): Integer;
 
@@ -90,7 +90,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Shows the specified window.</summary>
   /// <param name="windowHandle">The native handle of the window to show.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function ShowWindow(windowHandle: NativeHandle): Integer;
 
@@ -102,7 +102,7 @@ begin
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="width">The desired width of the window.</param>
   /// <param name="height">The desired height of the window.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetWindowSize(windowHandle: NativeHandle; width: Integer; height: Integer): Integer;
 
@@ -114,7 +114,7 @@ begin
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="minWidth">The minimum width of the window.</param>
   /// <param name="minHeight">The minimum height of the window.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetWindowMinimumSize(windowHandle: NativeHandle; minWidth: Integer; minHeight: Integer): Integer;
 
@@ -125,7 +125,7 @@ begin
   /// <summary>Sets the background color of the specified window.</summary>
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="color">The background color.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetWindowBackground(windowHandle: NativeHandle; color: String): Integer;
 
@@ -145,7 +145,7 @@ begin
   /// <summary>Sets the root name of the specified window.</summary>
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="rootName">The root name to set.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetRootName(windowHandle: NativeHandle; rootName: String): Integer;
 
@@ -156,7 +156,7 @@ begin
   /// <summary>Sets the QML content of the specified window.</summary>
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="qmlSource">The QML source to set as the content.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetContentQml(windowHandle: NativeHandle; qmlSource: String): Integer;
 
@@ -168,7 +168,7 @@ begin
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="objectName">The name of the element.</param>
   /// <param name="text">The text to set.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetElementText(windowHandle: NativeHandle; objectName: String; text: String): Integer;
 
@@ -180,7 +180,7 @@ begin
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="objectName">The name of the element.</param>
   /// <param name="color">The color to set.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function SetElementColor(windowHandle: NativeHandle; objectName: String; color: String): Integer;
 
@@ -190,7 +190,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Runs the Qt Quick backend to process interactions.</summary>
   /// <param name="backendHandle">The native handle of the backend instance.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function RunBackend(backendHandle: NativeHandle): Integer;
 
@@ -201,7 +201,7 @@ begin
   /// <summary>Runs the Qt Quick backend with a click callback.</summary>
   /// <param name="backendHandle">The native handle of the backend instance.</param>
   /// <param name="callback">The callback function to handle click interactions.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function RunBackendWithClickCallback(backendHandle: NativeHandle; callback: QtQuickInteractionCallback): Integer;
 
@@ -234,7 +234,7 @@ begin
   /// <summary>Focuses the specified text input element in the specified window.</summary>
   /// <param name="windowHandle">The native handle of the window.</param>
   /// <param name="textBoxId">The ID of the text input element.</param>
-  /// <returns>An integer result indicating success or failure.</returns>
+  /// <returns>An integer Result indicating success or failure.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static extern function FocusTextInput(windowHandle: NativeHandle; textBoxId: Integer): Integer;
 end;
@@ -1239,7 +1239,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Handles a native interaction.</summary>
   /// <param name="interactionToken">The interaction token.</param>
-  /// <returns>The result of the interaction.</returns>
+  /// <returns>The Result of the interaction.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function HandleNativeInteraction(interactionToken: Integer): Integer;
   begin
@@ -1257,7 +1257,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Dispatches a native interaction.</summary>
   /// <param name="interactionToken">The interaction token.</param>
-  /// <returns>The result of the interaction.</returns>
+  /// <returns>The Result of the interaction.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeInteraction(interactionToken: Integer): Integer;
   begin
@@ -1290,7 +1290,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Dispatches a native click.</summary>
   /// <param name="buttonId">The ID of the button.</param>
-  /// <returns>The result of the click.</returns>
+  /// <returns>The Result of the click.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeClick(buttonId: Integer): Integer;
   begin
@@ -1333,7 +1333,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Dispatches a native slider change.</summary>
   /// <param name="sliderId">The ID of the slider.</param>
-  /// <returns>The result of the slider change.</returns>
+  /// <returns>The Result of the slider change.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeSliderChanged(sliderId: Integer): Integer;
   begin
@@ -1383,7 +1383,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Dispatches a native checkbox toggle.</summary>
   /// <param name="checkBoxId">The ID of the checkbox.</param>
-  /// <returns>The result of the toggle.</returns>
+  /// <returns>The Result of the toggle.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeCheckBoxToggled(checkBoxId: Integer): Integer;
   begin
@@ -1429,7 +1429,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Dispatches a native text change.</summary>
   /// <param name="textBoxId">The ID of the text box.</param>
-  /// <returns>The result of the text change.</returns>
+  /// <returns>The Result of the text change.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function DispatchNativeTextChanged(textBoxId: Integer): Integer;
   begin
@@ -1497,38 +1497,38 @@ begin
       return '';
     end;
 
-    var result := '';
+    Result := '';
     var index := 0;
     while index < value.Length do
     begin
       var current := value.Substring(index, 1);
       if current = '"' then
       begin
-        result := result + '\' + '"';
+        Result := Result + '\' + '"';
       end
       else if current = '\' then
       begin
-        result := result + '\' + '\';
+        Result := Result + '\' + '\';
       end
       else if current = '
 ' then
       begin
-        result := result + '\' + 'n';
+        Result := Result + '\' + 'n';
       end
       else if current = '
 ' then
       begin
-        result := result + '\' + 'r';
+        Result := Result + '\' + 'r';
       end
       else
       begin
-        result := result + current;
+        Result := Result + current;
       end;
 
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1682,17 +1682,17 @@ begin
         layoutWidth := '380';
       end;
 
-      var result := containerType + ' { spacing: ' + spacing + '; ';
+      Result := containerType + ' { spacing: ' + spacing + '; ';
       if centerInParent then
       begin
-        result := result + 'id: ilcContentRoot; anchors.centerIn: parent; ';
+        Result := Result + 'id: ilcContentRoot; anchors.centerIn: parent; ';
       end;
 
-      result := result + 'width: ' + layoutWidth + '; height: ' + layoutHeight + '; ';
+      Result := Result + 'width: ' + layoutWidth + '; height: ' + layoutHeight + '; ';
 
       if panel.Name <> '' then
       begin
-        result := result + 'objectName: "' + EscapeQmlString(panel.Name) + '"; ';
+        Result := Result + 'objectName: "' + EscapeQmlString(panel.Name) + '"; ';
       end;
 
       var children := panel.Children;
@@ -1701,13 +1701,13 @@ begin
         var index := 0;
         while index < children.Count do
         begin
-          result := result + BuildViewQml(children[index], false) + ' ';
+          Result := Result + BuildViewQml(children[index], false) + ' ';
           index := index + 1;
         end;
       end;
 
-      result := result + '}';
-      return result;
+      Result := Result + '}';
+      return Result;
     end;
 
     if view is TextBlock then
@@ -2021,7 +2021,7 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Runs the application.</summary>
   /// <param name="application">The application to run.</param>
-  /// <returns>The result of the run.</returns>
+  /// <returns>The Result of the run.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function Run(application: Application): Integer;
   begin

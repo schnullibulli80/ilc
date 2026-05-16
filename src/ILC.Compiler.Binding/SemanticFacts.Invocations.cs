@@ -118,7 +118,7 @@ public static partial class SemanticFacts
             ? TryResolveValueReferenceType(receiverName.Name, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
                 ?? InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes)
             : InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
-        if (memberAccess.MemberName.Text == "Length" && HasLengthProperty(receiverType))
+        if (NameEquals(memberAccess.MemberName.Text, "Length") && HasLengthProperty(receiverType))
         {
             return new MemberResolution(displayName, TypeSymbol.Integer);
         }

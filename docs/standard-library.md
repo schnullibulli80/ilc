@@ -207,7 +207,7 @@ currently implemented entirely in ILC source and does not depend on host imports
 Current shipped conversion helpers:
 
 - `ToInteger(value: String): Integer`
-- `TryToInteger(value: String; out result: Integer): Boolean`
+- `TryToInteger(value: String; out parsedValue: Integer): Boolean`
 - `ToString(value: Integer): String`
 - `ToBoolean(value: Integer): Boolean`
 
@@ -765,7 +765,7 @@ the VM.
 ### 11.2 `Integer` intrinsic methods
 
 - `Integer.Parse(value: String): Integer`
-- `Integer.TryParse(value: String; out result: Integer): Boolean`
+- `Integer.TryParse(value: String; out parsedValue: Integer): Boolean`
 - `value.ToString(): String` for `Integer`
 
 `Integer.TryParse(...)`, `System.Convert.TryToInteger(...)`, and

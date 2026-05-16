@@ -303,7 +303,7 @@ public sealed partial class Binder
         using (Profile(profiler, "ResolveEntryPoint"))
         {
             explicitEntryPoints = knownMethods
-                .Where(method => method.Name == "Main")
+                .Where(method => SemanticFacts.NameEquals(method.Name, "Main"))
                 .ToArray();
         }
 

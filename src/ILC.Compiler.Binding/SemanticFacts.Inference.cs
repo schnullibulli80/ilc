@@ -88,8 +88,8 @@ public static partial class SemanticFacts
             CallExpressionSyntax call => call.Target is MemberAccessExpressionSyntax memberAccess &&
                 memberAccess.Receiver is NameExpressionSyntax receiverName &&
                 knownMethods.FirstOrDefault(method =>
-                    method.DeclaringTypeName == receiverName.Name.ToDisplayString() &&
-                    method.Name == memberAccess.MemberName.Text &&
+                    NameEquals(method.DeclaringTypeName, receiverName.Name.ToDisplayString()) &&
+                    NameEquals(method.Name, memberAccess.MemberName.Text) &&
                     method.Parameters.Count == call.Arguments.Count &&
                     method.IsStatic) is { } staticMethod
                     ? staticMethod.ReturnType

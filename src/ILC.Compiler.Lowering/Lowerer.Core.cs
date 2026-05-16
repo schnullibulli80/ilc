@@ -281,7 +281,7 @@ public sealed partial class Lowerer
 
         var normalized = declaringType.Methods
             .Where(candidate =>
-                candidate.Name == method.Name &&
+                SemanticFacts.NameEquals(candidate.Name, method.Name) &&
                 candidate.IsStatic == method.IsStatic &&
                 candidate.IsConstructor == method.IsConstructor &&
                 candidate.Parameters.Count == method.Parameters.Count)

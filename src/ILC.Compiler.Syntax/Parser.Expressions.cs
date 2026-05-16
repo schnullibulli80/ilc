@@ -283,7 +283,7 @@ internal sealed partial class Parser
             return ParsePostfixExpression(expression);
         }
 
-        if (name.Parts.Count >= 2 && name.Parts[^1].Text == "Length")
+        if (name.Parts.Count >= 2 && string.Equals(name.Parts[^1].Text, "Length", StringComparison.OrdinalIgnoreCase))
         {
             expression = new ArrayLengthExpressionSyntax(new QualifiedNameSyntax(name.Parts.Take(name.Parts.Count - 1).ToArray()));
             return ParsePostfixExpression(expression);
@@ -495,7 +495,7 @@ internal sealed partial class Parser
             joinOnKeyword = Match(SyntaxKind.OnKeyword);
             joinLeftExpression = ParseExpression();
             if (IsIdentifierLike(Current.Kind) &&
-                string.Equals(Current.Text, "equals", StringComparison.Ordinal))
+                string.Equals(Current.Text, "equals", StringComparison.OrdinalIgnoreCase))
             {
                 joinEqualsKeyword = NextToken();
             }
@@ -556,7 +556,7 @@ internal sealed partial class Parser
             orderByKeyword = Match(SyntaxKind.OrderByKeyword);
             orderByExpression = ParseExpression();
             if (IsIdentifierLike(Current.Kind) &&
-                string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                string.Equals(Current.Text, "descending", StringComparison.OrdinalIgnoreCase))
             {
                 descendingKeyword = NextToken();
             }
@@ -566,18 +566,18 @@ internal sealed partial class Parser
                 thenByCommaToken = Match(SyntaxKind.CommaToken);
                 thenByExpression = ParseExpression();
                 if (IsIdentifierLike(Current.Kind) &&
-                    string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                    string.Equals(Current.Text, "descending", StringComparison.OrdinalIgnoreCase))
                 {
                     thenByDescendingKeyword = NextToken();
                 }
             }
             else if (IsIdentifierLike(Current.Kind) &&
-                     string.Equals(Current.Text, "thenby", StringComparison.Ordinal))
+                     string.Equals(Current.Text, "thenby", StringComparison.OrdinalIgnoreCase))
             {
                 thenByKeyword = NextToken();
                 thenByExpression = ParseExpression();
                 if (IsIdentifierLike(Current.Kind) &&
-                    string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                    string.Equals(Current.Text, "descending", StringComparison.OrdinalIgnoreCase))
                 {
                     thenByDescendingKeyword = NextToken();
                 }
@@ -591,12 +591,12 @@ internal sealed partial class Parser
         SyntaxToken selectKeyword;
         ExpressionSyntax selectExpression;
         if (IsIdentifierLike(Current.Kind) &&
-            string.Equals(Current.Text, "group", StringComparison.Ordinal))
+            string.Equals(Current.Text, "group", StringComparison.OrdinalIgnoreCase))
         {
             groupKeyword = NextToken();
             groupExpression = ParseExpression();
             if (IsIdentifierLike(Current.Kind) &&
-                string.Equals(Current.Text, "by", StringComparison.Ordinal))
+                string.Equals(Current.Text, "by", StringComparison.OrdinalIgnoreCase))
             {
                 groupByKeyword = NextToken();
             }
@@ -655,7 +655,7 @@ internal sealed partial class Parser
                 continuationOrderByKeyword = Match(SyntaxKind.OrderByKeyword);
                 continuationOrderByExpression = ParseExpression();
                 if (IsIdentifierLike(Current.Kind) &&
-                    string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                    string.Equals(Current.Text, "descending", StringComparison.OrdinalIgnoreCase))
                 {
                     continuationDescendingKeyword = NextToken();
                 }
@@ -665,18 +665,18 @@ internal sealed partial class Parser
                     continuationThenByCommaToken = Match(SyntaxKind.CommaToken);
                     continuationThenByExpression = ParseExpression();
                     if (IsIdentifierLike(Current.Kind) &&
-                        string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                        string.Equals(Current.Text, "descending", StringComparison.OrdinalIgnoreCase))
                     {
                         continuationThenByDescendingKeyword = NextToken();
                     }
                 }
                 else if (IsIdentifierLike(Current.Kind) &&
-                         string.Equals(Current.Text, "thenby", StringComparison.Ordinal))
+                         string.Equals(Current.Text, "thenby", StringComparison.OrdinalIgnoreCase))
                 {
                     continuationThenByKeyword = NextToken();
                     continuationThenByExpression = ParseExpression();
                     if (IsIdentifierLike(Current.Kind) &&
-                        string.Equals(Current.Text, "descending", StringComparison.Ordinal))
+                        string.Equals(Current.Text, "descending", StringComparison.OrdinalIgnoreCase))
                     {
                         continuationThenByDescendingKeyword = NextToken();
                     }

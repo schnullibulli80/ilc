@@ -184,20 +184,20 @@ public delegate function CollectionSelector<TSource, TCollection>(value: TSource
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • DELEGATE • ResultSelector<TSource, TCollection, TResult>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Represents a result projection applied to an enumerable pipeline after a collection projection.</summary>
+/// <summary>Represents a Result projection applied to an enumerable pipeline after a collection projection.</summary>
 /// <param name="source">The original value before projection.</param>
 /// <param name="value">The value after collection projection.</param>
-/// <returns>The projected result.</returns>
+/// <returns>The projected Result.</returns>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function ResultSelector<TSource, TCollection, TResult>(source: TSource; value: TCollection): TResult;
 
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // • DELEGATE • GroupResultSelector<TSource, TCollection, TResult>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-/// <summary>Represents a result projection applied to an enumerable pipeline after a group projection.</summary>
+/// <summary>Represents a Result projection applied to an enumerable pipeline after a group projection.</summary>
 /// <param name="source">The original value before projection.</param>
 /// <param name="group">The group of values after collection projection.</param>
-/// <returns>The projected result.</returns>
+/// <returns>The projected Result.</returns>
 //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 public delegate function GroupResultSelector<TSource, TCollection, TResult>(source: TSource; group: IEnumerable<TCollection>): TResult;
 
@@ -1527,29 +1527,29 @@ begin
       raise new Exception('Enumerable selector must not be nil.');
     end;
 
-    var result := ToList(source);
+    var ordered := ToList(source);
     var index := 1;
-    while index < result.Count do
+    while index < ordered.Count do
     begin
-      var currentItem := result[index];
+      var currentItem := ordered[index];
       var currentKey := selector(currentItem);
       var insertIndex := index - 1;
       while insertIndex >= 0 do
       begin
-        if selector(result[insertIndex]) <= currentKey then
+        if selector(ordered[insertIndex]) <= currentKey then
         begin
           break;
         end;
 
-        result[insertIndex + 1] := result[insertIndex];
+        ordered[insertIndex + 1] := ordered[insertIndex];
         insertIndex := insertIndex - 1;
       end;
 
-      result[insertIndex + 1] := currentItem;
+      ordered[insertIndex + 1] := currentItem;
       index := index + 1;
     end;
 
-    return result;
+    return ordered;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1572,29 +1572,29 @@ begin
       raise new Exception('Enumerable selector must not be nil.');
     end;
 
-    var result := ToList(source);
+    var ordered := ToList(source);
     var index := 1;
-    while index < result.Count do
+    while index < ordered.Count do
     begin
-      var currentItem := result[index];
+      var currentItem := ordered[index];
       var currentKey := selector(currentItem);
       var insertIndex := index - 1;
       while insertIndex >= 0 do
       begin
-        if selector(result[insertIndex]) >= currentKey then
+        if selector(ordered[insertIndex]) >= currentKey then
         begin
           break;
         end;
 
-        result[insertIndex + 1] := result[insertIndex];
+        ordered[insertIndex + 1] := ordered[insertIndex];
         insertIndex := insertIndex - 1;
       end;
 
-      result[insertIndex + 1] := currentItem;
+      ordered[insertIndex + 1] := currentItem;
       index := index + 1;
     end;
 
-    return result;
+    return ordered;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1864,13 +1864,13 @@ begin
       return fallback;
     end;
 
-    var result := enumerator.Current;
+    Result := enumerator.Current;
     if enumerator.MoveNext() then
     begin
       raise new Exception('Enumerable sequence contains more than one element.');
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1893,13 +1893,13 @@ begin
       raise new Exception('Enumerable sequence contains no elements.');
     end;
 
-    var result := enumerator.Current;
+    Result := enumerator.Current;
     if enumerator.MoveNext() then
     begin
       raise new Exception('Enumerable sequence contains more than one element.');
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1924,7 +1924,7 @@ begin
 
     var fallback: T;
     var hasResult := false;
-    var result := fallback;
+    Result := fallback;
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
     begin
@@ -1936,11 +1936,11 @@ begin
         end;
 
         hasResult := true;
-        result := enumerator.Current;
+        Result := enumerator.Current;
       end;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -1965,7 +1965,7 @@ begin
 
     var fallback: T;
     var hasResult := false;
-    var result := fallback;
+    Result := fallback;
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
     begin
@@ -1977,13 +1977,13 @@ begin
         end;
 
         hasResult := true;
-        result := enumerator.Current;
+        Result := enumerator.Current;
       end;
     end;
 
     if hasResult then
     begin
-      return result;
+      return Result;
     end;
 
     raise new Exception('Enumerable sequence contains no matching element.');
@@ -2004,16 +2004,16 @@ begin
     end;
 
     var fallback: T;
-    var result := fallback;
+    Result := fallback;
     var hasResult := false;
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
     begin
       hasResult := true;
-      result := enumerator.Current;
+      Result := enumerator.Current;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2036,13 +2036,13 @@ begin
       raise new Exception('Enumerable sequence contains no elements.');
     end;
 
-    var result := enumerator.Current;
+    Result := enumerator.Current;
     while enumerator.MoveNext() do
     begin
-      result := enumerator.Current;
+      Result := enumerator.Current;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2066,7 +2066,7 @@ begin
     end;
 
     var fallback: T;
-    var result := fallback;
+    Result := fallback;
     var hasResult := false;
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
@@ -2074,11 +2074,11 @@ begin
       if predicate(enumerator.Current) then
       begin
         hasResult := true;
-        result := enumerator.Current;
+        Result := enumerator.Current;
       end;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2102,7 +2102,7 @@ begin
     end;
 
     var fallback: T;
-    var result := fallback;
+    Result := fallback;
     var hasResult := false;
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
@@ -2110,13 +2110,13 @@ begin
       if predicate(enumerator.Current) then
       begin
         hasResult := true;
-        result := enumerator.Current;
+        Result := enumerator.Current;
       end;
     end;
 
     if hasResult then
     begin
-      return result;
+      return Result;
     end;
 
     raise new Exception('Enumerable sequence contains no matching element.');
@@ -2136,14 +2136,14 @@ begin
       raise new Exception('Enumerable source must not be nil.');
     end;
 
-    var result := new List<T>();
+    Result := new List<T>();
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
     begin
-      result.Add(enumerator.Current);
+      Result.Add(enumerator.Current);
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2178,7 +2178,7 @@ begin
   /// <summary>Projects each element of a sequence into a new form.</summary>
   /// <param name="source">The enumerable source to project.</param>
   /// <param name="selector">A transform function to apply to each element.</param>
-  /// <returns>An enumerable whose elements are the result of invoking the transform function on each element of the source.</returns>
+  /// <returns>An enumerable whose elements are the Result of invoking the transform function on each element of the source.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Select(source: IEnumerable<TSource>; selector: Selector<TSource, TResult>): IEnumerable<TResult>;
   begin
@@ -2209,7 +2209,7 @@ begin
   /// <param name="source">The enumerable source to project.</param>
   /// <param name="collectionSelector">A transform function to apply to each element that returns an enumerable.</param>
   /// <param name="resultSelector">A transform function to apply to each element of the intermediate sequence.</param>
-  /// <returns>An enumerable whose elements are the result of invoking the transform functions on each element of the source.</returns>
+  /// <returns>An enumerable whose elements are the Result of invoking the transform functions on each element of the source.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function SelectMany(source: IEnumerable<TFirst>; collectionSelector: CollectionSelector<TFirst, TSecond>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
   begin
@@ -2228,7 +2228,7 @@ begin
       raise new Exception('Enumerable result selector must not be nil.');
     end;
 
-    var result := new List<TThird>();
+    var projected := new List<TThird>();
     var outerEnumerator := source.GetEnumerator();
     while outerEnumerator.MoveNext() do
     begin
@@ -2242,11 +2242,11 @@ begin
       var innerEnumerator := innerSource.GetEnumerator();
       while innerEnumerator.MoveNext() do
       begin
-        result.Add(resultSelector(outerValue, innerEnumerator.Current));
+        projected.Add(resultSelector(outerValue, innerEnumerator.Current));
       end;
     end;
 
-    return result;
+    return projected;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2274,7 +2274,7 @@ begin
       raise new Exception('Enumerable element selector must not be nil.');
     end;
 
-    var result := new List<Grouping<Integer, TThird>>();
+    var groups := new List<Grouping<Integer, TThird>>();
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
     begin
@@ -2282,11 +2282,11 @@ begin
       var key := keySelector(sourceValue);
       var found := false;
       var index := 0;
-      while index < result.Count do
+      while index < groups.Count do
       begin
-        if result[index].Key = key then
+        if groups[index].Key = key then
         begin
-          result[index].Add(elementSelector(sourceValue));
+          groups[index].Add(elementSelector(sourceValue));
           found := true;
           break;
         end;
@@ -2298,11 +2298,11 @@ begin
       begin
         var grouping := new Grouping<Integer, TThird>(key);
         grouping.Add(elementSelector(sourceValue));
-        result.Add(grouping);
+        groups.Add(grouping);
       end;
     end;
 
-    return result;
+    return groups;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2331,7 +2331,7 @@ begin
       raise new Exception('Enumerable element selector must not be nil.');
     end;
 
-    var result := new List<Grouping<String, TThird>>();
+    var groups := new List<Grouping<String, TThird>>();
     var enumerator := source.GetEnumerator();
     while enumerator.MoveNext() do
     begin
@@ -2339,11 +2339,11 @@ begin
       var key := keySelector(sourceValue);
       var found := false;
       var index := 0;
-      while index < result.Count do
+      while index < groups.Count do
       begin
-        if result[index].Key = key then
+        if groups[index].Key = key then
         begin
-          result[index].Add(elementSelector(sourceValue));
+          groups[index].Add(elementSelector(sourceValue));
           found := true;
           break;
         end;
@@ -2355,11 +2355,11 @@ begin
       begin
         var grouping := new Grouping<String, TThird>(key);
         grouping.Add(elementSelector(sourceValue));
-        result.Add(grouping);
+        groups.Add(grouping);
       end;
     end;
 
-    return result;
+    return groups;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2370,7 +2370,7 @@ begin
   /// <param name="inner">The enumerable source to join to the first source.</param>
   /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
   /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
-  /// <param name="resultSelector">A function to create a result element from an element of the first source and an enumerable of matching elements from the second source.</param>
+  /// <param name="resultSelector">A function to create a Result element from an element of the first source and an enumerable of matching elements from the second source.</param>
   /// <returns>An enumerable of results from the join operation.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GroupJoin(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, Integer>; innerKeySelector: Selector<TSecond, Integer>; resultSelector: GroupResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
@@ -2400,7 +2400,7 @@ begin
       raise new Exception('Enumerable group result selector must not be nil.');
     end;
 
-    var result := new List<TThird>();
+    var projected := new List<TThird>();
     var outerEnumerator := source.GetEnumerator();
     while outerEnumerator.MoveNext() do
     begin
@@ -2417,10 +2417,10 @@ begin
         end;
       end;
 
-      result.Add(resultSelector(outerValue, group));
+      projected.Add(resultSelector(outerValue, group));
     end;
 
-    return result;
+    return projected;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2431,7 +2431,7 @@ begin
   /// <param name="inner">The enumerable source to join to the first source.</param>
   /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
   /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
-  /// <param name="resultSelector">A function to create a result element from an element of the first source and an enumerable of matching elements from the second source.</param>
+  /// <param name="resultSelector">A function to create a Result element from an element of the first source and an enumerable of matching elements from the second source.</param>
   /// <returns>An enumerable of results from the join operation.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function GroupJoin(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, String>; innerKeySelector: Selector<TSecond, String>; resultSelector: GroupResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
@@ -2461,7 +2461,7 @@ begin
       raise new Exception('Enumerable group result selector must not be nil.');
     end;
 
-    var result := new List<TThird>();
+    var projected := new List<TThird>();
     var outerEnumerator := source.GetEnumerator();
     while outerEnumerator.MoveNext() do
     begin
@@ -2478,10 +2478,10 @@ begin
         end;
       end;
 
-      result.Add(resultSelector(outerValue, group));
+      projected.Add(resultSelector(outerValue, group));
     end;
 
-    return result;
+    return projected;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2492,7 +2492,7 @@ begin
   /// <param name="inner">The enumerable source to join to the first source.</param>
   /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
   /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
-  /// <param name="resultSelector">A function to create a result element from an element of the first source and an element of the second source.</param>
+  /// <param name="resultSelector">A function to create a Result element from an element of the first source and an element of the second source.</param>
   /// <returns>An enumerable of results from the join operation.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public static function Join(source: IEnumerable<TFirst>; inner: IEnumerable<TSecond>; outerKeySelector: Selector<TFirst, Integer>; innerKeySelector: Selector<TSecond, Integer>; resultSelector: ResultSelector<TFirst, TSecond, TThird>): IEnumerable<TThird>;
@@ -2522,7 +2522,7 @@ begin
       raise new Exception('Enumerable result selector must not be nil.');
     end;
 
-    var result := new List<TThird>();
+    var joined := new List<TThird>();
     var outerEnumerator := source.GetEnumerator();
     while outerEnumerator.MoveNext() do
     begin
@@ -2534,12 +2534,12 @@ begin
         var innerValue := innerEnumerator.Current;
         if outerKey = innerKeySelector(innerValue) then
         begin
-          result.Add(resultSelector(outerValue, innerValue));
+          joined.Add(resultSelector(outerValue, innerValue));
         end;
       end;
     end;
 
-    return result;
+    return joined;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2551,7 +2551,7 @@ begin
   /// <param name="outerKeySelector">A function to extract the join key from each element of the first source.</param>
   /// <param name="innerKeySelector">A function to extract the join key from each element of the second source.</param>
   /// <param name="resultSelector">
-  ///   A function to create a result element from an element of the first source and an element of the second source.
+  ///   A function to create a Result element from an element of the first source and an element of the second source.
   /// </param>
   /// <returns>An enumerable of results from the join operation.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -2582,7 +2582,7 @@ begin
       raise new Exception('Enumerable result selector must not be nil.');
     end;
 
-    var result := new List<TThird>();
+    var joined := new List<TThird>();
     var outerEnumerator := source.GetEnumerator();
     while outerEnumerator.MoveNext() do
     begin
@@ -2594,12 +2594,12 @@ begin
         var innerValue := innerEnumerator.Current;
         if outerKey = innerKeySelector(innerValue) then
         begin
-          result.Add(resultSelector(outerValue, innerValue));
+          joined.Add(resultSelector(outerValue, innerValue));
         end;
       end;
     end;
 
-    return result;
+    return joined;
   end;
 end;
 //══ end of class ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -2880,15 +2880,15 @@ begin
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   public function ToArray: array of T;
   begin
-    var result := new T[CountValue];
+    Result := new T[CountValue];
     var index := 0;
     while index < CountValue do
     begin
-      result[index] := Items[index];
+      Result[index] := Items[index];
       index := index + 1;
     end;
 
-    return result;
+    return Result;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————

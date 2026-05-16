@@ -570,7 +570,7 @@ public static partial class SemanticFacts
                     BindReceiver(targetExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
                     targetExpression);
             }
-            case MemberAccessExpressionSyntax memberAccess when memberAccess.MemberName.Text == "Length":
+            case MemberAccessExpressionSyntax memberAccess when NameEquals(memberAccess.MemberName.Text, "Length"):
             {
                 var targetType = InferExpressionType(memberAccess.Receiver, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (!HasLengthProperty(targetType))

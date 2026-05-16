@@ -7,7 +7,7 @@ public sealed partial class Binder
 {
     private static PropertySymbol BindProperty(PropertyDeclarationSyntax propertyDeclaration, string declaringTypeName, IReadOnlyList<FieldSymbol> fields, IReadOnlyList<TypeSymbol> knownTypes)
     {
-        var declaringType = knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => type.Name == declaringTypeName);
+        var declaringType = knownTypes.OfType<NamedTypeSymbol>().FirstOrDefault(type => SemanticFacts.NameEquals(type.Name, declaringTypeName));
         var synthesizeDeclarationOnlyAccessorMethods = declaringType?.IsInterface == true;
         var isStatic = propertyDeclaration.Modifiers.Any(modifier => modifier.Kind == SyntaxKind.StaticKeyword);
         var isGetterPrivate = propertyDeclaration.GetterModifiers.Any(modifier => modifier.Kind == SyntaxKind.PrivateKeyword)
@@ -16,7 +16,7 @@ public sealed partial class Binder
             || propertyDeclaration.SetterBlockModifiers.Any(modifier => modifier.Kind == SyntaxKind.PrivateKeyword);
         var isInitOnly = propertyDeclaration.InitKeyword is not null;
         var autoPropertyField = propertyDeclaration.OpenBraceToken is not null
-            ? fields.FirstOrDefault(field => field.Name == $"__auto_{propertyDeclaration.Identifier.Text}" && field.DeclaringTypeName == declaringTypeName)
+            ? fields.FirstOrDefault(field => SemanticFacts.NameEquals(field.Name, $"__auto_{propertyDeclaration.Identifier.Text}") && SemanticFacts.NameEquals(field.DeclaringTypeName, declaringTypeName))
             : null;
         var readField = propertyDeclaration.BeginKeyword is not null
             ? null
@@ -134,7 +134,7 @@ public sealed partial class Binder
     {
         var fieldName = target.Parts[^1].Text;
         return fields.FirstOrDefault(field =>
-            field.DeclaringTypeName == declaringTypeName &&
-            field.Name == fieldName);
+            SemanticFacts.NameEquals(field.DeclaringTypeName, declaringTypeName) &&
+            SemanticFacts.NameEquals(field.Name, fieldName));
     }
 }

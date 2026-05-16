@@ -212,10 +212,25 @@ Supported statement forms in the bootstrap compiler:
 - `include(...)` / `exclude(...)`
 
 Functions expose an implicit `Result` value with the function return type.
-`Result := ...` updates the function result and continues executing. `return`
-and `exit` terminate the routine; `return <expression>` and `exit <expression>`
-also assign the function result before terminating. Procedures do not expose
-`Result`.
+`Result := ...` updates the function result and continues executing. `exit`
+is the Delphi-style early routine exit; `exit <expression>` also assigns the
+function result before terminating. `return` is currently accepted as a
+compatibility alias for `exit` with the same behavior. Procedures do not expose
+`Result`. Names are case-insensitive, so `result`, `RESULT`, and `Result`
+refer to the same implicit function result; functions therefore cannot declare
+parameters or locals that differ from `Result` only by case.
+The compiler reports exact duplicate names as errors in non-overloadable
+case-insensitive scopes, and reports case-only name differences as warnings so
+ambiguous APIs can be cleaned up before they become user-visible.
+Methods and constructors may be overloaded, but duplicate signatures are errors.
+Local variables use C#-like active block scopes: a local, loop variable,
+typed-match variable, exception-handler variable, or lambda parameter cannot
+reuse a name from its active scope chain, but a name can be reused after the
+earlier block scope has ended.
+
+Early routine exits from the protected part of a `try` statement that has a
+`finally` block are currently rejected until the lowering can preserve the exact
+finally-before-exit behavior.
 
 `with` is implemented as a compile-time rewrite that scopes member access to the
 active receiver.
