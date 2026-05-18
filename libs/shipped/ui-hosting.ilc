@@ -85,7 +85,7 @@ begin
   /// <param name="window">The window for which to create a host.</param>
   /// <returns>An instance of <see cref="IWindowHost"/> that hosts the specified window.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function CreateWindowHost(window: Window): IWindowHost;
+  public method CreateWindowHost(window: Window): IWindowHost;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Run
@@ -94,7 +94,7 @@ begin
   /// <param name="application">The application to run.</param>
   /// <returns>The number of windows shown.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Run(application: Application): Integer;
+  public method Run(application: Application): Integer;
 end;
 //══ end of interface ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -294,7 +294,7 @@ begin
   /// <param name="window">The window for which to create a host.</param>
   /// <returns>An instance of <see cref="IWindowHost"/> that hosts the specified window.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function CreateWindowHost(window: Window): IWindowHost;
+  public method CreateWindowHost(window: Window): IWindowHost;
   begin
     return new DebugWindowHost(window);
   end;
@@ -306,7 +306,7 @@ begin
   /// <param name="application">The application to run.</param>
   /// <returns>The number of windows that were hosted by this backend.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Run(application: Application): Integer;
+  public method Run(application: Application): Integer;
   begin
     HostedWindowCountValue := 0;
     LastRootDescriptionValue := '';

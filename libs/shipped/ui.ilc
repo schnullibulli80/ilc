@@ -1237,7 +1237,7 @@ begin
   /// <summary>Toggles the checked state of the checkbox.</summary>
   /// <returns>The new checked state of the checkbox after toggling.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Toggle: Boolean;
+  public method Toggle: Boolean;
   begin
     if IsCheckedValue then
     begin
@@ -1959,7 +1959,7 @@ begin
   /// <param name="index">The index of the item to select.</param>
   /// <returns><c>true</c> if the item was successfully selected; otherwise, <c>false</c>.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function SelectIndex(index: Integer): Boolean;
+  public method SelectIndex(index: Integer): Boolean;
   begin
     if index < 0 or index >= ItemCount then
     begin
@@ -2681,7 +2681,7 @@ begin
   /// <param name="page">The page to navigate to.</param>
   /// <returns><c>true</c> if the navigation was successful; otherwise, <c>false</c>.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Navigate(page: Page): Boolean;
+  public method Navigate(page: Page): Boolean;
   begin
     if page = nil then
     begin
@@ -2713,7 +2713,7 @@ begin
   /// <summary>Navigates back to the previous page in the navigation host.</summary>
   /// <returns><c>true</c> if the navigation was successful; otherwise, <c>false</c>.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function GoBack: Boolean;
+  public method GoBack: Boolean;
   begin
     if CanGoBack = false then
     begin
@@ -3029,7 +3029,7 @@ begin
   /// </summary>
   /// <returns>The result of the dialog, indicating whether it was accepted or cancelled.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function ShowDialog: DialogResult;
+  public method ShowDialog: DialogResult;
   begin
     Show();
     IsModalValue := true;

@@ -566,7 +566,7 @@ begin
   /// <summary>Reads the next character from the JSON source and advances the parser position.</summary>
   /// <returns>The next character, or nil if there are no more characters.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function Read: String;
+  private method Read: String;
   begin
     var current := Peek();
     Index := Index + 1;
@@ -617,7 +617,7 @@ begin
   /// <returns>A JsonNull instance representing the parsed null value.</returns>
   /// <exception cref="JsonException">Thrown if the JSON null literal is invalid.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseNull: JsonValue;
+  private method ParseNull: JsonValue;
   begin
     if Index + 4 > Source.Length then
     begin
@@ -640,7 +640,7 @@ begin
   /// <returns>A JsonBoolean instance representing the parsed boolean value.</returns>
   /// <exception cref="JsonException">Thrown if the JSON boolean literal is invalid.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseBoolean: JsonValue;
+  private method ParseBoolean: JsonValue;
   begin
     if Index + 4 <= Source.Length then
     begin
@@ -670,7 +670,7 @@ begin
   /// <returns>The unescaped string value represented by the JSON string literal.</returns>
   /// <exception cref="JsonException">Thrown if the JSON string literal is invalid or unterminated.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseStringValue: String;
+  private method ParseStringValue: String;
   begin
     Expect('"');
 
@@ -727,7 +727,7 @@ begin
   /// <returns>A JsonString instance representing the parsed JSON string literal.</returns>
   /// <exception cref="JsonException">Thrown if the JSON string literal is invalid or unterminated.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseString: JsonValue;
+  private method ParseString: JsonValue;
   begin
     return new JsonString(ParseStringValue());
   end;
@@ -739,7 +739,7 @@ begin
   /// <returns>A JsonNumber instance representing the parsed JSON number literal.</returns>
   /// <exception cref="JsonException">Thrown if the JSON number literal is invalid.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseNumber: JsonValue;
+  private method ParseNumber: JsonValue;
   begin
     var start := Index;
     if HasMore() then
@@ -777,7 +777,7 @@ begin
   /// <returns>A JsonArray instance representing the parsed JSON array literal.</returns>
   /// <exception cref="JsonException">Thrown if the JSON array literal is invalid or unterminated.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseArray: JsonValue;
+  private method ParseArray: JsonValue;
   begin
     Expect('[');
     var arrayResult := new JsonArray();
@@ -824,7 +824,7 @@ begin
   /// <returns>A JsonObject instance representing the parsed JSON object literal.</returns>
   /// <exception cref="JsonException">Thrown if the JSON object literal is invalid or unterminated.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ParseObject: JsonValue;
+  private method ParseObject: JsonValue;
   begin
     Expect('{');
     var objectResult := new JsonObject();
@@ -876,7 +876,7 @@ begin
   /// <returns>The parsed JSON value.</returns>
   /// <exception cref="JsonException">Thrown if the JSON value is invalid.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function ParseValue: JsonValue;
+  public method ParseValue: JsonValue;
   begin
     SkipWhitespace();
     if not HasMore() then
@@ -935,7 +935,7 @@ begin
   /// <returns>The parsed root JSON value.</returns>
   /// <exception cref="JsonException">Thrown if the JSON text contains invalid syntax or trailing content.</exception>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function ParseDocument: JsonValue;
+  public method ParseDocument: JsonValue;
   begin
     Result := ParseValue();
     SkipWhitespace();

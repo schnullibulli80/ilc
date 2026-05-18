@@ -1452,45 +1452,45 @@ begin
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • CurrentAsComposite
+  // • FUNCTION • CurrentAsComposite
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Gets the current trace instance cast to CompositeTrace if possible, or null otherwise.</summary>
   /// <returns>The current trace instance cast to CompositeTrace if possible, or null otherwise.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static method CurrentAsComposite: CompositeTrace;
+  private static function CurrentAsComposite: CompositeTrace;
   begin
     return Current as CompositeTrace;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • CurrentAsConsole
+  // • FUNCTION • CurrentAsConsole
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Gets the current trace instance cast to ConsoleTrace if possible, or null otherwise.</summary>
   /// <returns>The current trace instance cast to ConsoleTrace if possible, or null otherwise.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————  
-  private static method CurrentAsConsole: ConsoleTrace;
+  private static function CurrentAsConsole: ConsoleTrace;
   begin
     return Current as ConsoleTrace;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • CurrentAsFile
+  // • FUNCTION • CurrentAsFile
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Gets the current trace instance cast to FileTrace if possible, or null otherwise.</summary>
   /// <returns>The current trace instance cast to FileTrace if possible, or null otherwise.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static method CurrentAsFile: FileTrace;
+  private static function CurrentAsFile: FileTrace;
   begin
     return Current as FileTrace;
   end;
 
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  // • METHOD • CurrentAsNull
+  // • FUNCTION • CurrentAsNull
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   /// <summary>Gets the current trace instance cast to NullTrace if possible, or null otherwise.</summary>
   /// <returns>The current trace instance cast to NullTrace if possible, or null otherwise.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private static method CurrentAsNull: NullTrace;
+  private static function CurrentAsNull: NullTrace;
   begin
     return Current as NullTrace;
   end;

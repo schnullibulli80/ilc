@@ -1991,6 +1991,116 @@ if (exitAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Re
     failures.Add("Lowerer should treat exit expressions as early routine exits that assign the function return register.");
 }
 
+var routineKeywordTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static method FlexibleProcedure;
+  begin
+  end;
+
+  public static method FlexibleFunction: Integer;
+  begin
+    Result := 1;
+  end;
+
+  public static function MissingFunctionReturn;
+  begin
+  end;
+
+  public static procedure InvalidProcedureReturn: Integer;
+  begin
+  end;
+
+  public static function InvalidVoidReturn: Void;
+  begin
+  end;
+end;
+""");
+
+var routineKeywordBinding = new Binder().Bind(routineKeywordTree);
+var routineKeywordDiagnostics = routineKeywordBinding.Diagnostics.ToArray();
+if (!routineKeywordDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2245") ||
+    !routineKeywordDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2246") ||
+    !routineKeywordDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2247"))
+{
+    failures.Add("Binder should enforce function/procedure return-type rules while keeping method flexible.");
+}
+
+if (routineKeywordDiagnostics.Any(diagnostic =>
+        diagnostic.Severity == DiagnosticSeverity.Error &&
+        diagnostic.Id is not ("ILC2245" or "ILC2246" or "ILC2247")))
+{
+    failures.Add("Routine keyword fixture should only report the expected keyword return-type diagnostics.");
+}
+
+var readonlySelfTree = SyntaxTree.Parse("""
+public class Program
+begin
+  private var _count: Integer;
+  private var _name: String;
+  public property Name: String read _name write _name;
+
+  public method Mutate;
+  begin
+    _count := _count + 1;
+  end;
+
+  public method MutatingValue: Integer;
+  begin
+    Result := _count + 1;
+  end;
+
+  public function ReadCount: Integer;
+  begin
+    return _count;
+  end;
+
+  public function BadFieldAssignment: Integer;
+  begin
+    _count := 5;
+    return _count;
+  end;
+
+  public procedure BadPropertyAssignment;
+  begin
+    self.Name := 'Test';
+  end;
+
+  public function BadCompoundAssignment: Integer;
+  begin
+    _count += 1;
+    return _count;
+  end;
+
+  public procedure BadIncrement;
+  begin
+    inc(_count);
+  end;
+
+  public function BadMutatingCall: Integer;
+  begin
+    return MutatingValue();
+  end;
+end;
+""");
+
+var readonlySelfBinding = new Binder().Bind(readonlySelfTree);
+var readonlySelfDiagnostics = readonlySelfBinding.Diagnostics.ToArray();
+if (readonlySelfDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2248") != 4 ||
+    readonlySelfDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2249") != 1)
+{
+    failures.Add("Binder should reject self mutations and self mutating method calls from functions/procedures. Actual: " +
+        string.Join(" | ", readonlySelfDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (readonlySelfDiagnostics.Any(diagnostic =>
+        diagnostic.Severity == DiagnosticSeverity.Error &&
+        diagnostic.Id is not ("ILC2248" or "ILC2249")))
+{
+    failures.Add("Readonly self fixture should only report the expected mutation diagnostics. Actual: " +
+        string.Join(" | ", readonlySelfDiagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
 var caseInsensitiveTree = SyntaxTree.Parse("""
 PUBLIC CLASS Program
 BEGIN
@@ -2962,7 +3072,7 @@ begin
     end;
   end;
 
-  public function Probe(input: View): Integer;
+  public method Probe(input: View): Integer;
   begin
     self.Content := input;
     var panel := (self.Content as StackPanel);

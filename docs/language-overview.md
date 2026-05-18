@@ -51,6 +51,24 @@ Inside a class/record, the following members are supported:
   - `constructor`
 - `property`
 
+Routine keyword semantics:
+
+- `function` must declare an explicit non-`Void` return type and exposes
+  implicit `Result`
+- `procedure` must not declare a return type and does not expose `Result`
+- `method` is intentionally flexible: with a return type it behaves like a
+  `function`, without a return type it behaves like a `procedure`
+- `constructor` must not declare a return type
+- `Void` is an internal symbol/runtime shape, not a source-level return
+  annotation; use `procedure` or `method` without a return type instead
+
+`function` and `procedure` are readonly with respect to the current object.
+They may read instance state, but they must not directly assign to instance
+fields or properties on implicit `self` or explicit `self`, must not use compound
+assignment or `inc`/`dec` on those members, and must not call mutating `method`
+members on `self`. Use `method` for stateful operations, including stateful
+operations that also return a value. `this` is not a `self` alias.
+
 Top-level members also support:
 
 - `var` declarations
@@ -87,7 +105,6 @@ Parameters support:
 - typed parameter lists
 - separators using commas or semicolons
 - passing modes: `out`, `ref`, `in`, `params`
-- procedure/function/constructor return type optionality follows `method`/`function`/`procedure`
 
 Current call behavior for passing modes:
 
@@ -101,7 +118,7 @@ Current call behavior for passing modes:
 
 Built-in types available in symbol resolution today:
 
-- `Object`, `Void`, `Boolean`, `Char`, `Integer`, `UInt128`, `UInt256`, `UInt512`, `UInt1024`, `UInt2048`, `String`, `Nil`
+- `Object`, `Boolean`, `Char`, `Integer`, `UInt128`, `UInt256`, `UInt512`, `UInt1024`, `UInt2048`, `String`, `Nil`
 
 `UInt*` types are present in the symbol model and currently intended as future
 numeric direction. The current execution path is still centered on the `Integer`-
@@ -215,10 +232,12 @@ Functions expose an implicit `Result` value with the function return type.
 `Result := ...` updates the function result and continues executing. `exit`
 is the Delphi-style early routine exit; `exit <expression>` also assigns the
 function result before terminating. `return` is currently accepted as a
-compatibility alias for `exit` with the same behavior. Procedures do not expose
-`Result`. Names are case-insensitive, so `result`, `RESULT`, and `Result`
-refer to the same implicit function result; functions therefore cannot declare
-parameters or locals that differ from `Result` only by case.
+compatibility alias for `exit` with the same behavior and is not diagnosed as
+deprecated today. If a deprecation warning is added later, it should be gated by
+a compiler directive or option. Procedures do not expose `Result`. Names are
+case-insensitive, so `result`, `RESULT`, and `Result` refer to the same implicit
+function result; functions therefore cannot declare parameters or locals that
+differ from `Result` only by case.
 The compiler reports exact duplicate names as errors in non-overloadable
 case-insensitive scopes, and reports case-only name differences as warnings so
 ambiguous APIs can be cleaned up before they become user-visible.
@@ -309,7 +328,7 @@ Current `DllImport` scope:
 - runtime invocation through generic `libffi` dispatch
 - current FFI type subset:
   - parameter: `Integer`, `Boolean`, `String`, `NativeHandle`, supported callback delegates
-  - return: `Integer`, `Boolean`, `Void`, `NativeHandle`, owned UTF-8 `String`
+  - return: `Integer`, `Boolean`, no return value, `NativeHandle`, owned UTF-8 `String`
 - callbacks are supported through VM-generated trampolines for the current integer callback shapes
 - no native structs/records or arbitrary user-visible function pointers yet
 

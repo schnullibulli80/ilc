@@ -35,7 +35,7 @@ begin
   ///   true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  function MoveNext(): Boolean;
+  method MoveNext(): Boolean;
   
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
   // • METHOD • Reset
@@ -313,7 +313,7 @@ begin
   ///   the source.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     while SourceEnumerator.MoveNext() do
     begin
@@ -428,7 +428,7 @@ begin
   ///   the source.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     return SourceEnumerator.MoveNext();
   end;
@@ -535,7 +535,7 @@ begin
   ///   the source or the specified number of elements has been taken.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     if RemainingCount <= 0 then
     begin
@@ -653,7 +653,7 @@ begin
   ///   the source or the specified number of elements has been skipped.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     while RemainingSkipCount > 0 do
     begin
@@ -779,7 +779,7 @@ begin
   ///   end of both sources.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     if UsingFirst then
     begin
@@ -897,7 +897,7 @@ begin
   ///   the source.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     while SourceEnumerator.MoveNext() do
     begin
@@ -1021,7 +1021,7 @@ begin
   ///   the source and the tail value has already been emitted.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     EmittingTail := false;
     if SourceEnumerator.MoveNext() then
@@ -1154,7 +1154,7 @@ begin
   ///   the source and the head value has already been emitted.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     if HeadAvailable then
     begin
@@ -1277,7 +1277,7 @@ begin
   ///   reversed view.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     if Index <= 0 then
     begin
@@ -2665,7 +2665,7 @@ begin
   ///   true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.
   /// </returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function MoveNext(): Boolean;
+  public method MoveNext(): Boolean;
   begin
     if Index + 1 >= SourceCount then
     begin

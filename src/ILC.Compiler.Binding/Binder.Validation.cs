@@ -311,6 +311,7 @@ public sealed partial class Binder
                 var locals = BuildMethodParameterLocals(method, typeScope, diagnostics);
 
                 var boundMethod = FindMethod(knownMethods, classDeclaration.Identifier.Text, method.Identifier.Text, method.Parameters.Count);
+                ValidateRoutineKeywordSemantics(method, diagnostics);
                 if (boundMethod is not null && !boundMethod.IsStatic)
                 {
                     locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
@@ -501,6 +502,11 @@ public sealed partial class Binder
 
             foreach (var member in interfaceDeclaration.Members)
             {
+                if (member is MethodDeclarationSyntax routine)
+                {
+                    ValidateRoutineKeywordSemantics(routine, diagnostics);
+                }
+
                 switch (member)
                 {
                     case FieldDeclarationSyntax:
@@ -550,6 +556,41 @@ public sealed partial class Binder
                         break;
                 }
             }
+        }
+    }
+
+    private static void ValidateRoutineKeywordSemantics(MethodDeclarationSyntax method, DiagnosticBag diagnostics)
+    {
+        if (method.Keyword.Kind == SyntaxKind.FunctionKeyword && method.ReturnType is null)
+        {
+            diagnostics.Report(
+                "ILC2245",
+                $"Function '{method.Identifier.Text}' must declare a return type.",
+                DiagnosticSeverity.Error,
+                method.Keyword.Span);
+            return;
+        }
+
+        if (method.Keyword.Kind is SyntaxKind.ProcedureKeyword or SyntaxKind.ConstructorKeyword &&
+            method.ReturnType is not null)
+        {
+            var routineKind = method.Keyword.Kind == SyntaxKind.ConstructorKeyword ? "Constructor" : "Procedure";
+            diagnostics.Report(
+                "ILC2246",
+                $"{routineKind} '{method.Identifier.Text}' must not declare a return type.",
+                DiagnosticSeverity.Error,
+                method.ReturnType.Parts[0].Span);
+            return;
+        }
+
+        if (method.ReturnType is not null &&
+            SemanticFacts.NameEquals(method.ReturnType.ToDisplayString(), "Void"))
+        {
+            diagnostics.Report(
+                "ILC2247",
+                $"Routine '{method.Identifier.Text}' must not use 'Void' as an explicit source return type. Use 'procedure' or 'method' without a return type instead.",
+                DiagnosticSeverity.Error,
+                method.ReturnType.Parts[0].Span);
         }
     }
 
@@ -2316,6 +2357,14 @@ public sealed partial class Binder
                 if (reportedInvalidMethodAccess)
                 {
                 }
+                else if (invocation?.Method is { } invokedMethod &&
+                    TryReportReadonlySelfMethodCall(call.Target, invokedMethod, currentMethod, diagnostics))
+                {
+                }
+                else if (invocation is null &&
+                    TryReportReadonlySelfMethodCall(call.Target, call.Arguments.Count, knownMethods, currentMethod, diagnostics))
+                {
+                }
                 else if (invocation is null)
                 {
                     diagnostics.Report(
@@ -3425,10 +3474,20 @@ public sealed partial class Binder
         {
             if (target is MemberAccessExpressionSyntax memberTarget)
             {
+                if (TryReportReadonlySelfMutation(memberTarget, knownFields, knownProperties, currentMethod, diagnostics))
+                {
+                    return;
+                }
+
                 ValidateExpression(memberTarget.Receiver, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 var memberResolution = SemanticFacts.ResolveMemberAccess(memberTarget, locals, [], knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 if (memberResolution.Property is not null)
                 {
+                    if (TryReportReadonlySelfMutation(memberTarget, memberResolution.Property, currentMethod, diagnostics))
+                    {
+                        return;
+                    }
+
                     if (memberResolution.Property.WriteField is null && memberResolution.Property.SetterMethod is null)
                     {
                         diagnostics.Report(
@@ -3465,6 +3524,11 @@ public sealed partial class Binder
 
                 if (memberResolution.Field is not null)
                 {
+                    if (TryReportReadonlySelfMutation(memberTarget, memberResolution.Field, currentMethod, diagnostics))
+                    {
+                        return;
+                    }
+
                     return;
                 }
             }
@@ -3489,7 +3553,17 @@ public sealed partial class Binder
             return;
         }
 
+        if (TryReportReadonlySelfMutation(targetName, knownFields, knownProperties, currentMethod, diagnostics))
+        {
+            return;
+        }
+
         var property = SemanticFacts.ResolvePropertyReference(targetName, locals, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (property is not null && TryReportReadonlySelfMutation(targetName, property, currentMethod, diagnostics))
+        {
+            return;
+        }
+
         if (property is not null && property.WriteField is null && property.SetterMethod is null)
         {
             diagnostics.Report(
@@ -3518,6 +3592,12 @@ public sealed partial class Binder
                 $"Property setter '{targetName.ToDisplayString()}' is not accessible in the current context.",
                 DiagnosticSeverity.Error,
                 targetName.Parts[^1].Span);
+            return;
+        }
+
+        var field = SemanticFacts.ResolveFieldIgnoringAccess(targetName, knownFields, currentMethod);
+        if (field is not null && TryReportReadonlySelfMutation(targetName, field, currentMethod, diagnostics))
+        {
             return;
         }
 
@@ -3566,6 +3646,11 @@ public sealed partial class Binder
         }
         if (resolution.Kind == NameResolutionKind.Field)
         {
+            if (resolution.Field is not null && TryReportReadonlySelfMutation(targetName, resolution.Field, currentMethod, diagnostics))
+            {
+                return;
+            }
+
             return;
         }
 
@@ -3694,7 +3779,294 @@ public sealed partial class Binder
 
     private static bool IsResultAvailable(MethodSymbol? currentMethod) =>
         currentMethod is not null &&
+        currentMethod.Declaration?.Keyword.Kind is not SyntaxKind.ProcedureKeyword &&
         currentMethod.ReturnType != TypeSymbol.Void;
+
+    private static bool IsReadonlySelfRoutine(MethodSymbol? currentMethod) =>
+        currentMethod is { IsStatic: false, Declaration.Keyword.Kind: SyntaxKind.FunctionKeyword or SyntaxKind.ProcedureKeyword };
+
+    private static bool IsMutatingSourceMethod(MethodSymbol method) =>
+        method.Declaration?.Keyword.Kind == SyntaxKind.MethodKeyword;
+
+    private static bool IsCurrentObjectMember(string? declaringTypeName, MethodSymbol? currentMethod) =>
+        currentMethod?.DeclaringTypeName is not null &&
+        declaringTypeName is not null &&
+        SemanticFacts.NameEquals(declaringTypeName, currentMethod.DeclaringTypeName);
+
+    private static bool IsExplicitSelfReceiver(ExpressionSyntax receiver) =>
+        receiver is NameExpressionSyntax { Name.Parts.Count: 1 } name &&
+        SemanticFacts.NameEquals(name.Name.Parts[0].Text, "self");
+
+    private static bool IsExplicitSelfQualifiedName(QualifiedNameSyntax name) =>
+        name.Parts.Count > 1 &&
+        SemanticFacts.NameEquals(name.Parts[^2].Text, "self");
+
+    private static bool IsImplicitOrExplicitSelfTarget(QualifiedNameSyntax name, MethodSymbol? currentMethod)
+    {
+        if (currentMethod?.DeclaringTypeName is null || currentMethod.IsStatic)
+        {
+            return false;
+        }
+
+        return name.Parts.Count == 1 || IsExplicitSelfQualifiedName(name);
+    }
+
+    private static bool TryReportReadonlySelfMutation(
+        QualifiedNameSyntax target,
+        FieldSymbol field,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            field.IsStatic ||
+            !IsCurrentObjectMember(field.DeclaringTypeName, currentMethod) ||
+            !IsImplicitOrExplicitSelfTarget(target, currentMethod))
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2248",
+            $"Readonly routine '{currentMethod!.Name}' cannot modify instance field '{target.ToDisplayString()}'. Use 'method' for mutating members.",
+            DiagnosticSeverity.Error,
+            target.Parts[^1].Span);
+        return true;
+    }
+
+    private static bool TryReportReadonlySelfMutation(
+        QualifiedNameSyntax target,
+        PropertySymbol property,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            property.IsStatic ||
+            !IsCurrentObjectMember(property.DeclaringTypeName, currentMethod) ||
+            !IsImplicitOrExplicitSelfTarget(target, currentMethod))
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2248",
+            $"Readonly routine '{currentMethod!.Name}' cannot modify instance property '{target.ToDisplayString()}'. Use 'method' for mutating members.",
+            DiagnosticSeverity.Error,
+            target.Parts[^1].Span);
+        return true;
+    }
+
+    private static bool TryReportReadonlySelfMutation(
+        MemberAccessExpressionSyntax target,
+        FieldSymbol field,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            field.IsStatic ||
+            !IsCurrentObjectMember(field.DeclaringTypeName, currentMethod) ||
+            !IsExplicitSelfReceiver(target.Receiver))
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2248",
+            $"Readonly routine '{currentMethod!.Name}' cannot modify instance field '{SemanticFacts.GetExpressionDisplayName(target)}'. Use 'method' for mutating members.",
+            DiagnosticSeverity.Error,
+            target.MemberName.Span);
+        return true;
+    }
+
+    private static bool TryReportReadonlySelfMutation(
+        MemberAccessExpressionSyntax target,
+        PropertySymbol property,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            property.IsStatic ||
+            !IsCurrentObjectMember(property.DeclaringTypeName, currentMethod) ||
+            !IsExplicitSelfReceiver(target.Receiver))
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2248",
+            $"Readonly routine '{currentMethod!.Name}' cannot modify instance property '{SemanticFacts.GetExpressionDisplayName(target)}'. Use 'method' for mutating members.",
+            DiagnosticSeverity.Error,
+            target.MemberName.Span);
+        return true;
+    }
+
+    private static bool TryReportReadonlySelfMethodCall(
+        ExpressionSyntax target,
+        MethodSymbol invokedMethod,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            invokedMethod.IsStatic ||
+            !IsMutatingSourceMethod(invokedMethod) ||
+            !IsCurrentObjectMember(invokedMethod.DeclaringTypeName, currentMethod))
+        {
+            return false;
+        }
+
+        var isSelfCall = target switch
+        {
+            NameExpressionSyntax { Name.Parts.Count: 1 } => true,
+            NameExpressionSyntax name => IsExplicitSelfQualifiedName(name.Name),
+            MemberAccessExpressionSyntax member => IsExplicitSelfReceiver(member.Receiver),
+            _ => false
+        };
+
+        if (!isSelfCall)
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2249",
+            $"Readonly routine '{currentMethod!.Name}' cannot call mutating method '{invokedMethod.Name}' on self. Use 'method' for mutating members.",
+            DiagnosticSeverity.Error,
+            GetExpressionDiagnosticSpan(target, []));
+        return true;
+    }
+
+    private static bool TryReportReadonlySelfMutation(
+        MemberAccessExpressionSyntax target,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            currentMethod?.DeclaringTypeName is null ||
+            !IsExplicitSelfReceiver(target.Receiver))
+        {
+            return false;
+        }
+
+        var property = knownProperties.FirstOrDefault(property =>
+            !property.IsStatic &&
+            IsCurrentObjectMember(property.DeclaringTypeName, currentMethod) &&
+            SemanticFacts.NameEquals(property.Name, target.MemberName.Text));
+        if (property is not null)
+        {
+            diagnostics.Report(
+                "ILC2248",
+                $"Readonly routine '{currentMethod.Name}' cannot modify instance property '{SemanticFacts.GetExpressionDisplayName(target)}'. Use 'method' for mutating members.",
+                DiagnosticSeverity.Error,
+                target.MemberName.Span);
+            return true;
+        }
+
+        var field = knownFields.FirstOrDefault(field =>
+            !field.IsStatic &&
+            IsCurrentObjectMember(field.DeclaringTypeName, currentMethod) &&
+            SemanticFacts.NameEquals(field.Name, target.MemberName.Text));
+        if (field is not null)
+        {
+            diagnostics.Report(
+                "ILC2248",
+                $"Readonly routine '{currentMethod.Name}' cannot modify instance field '{SemanticFacts.GetExpressionDisplayName(target)}'. Use 'method' for mutating members.",
+                DiagnosticSeverity.Error,
+                target.MemberName.Span);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReportReadonlySelfMutation(
+        QualifiedNameSyntax target,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            currentMethod?.DeclaringTypeName is null ||
+            !IsExplicitSelfQualifiedName(target))
+        {
+            return false;
+        }
+
+        var property = knownProperties.FirstOrDefault(property =>
+            !property.IsStatic &&
+            IsCurrentObjectMember(property.DeclaringTypeName, currentMethod) &&
+            SemanticFacts.NameEquals(property.Name, target.Parts[^1].Text));
+        if (property is not null)
+        {
+            diagnostics.Report(
+                "ILC2248",
+                $"Readonly routine '{currentMethod.Name}' cannot modify instance property '{target.ToDisplayString()}'. Use 'method' for mutating members.",
+                DiagnosticSeverity.Error,
+                target.Parts[^1].Span);
+            return true;
+        }
+
+        var field = knownFields.FirstOrDefault(field =>
+            !field.IsStatic &&
+            IsCurrentObjectMember(field.DeclaringTypeName, currentMethod) &&
+            SemanticFacts.NameEquals(field.Name, target.Parts[^1].Text));
+        if (field is not null)
+        {
+            diagnostics.Report(
+                "ILC2248",
+                $"Readonly routine '{currentMethod.Name}' cannot modify instance field '{target.ToDisplayString()}'. Use 'method' for mutating members.",
+                DiagnosticSeverity.Error,
+                target.Parts[^1].Span);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReportReadonlySelfMethodCall(
+        ExpressionSyntax target,
+        int argumentCount,
+        IEnumerable<MethodSymbol> knownMethods,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsReadonlySelfRoutine(currentMethod) ||
+            currentMethod?.DeclaringTypeName is null)
+        {
+            return false;
+        }
+
+        string? methodName = target switch
+        {
+            MemberAccessExpressionSyntax member when IsExplicitSelfReceiver(member.Receiver) => member.MemberName.Text,
+            NameExpressionSyntax name when IsExplicitSelfQualifiedName(name.Name) => name.Name.Parts[^1].Text,
+            _ => null
+        };
+
+        if (methodName is null)
+        {
+            return false;
+        }
+
+        var invokedMethod = knownMethods.FirstOrDefault(method =>
+            !method.IsStatic &&
+            IsMutatingSourceMethod(method) &&
+            IsCurrentObjectMember(method.DeclaringTypeName, currentMethod) &&
+            SemanticFacts.NameEquals(method.Name, methodName) &&
+            SemanticFacts.SupportsArgumentCount(method, argumentCount));
+        if (invokedMethod is null)
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2249",
+            $"Readonly routine '{currentMethod.Name}' cannot call mutating method '{invokedMethod.Name}' on self. Use 'method' for mutating members.",
+            DiagnosticSeverity.Error,
+            GetExpressionDiagnosticSpan(target, []));
+        return true;
+    }
 
     private static void ReportInvalidResultUsage(TextSpan span, DiagnosticBag diagnostics)
     {

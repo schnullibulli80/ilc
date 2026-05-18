@@ -602,7 +602,7 @@ begin
   /// <summary>Initializes the Qt Quick engine for this backend.</summary>
   /// <returns>True if the engine was initialized successfully; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function InitializeEngine: Boolean;
+  public method InitializeEngine: Boolean;
   begin
     EngineInitializedValue := true;
     if NativeBridgeEnabledValue then
@@ -624,7 +624,7 @@ begin
   /// <param name="window">The window for which to create a host.</param>
   /// <returns>The created window host.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function CreateWindowHost(window: Window): IWindowHost;
+  public method CreateWindowHost(window: Window): IWindowHost;
   begin
     if window = nil then
     begin
@@ -647,7 +647,7 @@ begin
   /// <summary>Prepares the native bridge for this backend.</summary>
   /// <returns>True if the native bridge was prepared successfully; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function PrepareNativeBridge: Boolean;
+  public method PrepareNativeBridge: Boolean;
   begin
     NativeBridgeEnabledValue := true;
     NativeBackendHandleValue := NativeHandle.Null;
@@ -1021,7 +1021,7 @@ begin
   /// <summary>Refreshes all interactive windows.</summary>
   /// <returns>The number of refreshed windows.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function RefreshInteractiveWindows: Integer;
+  private method RefreshInteractiveWindows: Integer;
   begin
     WriteBackendDebug('refresh mode=full-refresh windows=' + ActiveInteractiveWindowHandlesValue.Count.ToString());
     var refreshed := 0;
@@ -1124,7 +1124,7 @@ begin
   /// <param name="window">The managed window to patch.</param>
   /// <returns>True if the window was successfully patched; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function TryPatchNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
+  private method TryPatchNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
   begin
     if windowHandle = NativeHandle.Null or window = nil then
     begin
@@ -1149,7 +1149,7 @@ begin
   /// <summary>Attempts to patch all interactive windows.</summary>
   /// <returns>The number of successfully patched windows.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function TryPatchInteractiveWindows: Integer;
+  private method TryPatchInteractiveWindows: Integer;
   begin
     var patched := 0;
     var index := 0;
@@ -1210,7 +1210,7 @@ begin
   /// <summary>Applies focus to the pending text box.</summary>
   /// <returns>The number of windows that successfully received focus.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  private function ApplyPendingTextBoxFocus: Integer;
+  private method ApplyPendingTextBoxFocus: Integer;
   begin
     var textBoxId := ResolvePendingFocusTextBoxId();
     PendingFocusTextBoxValue := nil;
@@ -1259,7 +1259,7 @@ begin
   /// <param name="interactionToken">The interaction token.</param>
   /// <returns>The Result of the interaction.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function DispatchNativeInteraction(interactionToken: Integer): Integer;
+  public method DispatchNativeInteraction(interactionToken: Integer): Integer;
   begin
     if interactionToken <= -2000000 then
     begin
@@ -1292,7 +1292,7 @@ begin
   /// <param name="buttonId">The ID of the button.</param>
   /// <returns>The Result of the click.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function DispatchNativeClick(buttonId: Integer): Integer;
+  public method DispatchNativeClick(buttonId: Integer): Integer;
   begin
     var button := FindInteractiveButton(buttonId);
     if button = nil then
@@ -1335,7 +1335,7 @@ begin
   /// <param name="sliderId">The ID of the slider.</param>
   /// <returns>The Result of the slider change.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function DispatchNativeSliderChanged(sliderId: Integer): Integer;
+  public method DispatchNativeSliderChanged(sliderId: Integer): Integer;
   begin
     var slider := FindInteractiveSlider(sliderId);
     if slider = nil then
@@ -1385,7 +1385,7 @@ begin
   /// <param name="checkBoxId">The ID of the checkbox.</param>
   /// <returns>The Result of the toggle.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function DispatchNativeCheckBoxToggled(checkBoxId: Integer): Integer;
+  public method DispatchNativeCheckBoxToggled(checkBoxId: Integer): Integer;
   begin
     var checkBox := FindInteractiveCheckBox(checkBoxId);
     if checkBox = nil then
@@ -1431,7 +1431,7 @@ begin
   /// <param name="textBoxId">The ID of the text box.</param>
   /// <returns>The Result of the text change.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function DispatchNativeTextChanged(textBoxId: Integer): Integer;
+  public method DispatchNativeTextChanged(textBoxId: Integer): Integer;
   begin
     var textBox := FindInteractiveTextBox(textBoxId);
     if textBox = nil then
@@ -2023,7 +2023,7 @@ begin
   /// <param name="application">The application to run.</param>
   /// <returns>The Result of the run.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Run(application: Application): Integer;
+  public method Run(application: Application): Integer;
   begin
     EngineInitializedValue := true;
     ResetInteractiveSession();
@@ -2150,7 +2150,7 @@ begin
   /// <param name="window">The window to refresh.</param>
   /// <returns>True if the refresh was successful; otherwise, false.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function RefreshNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
+  public method RefreshNativeWindow(windowHandle: NativeHandle; window: Window): Boolean;
   begin
     if windowHandle = NativeHandle.Null or window = nil then
     begin

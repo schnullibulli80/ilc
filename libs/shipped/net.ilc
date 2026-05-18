@@ -491,7 +491,7 @@ begin
   /// <param name="port">The port to connect to.</param>
   /// <returns><c>true</c> if the connection is successful; otherwise, <c>false</c>.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Connect(host: String; port: Integer): Boolean;
+  public method Connect(host: String; port: Integer): Boolean;
   begin
     if IsConnected then
     begin
@@ -661,7 +661,7 @@ begin
   /// <param name="url">The websocket URL to connect to.</param>
   /// <returns><c>true</c> if the connection is successful; otherwise, <c>false</c>.</returns>
   //————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-  public function Connect(url: String): Boolean;
+  public method Connect(url: String): Boolean;
   begin
     if IsConnected then
     begin
