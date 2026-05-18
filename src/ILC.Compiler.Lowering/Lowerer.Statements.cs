@@ -72,6 +72,15 @@ public sealed partial class Lowerer
                     LowerExpressionInto(returnStatement.Expression, returnRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
                 }
 
+                if (_finallyExitContexts.Count > 0)
+                {
+                    var finallyExit = _finallyExitContexts.Peek();
+                    finallyExit.IsUsed = true;
+                    instructions.Add(new IrInstruction(IrOpCode.Branch, null, finallyExit.ExitLabel));
+                    terminated = true;
+                    break;
+                }
+
                 instructions.Add(new IrInstruction(IrOpCode.Return, null, returnRegister));
                 terminated = true;
                 break;
@@ -1231,15 +1240,33 @@ public sealed partial class Lowerer
         var handlerStartLabel = AllocateLabel(tryStatement.FinallyKeyword is not null ? "finally_start" : "except_start");
         var handlerEndLabel = AllocateLabel(tryStatement.FinallyKeyword is not null ? "finally_end" : "except_end");
         var afterTryLabel = AllocateLabel("after_try");
+        var finallyExitContext = tryStatement.FinallyKeyword is not null
+            ? new FinallyExitContext(AllocateLabel("finally_exit"))
+            : null;
 
         instructions.Add(new IrInstruction(IrOpCode.Label, null, tryStartLabel));
         var tryTerminates = false;
-        foreach (var statement in tryStatement.TryStatements)
+        if (finallyExitContext is not null)
         {
-            tryTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
-            if (tryTerminates)
+            _finallyExitContexts.Push(finallyExitContext);
+        }
+
+        try
+        {
+            foreach (var statement in tryStatement.TryStatements)
             {
-                break;
+                tryTerminates = LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, inExceptionHandler, currentMethod);
+                if (tryTerminates)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            if (finallyExitContext is not null)
+            {
+                _finallyExitContexts.Pop();
             }
         }
 
@@ -1340,6 +1367,10 @@ public sealed partial class Lowerer
         instructions.Add(new IrInstruction(IrOpCode.Label, null, handlerEndLabel));
         if (tryStatement.FinallyKeyword is not null)
         {
+            var afterFinallyExitLabel = finallyExitContext is { IsUsed: true }
+                ? AllocateLabel("after_finally_exit")
+                : null;
+
             if (!tryTerminates)
             {
                 instructions.Add(new IrInstruction(IrOpCode.Label, null, afterTryLabel));
@@ -1353,7 +1384,23 @@ public sealed partial class Lowerer
                     }
                 }
 
+                if (finallyExitContext is { IsUsed: true })
+                {
+                    if (!finallyNormalTerminates)
+                    {
+                        instructions.Add(new IrInstruction(IrOpCode.Branch, null, afterFinallyExitLabel!));
+                    }
+
+                    LowerFinallyExitPath(finallyExitContext, tryStatement.FinallyStatements, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, currentMethod);
+                    instructions.Add(new IrInstruction(IrOpCode.Label, null, afterFinallyExitLabel!));
+                }
+
                 return finallyNormalTerminates;
+            }
+
+            if (finallyExitContext is { IsUsed: true })
+            {
+                LowerFinallyExitPath(finallyExitContext, tryStatement.FinallyStatements, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, currentMethod);
             }
 
             return true;
@@ -1365,5 +1412,39 @@ public sealed partial class Lowerer
         }
 
         return tryTerminates && handlerTerminates;
+    }
+
+    private void LowerFinallyExitPath(
+        FinallyExitContext finallyExitContext,
+        IReadOnlyList<StatementSyntax> finallyStatements,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, TypeSymbol> localTypes,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        IrValue? returnRegister,
+        List<IrExceptionHandler> exceptionHandlers,
+        List<DebugVariableBuilder> debugVariables,
+        List<IrDebugSourceMap> debugSourceMaps,
+        MethodSymbol? currentMethod)
+    {
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, finallyExitContext.ExitLabel));
+        foreach (var statement in finallyStatements)
+        {
+            if (LowerStatement(statement, registerByName, localTypes, arrayShapesByName, registers, instructions, returnRegister, exceptionHandlers, debugVariables, debugSourceMaps, false, currentMethod))
+            {
+                return;
+            }
+        }
+
+        if (_finallyExitContexts.Count > 0)
+        {
+            var outerFinallyExit = _finallyExitContexts.Peek();
+            outerFinallyExit.IsUsed = true;
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, outerFinallyExit.ExitLabel));
+            return;
+        }
+
+        instructions.Add(new IrInstruction(IrOpCode.Return, null, returnRegister));
     }
 }

@@ -996,8 +996,8 @@ public sealed partial class Binder
                         localScopeNames[declarator.Identifier.Text] = declarator.Identifier;
                     }
                     break;
-                case ReturnStatementSyntax returnStatement when returnStatement.Expression is not null:
-                    ValidateExpression(returnStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                case ReturnStatementSyntax returnStatement:
+                    ValidateReturnStatement(returnStatement, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
                 case IncStatementSyntax incStatement:
                     ValidateIncDecStatement(incStatement.Keyword, incStatement.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -1356,24 +1356,51 @@ public sealed partial class Binder
 
                     if (tryStatement.FinallyKeyword is not null)
                     {
-                        var containsRoutineExitInProtectedRegions =
-                            ContainsRoutineExit(tryStatement.TryStatements) ||
-                            tryStatement.ExceptionClauses.Any(clause => ContainsRoutineExit([clause.Body])) ||
-                            ContainsRoutineExit(tryStatement.ExceptStatements);
-                        if (containsRoutineExitInProtectedRegions)
-                        {
-                            diagnostics.Report(
-                                "ILC2134",
-                                "Early routine exit inside try/finally is not supported yet.",
-                                DiagnosticSeverity.Error,
-                                tryStatement.FinallyKeyword.Span);
-                        }
-
                         ValidateStatements(tryStatement.FinallyStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, false, inLoop, diagnostics, profiler, activeLocalScopes);
                     }
                     break;
             }
         }
+    }
+
+    private static void ValidateReturnStatement(
+        ReturnStatementSyntax returnStatement,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (returnStatement.Expression is null)
+        {
+            return;
+        }
+
+        if (currentMethod is null || currentMethod.ReturnType == TypeSymbol.Void)
+        {
+            diagnostics.Report(
+                "ILC2250",
+                $"'{returnStatement.ReturnKeyword.Text}' with a value is only valid inside functions or value-returning methods.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(returnStatement.Expression, knownTypes));
+            ValidateExpression(returnStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+            return;
+        }
+
+        ValidateExpressionForExpectedType(
+            returnStatement.Expression,
+            currentMethod.ReturnType,
+            locals,
+            knownTypes,
+            knownMethods,
+            knownFields,
+            knownConstants,
+            knownProperties,
+            currentMethod,
+            diagnostics);
     }
 
     private static bool ContainsRoutineExit(IReadOnlyList<StatementSyntax> statements)
@@ -2863,21 +2890,116 @@ public sealed partial class Binder
         }
 
         var targetDefinitionName = targetType.Name[..targetGenericStart];
-        var sourceCandidates = knownTypes
-            .OfType<NamedTypeSymbol>()
-            .Where(type => SemanticFacts.NameEquals(type.Name, sourceType.Name) || type.Name.StartsWith(sourceType.Name + "<", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (SemanticFacts.ResolveTypeReference(sourceType.Name, knownTypes) is NamedTypeSymbol resolvedSource &&
-            !sourceCandidates.Contains(resolvedSource))
+        var sourceGenericStart = sourceType.Name.IndexOf('<', StringComparison.Ordinal);
+        var sourceDefinitionName = sourceGenericStart > 0 ? sourceType.Name[..sourceGenericStart] : sourceType.Name;
+        var sourceGenericArity = CountGenericArguments(sourceType.Name);
+        var resolvedSource =
+            ResolveGenericDefinition(sourceDefinitionName, sourceGenericArity, knownTypes) ??
+            SemanticFacts.ResolveTypeReference(sourceType.Name, knownTypes) as NamedTypeSymbol;
+        if (resolvedSource is null)
         {
-            sourceCandidates = [.. sourceCandidates, resolvedSource];
+            return false;
         }
 
-        return sourceCandidates.Any(sourceNamedType => sourceNamedType.InterfaceTypes.Any(interfaceType =>
+        foreach (var sourceCandidate in EnumerateGenericSourceCandidates(resolvedSource, sourceDefinitionName, knownTypes))
         {
-            var interfaceGenericStart = interfaceType.Name.IndexOf('<', StringComparison.Ordinal);
-            return interfaceGenericStart > 0 && SemanticFacts.NameEquals(interfaceType.Name[..interfaceGenericStart], targetDefinitionName);
-        }));
+            foreach (var candidateType in EnumerateAssignableTypeHierarchy(sourceCandidate, knownTypes))
+            {
+                foreach (var interfaceType in candidateType.InterfaceTypes)
+                {
+                    if (ImplementsGenericInterfaceDefinition(interfaceType, targetDefinitionName, knownTypes))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<NamedTypeSymbol> EnumerateGenericSourceCandidates(NamedTypeSymbol resolvedSource, string sourceDefinitionName, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        yield return resolvedSource;
+        foreach (var candidate in knownTypes.OfType<NamedTypeSymbol>())
+        {
+            if (!ReferenceEquals(candidate, resolvedSource) && SemanticFacts.NameEquals(candidate.Name, sourceDefinitionName))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private static IEnumerable<NamedTypeSymbol> EnumerateAssignableTypeHierarchy(NamedTypeSymbol sourceType, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        for (NamedTypeSymbol? current = sourceType; current is not null;)
+        {
+            yield return current;
+            current = current.BaseType is null
+                ? null
+                : SemanticFacts.ResolveTypeReference(current.BaseType.Name, knownTypes) as NamedTypeSymbol;
+        }
+    }
+
+    private static bool ImplementsGenericInterfaceDefinition(TypeSymbol interfaceType, string targetDefinitionName, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var interfaceGenericStart = interfaceType.Name.IndexOf('<', StringComparison.Ordinal);
+        if (interfaceGenericStart > 0 && SemanticFacts.NameEquals(interfaceType.Name[..interfaceGenericStart], targetDefinitionName))
+        {
+            return true;
+        }
+
+        var interfaceDefinitionStart = interfaceType.Name.IndexOf('<', StringComparison.Ordinal);
+        var interfaceDefinitionName = interfaceDefinitionStart > 0 ? interfaceType.Name[..interfaceDefinitionStart] : interfaceType.Name;
+        var interfaceGenericArity = CountGenericArguments(interfaceType.Name);
+        var resolvedInterface =
+            ResolveGenericDefinition(interfaceDefinitionName, interfaceGenericArity, knownTypes) ??
+            SemanticFacts.ResolveTypeReference(interfaceType.Name, knownTypes) as NamedTypeSymbol;
+        if (resolvedInterface is null)
+        {
+            return false;
+        }
+
+        return resolvedInterface.InterfaceTypes.Any(inheritedInterface =>
+            ImplementsGenericInterfaceDefinition(inheritedInterface, targetDefinitionName, knownTypes));
+    }
+
+    private static NamedTypeSymbol? ResolveGenericDefinition(string definitionName, int genericArity, IReadOnlyList<TypeSymbol> knownTypes) =>
+        knownTypes
+            .OfType<NamedTypeSymbol>()
+            .FirstOrDefault(type => SemanticFacts.NameEquals(type.Name, definitionName) && type.GenericArity == genericArity) ??
+        knownTypes
+            .OfType<NamedTypeSymbol>()
+            .FirstOrDefault(type => SemanticFacts.NameEquals(type.Name, definitionName));
+
+    private static int CountGenericArguments(string typeName)
+    {
+        var genericStart = typeName.IndexOf('<', StringComparison.Ordinal);
+        if (genericStart < 0 || !typeName.EndsWith(">", StringComparison.Ordinal))
+        {
+            return 0;
+        }
+
+        var depth = 0;
+        var count = 1;
+        for (var index = genericStart + 1; index < typeName.Length - 1; index++)
+        {
+            var current = typeName[index];
+            if (current == '<')
+            {
+                depth++;
+            }
+            else if (current == '>')
+            {
+                depth--;
+            }
+            else if (current == ',' && depth == 0)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private static bool IsCompatibleArrayAssignment(string sourceName, string targetName)

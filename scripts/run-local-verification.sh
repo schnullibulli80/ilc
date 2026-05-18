@@ -26,6 +26,8 @@ ui_qtquick_fixture="$repo_root/libs/shipped/ui-backends-qtquick.ilc"
 demo_core_fixture="$repo_root/tests/fixtures/demo-core.ilc"
 qtbridge_build_dir="$repo_root/build/runtime/ilcvm_qtbridge"
 runtime_smoke_env=()
+expected_smoke_checks=187
+expected_smoke_signature=220208
 
 cd "$repo_root"
 
@@ -139,14 +141,41 @@ run_runtime_smoke_step() {
     local exit_code=$?
     set -e
 
+    local smoke_checks=""
+    local smoke_signature=""
     local smoke_result=""
+    if grep -q "^SMOKE_CHECKS=" "$log_file"; then
+        smoke_checks="$(grep "^SMOKE_CHECKS=" "$log_file" | tail -n 1 | cut -d'=' -f2-)"
+    fi
+    if grep -q "^SMOKE_SIGNATURE=" "$log_file"; then
+        smoke_signature="$(grep "^SMOKE_SIGNATURE=" "$log_file" | tail -n 1 | cut -d'=' -f2-)"
+    fi
     if grep -q "^SMOKE_RESULT=" "$log_file"; then
         smoke_result="$(grep "^SMOKE_RESULT=" "$log_file" | tail -n 1 | cut -d'=' -f2-)"
     fi
 
     if grep -q "^execution result: " "$log_file"; then
+        if [[ "$smoke_checks" != "$expected_smoke_checks" ]]; then
+            log_status "==> FAIL:  $label (unexpected smoke check count: ${smoke_checks:-missing}, expected $expected_smoke_checks)"
+            log_status "    log: $log_file"
+            current_step=""
+            return 1
+        fi
+        if [[ "$smoke_signature" != "$expected_smoke_signature" ]]; then
+            log_status "==> FAIL:  $label (unexpected smoke signature: ${smoke_signature:-missing}, expected $expected_smoke_signature)"
+            log_status "    log: $log_file"
+            current_step=""
+            return 1
+        fi
+
         log_status "==> OK:    $label"
         log_status "    log: $log_file"
+        if [[ -n "$smoke_checks" ]]; then
+            log_status "    note: smoke reported checks $smoke_checks"
+        fi
+        if [[ -n "$smoke_signature" ]]; then
+            log_status "    note: smoke reported signature $smoke_signature"
+        fi
         if [[ -n "$smoke_result" ]]; then
             log_status "    note: smoke reported result $smoke_result"
         fi
@@ -164,17 +193,17 @@ run_runtime_smoke_step() {
 run_step \
     "Build solution" \
     "$tmp_dir/solution-build-local.log" \
-    dotnet build "$repo_root/ILC.sln"
+    dotnet build "$repo_root/ILC.sln" --no-restore
 
 run_step \
     "Run compiler tests" \
     "$tmp_dir/compiler-tests-local.log" \
-    dotnet run --project "$repo_root/tests/ILC.Compiler.Tests/ILC.Compiler.Tests.csproj"
+    dotnet run --project "$repo_root/tests/ILC.Compiler.Tests/ILC.Compiler.Tests.csproj" --no-restore
 
 run_step \
     "Compile runtime smoke" \
     "$tmp_dir/compiler-runtime-cli-local.log" \
-    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" -- --debug "$bootstrap_runtime_source" "$system_fixture" "$diagnostics_fixture" "$text_fixture" "$json_fixture" "$net_fixture" "$threading_fixture" "$collections_fixture" "$ui_fixture" "$ui_hosting_fixture" "$ui_qtquick_fixture" "$demo_core_fixture"
+    dotnet run --project "$repo_root/src/ILC.Compiler.Cli/ILC.Compiler.Cli.csproj" --no-restore -- --debug "$bootstrap_runtime_source" "$system_fixture" "$diagnostics_fixture" "$text_fixture" "$json_fixture" "$net_fixture" "$threading_fixture" "$collections_fixture" "$ui_fixture" "$ui_hosting_fixture" "$ui_qtquick_fixture" "$demo_core_fixture"
 
 run_step \
     "Build runtime" \

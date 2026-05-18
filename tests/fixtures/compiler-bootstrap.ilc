@@ -153,6 +153,18 @@ begin
   end;
 end;
 
+public class Smoke
+begin
+  public static var CheckCount: Integer;
+  public static var Signature: Integer;
+
+  public static method Record(name: String; value: Integer);
+  begin
+    CheckCount := CheckCount + 1;
+    Signature := (Signature * 131 + CheckCount * 17 + name.Length * 31 + value) mod 1000003;
+  end;
+end;
+
 // Testing variable declaration and initialization
 var value := 42;
 // Testing method invocation
@@ -256,9 +268,44 @@ begin
     exit left + right;
   end;
 
+  public static function TryFinallyReturnValue: Integer;
+  begin
+    Result := 0;
+    try
+      return 1;
+    finally
+      Result := Result + 10;
+    end;
+  end;
+
+  public static function TryFinallyExitValue: Integer;
+  begin
+    Result := 0;
+    try
+      exit 1;
+    finally
+      Result := Result + 20;
+    end;
+  end;
+
+  public static function TryFinallyNestedExitValue: Integer;
+  begin
+    Result := 0;
+    try
+      try
+        exit 1;
+      finally
+        Result := Result + 10;
+      end;
+    finally
+      Result := Result + 100;
+    end;
+  end;
+
   // Trace methods for outputting checkpoints during execution
   public static procedure Trace(name: String; value: Integer);
   begin
+    Smoke.Record(name, value);
     System.Console.WriteLine(name + value.ToString());
   end;
 
@@ -436,6 +483,26 @@ begin
       current := current + 1;
     end;
     Program.Trace('CHECKPOINT exceptions=', current);
+
+    var returnFinallyValue := Program.TryFinallyReturnValue();
+    var exitFinallyValue := Program.TryFinallyExitValue();
+    var nestedFinallyValue := Program.TryFinallyNestedExitValue();
+    Program.Trace('CHECKPOINT exceptions-finally-return=', returnFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-exit=', exitFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-nested=', nestedFinallyValue);
+    if returnFinallyValue <> 11 then
+    begin
+      raise new Exception('try-finally return result mismatch');
+    end;
+    if exitFinallyValue <> 21 then
+    begin
+      raise new Exception('try-finally exit result mismatch');
+    end;
+    if nestedFinallyValue <> 111 then
+    begin
+      raise new Exception('nested try-finally exit result mismatch');
+    end;
+    current := current + returnFinallyValue + exitFinallyValue + nestedFinallyValue;
 
     Program.TraceText('SECTION loops-and-slices');
     var index := 0;
@@ -2055,7 +2122,9 @@ begin
     Program.TraceText('SECTION final-state');
     Program.Trace('CHECKPOINT final-before-store=', current);
     Program.Total := localResult + current + Program.AutoTotal + Program.SecretRead;
-    Program.Trace('SMOKE_RESULT=', Program.Total);
+    System.Console.WriteLine('SMOKE_CHECKS=' + Smoke.CheckCount.ToString());
+    System.Console.WriteLine('SMOKE_SIGNATURE=' + Smoke.Signature.ToString());
+    System.Console.WriteLine('SMOKE_RESULT=' + Program.Total.ToString());
     return;
   end;
 

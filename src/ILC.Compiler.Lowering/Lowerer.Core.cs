@@ -21,6 +21,12 @@ public sealed partial class Lowerer
             new(Name, Type, RegisterIndex, VmIpStart, VmIpEnd ?? defaultVmIpEnd, Kind);
     }
 
+    private sealed class FinallyExitContext(string exitLabel)
+    {
+        public string ExitLabel { get; } = exitLabel;
+        public bool IsUsed { get; set; }
+    }
+
     private readonly IReadOnlyList<MethodSymbol> _knownMethods;
     private readonly IReadOnlyList<FieldSymbol> _knownFields;
     private readonly IReadOnlyList<ConstantSymbol> _knownConstants;
@@ -33,6 +39,7 @@ public sealed partial class Lowerer
     private static readonly object SyntaxNodePropertyCacheLock = new();
     private readonly LoweringProfiler? _profiler;
     private readonly Stack<(string BreakLabel, string ContinueLabel)> _loopLabels = new();
+    private readonly Stack<FinallyExitContext> _finallyExitContexts = new();
     private readonly Dictionary<string, TypeSymbol?> _typeReferenceCache = new(SemanticFacts.NameComparer);
     private Dictionary<string, IrValue>? _localTypeCacheSource;
     private Dictionary<string, TypeSymbol>? _localTypeCache;
@@ -108,6 +115,7 @@ public sealed partial class Lowerer
         var debugSourceMaps = new List<IrDebugSourceMap>();
         _labelCounter = 0;
         _loopLabels.Clear();
+        _finallyExitContexts.Clear();
 
         ushort nextIndex = 0;
         if (method.DeclaringTypeName is not null && !method.IsStatic)

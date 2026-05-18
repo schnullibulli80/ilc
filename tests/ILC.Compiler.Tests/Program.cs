@@ -86,7 +86,7 @@ else if (tree.Root.Uses.Imports[0].NamespaceName.ToDisplayString() != "System" |
     failures.Add("Parser should capture imported namespaces.");
 }
 
-if (tree.Root.Members.Count != 15)
+if (tree.Root.Members.Count != 16)
 {
     failures.Add("Parser should capture top-level members.");
 }
@@ -1164,7 +1164,7 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 15)
+else if (programType.Methods.Count != 18)
 {
     failures.Add(
         "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +
@@ -1933,6 +1933,33 @@ begin
     exit Result + value;
   end;
 
+  public static function ReturnAlias(value: Integer): Integer;
+  begin
+    return value + 1;
+  end;
+
+  public static function ReturnCurrentResult(value: Integer): Integer;
+  begin
+    Result := value;
+    return;
+  end;
+
+  public static function ExitCurrentResult(value: Integer): Integer;
+  begin
+    Result := value;
+    exit;
+  end;
+
+  public static procedure ExitProcedure;
+  begin
+    exit;
+  end;
+
+  public static procedure ReturnProcedure;
+  begin
+    return;
+  end;
+
   public static method InvalidProcedureResult;
   begin
     Result := 1;
@@ -1943,6 +1970,16 @@ begin
     var Result := 1;
     return Result;
   end;
+
+  public static procedure InvalidProcedureReturnValue;
+  begin
+    return 1;
+  end;
+
+  public static function InvalidReturnType: Integer;
+  begin
+    return 'bad';
+  end;
 end;
 """);
 
@@ -1950,16 +1987,23 @@ var resultAliasBinding = new Binder().Bind(resultAliasTree);
 var resultAliasProgram = resultAliasBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
 var resultAliasMethod = resultAliasProgram.Methods.First(method => method.Name == "Accumulate");
 var exitAliasMethod = resultAliasProgram.Methods.First(method => method.Name == "AccumulateWithExit");
+var returnAliasMethod = resultAliasProgram.Methods.First(method => method.Name == "ReturnAlias");
+var returnCurrentResultMethod = resultAliasProgram.Methods.First(method => method.Name == "ReturnCurrentResult");
+var exitCurrentResultMethod = resultAliasProgram.Methods.First(method => method.Name == "ExitCurrentResult");
+var exitProcedureMethod = resultAliasProgram.Methods.First(method => method.Name == "ExitProcedure");
+var returnProcedureMethod = resultAliasProgram.Methods.First(method => method.Name == "ReturnProcedure");
 var resultAliasDiagnostics = resultAliasBinding.Diagnostics.ToArray();
-if (resultAliasDiagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Id != "ILC2241" && diagnostic.Id != "ILC2242"))
+if (resultAliasDiagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Id is not ("ILC2240" or "ILC2241" or "ILC2242" or "ILC2250")))
 {
     failures.Add("Result alias fixture should only report the expected invalid Result usages.");
 }
 
 if (!resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2242") ||
-    !resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2241"))
+    !resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2241") ||
+    !resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2250") ||
+    !resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2240"))
 {
-    failures.Add("Binder should allow implicit Result in functions and reject Result in invalid contexts.");
+    failures.Add("Binder should allow implicit Result in functions and reject Result or return values in invalid contexts.");
 }
 
 var resultAliasIr = new Lowerer(
@@ -1974,8 +2018,43 @@ var exitAliasIr = new Lowerer(
     resultAliasBinding.Compilation.Types,
     resultAliasProgram.Properties,
     resultAliasProgram.Constants).Lower(exitAliasMethod);
+var returnAliasIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(returnAliasMethod);
+var returnCurrentResultIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(returnCurrentResultMethod);
+var exitCurrentResultIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(exitCurrentResultMethod);
+var exitProcedureIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(exitProcedureMethod);
+var returnProcedureIr = new Lowerer(
+    resultAliasProgram.Methods,
+    resultAliasProgram.Fields,
+    resultAliasBinding.Compilation.Types,
+    resultAliasProgram.Properties,
+    resultAliasProgram.Constants).Lower(returnProcedureMethod);
 var resultAliasInstructions = resultAliasIr.Blocks.SelectMany(block => block.Instructions).ToArray();
 var exitAliasInstructions = exitAliasIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+var returnAliasInstructions = returnAliasIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+var returnCurrentResultInstructions = returnCurrentResultIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+var exitCurrentResultInstructions = exitCurrentResultIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+var exitProcedureInstructions = exitProcedureIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+var returnProcedureInstructions = returnProcedureIr.Blocks.SelectMany(block => block.Instructions).ToArray();
 if (resultAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
     resultAliasInstructions.Last().OpCode != IrOpCode.Return ||
     !resultAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.LoadConstant && Equals(instruction.Operand, 1)) ||
@@ -1989,6 +2068,27 @@ if (exitAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Re
     !exitAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
 {
     failures.Add("Lowerer should treat exit expressions as early routine exits that assign the function return register.");
+}
+
+if (returnAliasInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
+    returnAliasInstructions.Last().OpCode != IrOpCode.Return ||
+    !returnAliasInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
+{
+    failures.Add("Lowerer should treat return expressions as compatibility aliases for exit expressions.");
+}
+
+if (returnCurrentResultInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
+    returnCurrentResultInstructions.Last().OpCode != IrOpCode.Return ||
+    exitCurrentResultInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
+    exitCurrentResultInstructions.Last().OpCode != IrOpCode.Return)
+{
+    failures.Add("Lowerer should let bare return/exit terminate value-returning routines with the current Result value.");
+}
+
+if (exitProcedureInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1 ||
+    returnProcedureInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1)
+{
+    failures.Add("Lowerer should allow bare exit/return in procedures and void methods.");
 }
 
 var routineKeywordTree = SyntaxTree.Parse("""
@@ -3425,40 +3525,84 @@ if (!invalidRethrowBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC21
     failures.Add("Binder should report bare raise outside an except handler.");
 }
 
-var invalidFinallyTree = SyntaxTree.Parse("""
+var finallyExitTree = SyntaxTree.Parse("""
 public class Program
 begin
-  public method Main: Integer;
+  public static function ReturnFromTry: Integer;
   begin
+    Result := 0;
     try
       return 1;
     finally
-      return 2;
+      Result := Result + 10;
     end;
   end;
-end;
-""");
 
-var invalidFinallyExitTree = SyntaxTree.Parse("""
-public class Program
-begin
-  public method Main: Integer;
+  public static function ExitFromTry: Integer;
   begin
+    Result := 0;
     try
       exit 1;
     finally
       Result := 2;
     end;
   end;
+
+  public static function NestedExit: Integer;
+  begin
+    Result := 0;
+    try
+      try
+        exit 1;
+      finally
+        Result := Result + 10;
+      end;
+    finally
+      Result := Result + 100;
+    end;
+  end;
 end;
 """);
 
-var invalidFinallyBinding = new Binder().Bind(invalidFinallyTree);
-var invalidFinallyExitBinding = new Binder().Bind(invalidFinallyExitTree);
-if (!invalidFinallyBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2134") ||
-    !invalidFinallyExitBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2134"))
+var finallyExitBinding = new Binder().Bind(finallyExitTree);
+if (finallyExitBinding.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
 {
-    failures.Add("Binder should report unsupported early routine exit inside try/finally.");
+    failures.Add("Binder should allow early routine exit inside try/finally.");
+}
+else
+{
+    var finallyExitProgram = finallyExitBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+    var finallyExitLowerer = new Lowerer(finallyExitProgram.Methods, finallyExitProgram.Fields, finallyExitBinding.Compilation.Types, finallyExitProgram.Properties, finallyExitProgram.Constants);
+    var returnFromTryIr = finallyExitLowerer.Lower(finallyExitProgram.Methods.First(method => method.Name == "ReturnFromTry"));
+    var exitFromTryIr = finallyExitLowerer.Lower(finallyExitProgram.Methods.First(method => method.Name == "ExitFromTry"));
+    var nestedExitIr = finallyExitLowerer.Lower(finallyExitProgram.Methods.First(method => method.Name == "NestedExit"));
+    var returnFromTryInstructions = returnFromTryIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var exitFromTryInstructions = exitFromTryIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var nestedExitInstructions = nestedExitIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    if (!returnFromTryIr.ExceptionHandlers.Any() ||
+        !exitFromTryIr.ExceptionHandlers.Any() ||
+        !nestedExitIr.ExceptionHandlers.Any())
+    {
+        failures.Add("Lowerer should preserve exception handler metadata for try/finally exits.");
+    }
+
+    if (!returnFromTryInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        returnFromTryInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1)
+    {
+        failures.Add("Lowerer should route return inside try/finally through a finally exit path.");
+    }
+
+    if (!exitFromTryInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        exitFromTryInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1)
+    {
+        failures.Add("Lowerer should route exit inside try/finally through a finally exit path.");
+    }
+
+    if (nestedExitInstructions.Count(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) < 2 ||
+        nestedExitInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1)
+    {
+        failures.Add("Lowerer should chain nested try/finally exit paths from inner to outer finally blocks.");
+    }
 }
 
 var invalidTypedCatchTree = SyntaxTree.Parse("""

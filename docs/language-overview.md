@@ -248,8 +248,9 @@ reuse a name from its active scope chain, but a name can be reused after the
 earlier block scope has ended.
 
 Early routine exits from the protected part of a `try` statement that has a
-`finally` block are currently rejected until the lowering can preserve the exact
-finally-before-exit behavior.
+`finally` block execute the `finally` statements before the routine returns.
+Nested `try/finally` blocks execute their pending `finally` statements from the
+innermost block outward.
 
 `with` is implemented as a compile-time rewrite that scopes member access to the
 active receiver.
