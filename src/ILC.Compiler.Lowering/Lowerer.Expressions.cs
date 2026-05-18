@@ -405,6 +405,12 @@ public sealed partial class Lowerer
                     return;
                 }
 
+                if (binary.OperatorToken.Kind is SyntaxKind.AndKeyword or SyntaxKind.OrKeyword)
+                {
+                    LowerLogicalExpressionInto(binary, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                    return;
+                }
+
                 TypeSymbol leftType;
                 TypeSymbol rightType;
                 using (Profile("BinaryExpression.ResolveOperandTypes"))
@@ -1375,6 +1381,14 @@ public sealed partial class Lowerer
             return type != TypeSymbol.Unknown;
         }
 
+        if (binary.OperatorToken.Kind is SyntaxKind.AndKeyword or SyntaxKind.OrKeyword &&
+            leftType == TypeSymbol.Boolean &&
+            rightType == TypeSymbol.Boolean)
+        {
+            type = TypeSymbol.Boolean;
+            return true;
+        }
+
         if (SemanticFacts.IsSetType(leftType) && SemanticFacts.IsSetType(rightType))
         {
             type = leftType;
@@ -2186,6 +2200,34 @@ public sealed partial class Lowerer
         instructions.Add(new IrInstruction(IrOpCode.Branch, null, endLabel));
         instructions.Add(new IrInstruction(IrOpCode.Label, null, keepLeftLabel));
         instructions.Add(new IrInstruction(IrOpCode.Copy, destination, leftRegister));
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
+    }
+
+    private void LowerLogicalExpressionInto(
+        BinaryExpressionSyntax binary,
+        IrValue destination,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
+        var endLabel = AllocateLabel(binary.OperatorToken.Kind == SyntaxKind.AndKeyword ? "logical_and_end" : "logical_or_end");
+        LowerExpressionInto(binary.Left, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+
+        if (binary.OperatorToken.Kind == SyntaxKind.AndKeyword)
+        {
+            instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, destination, endLabel));
+            LowerExpressionInto(binary.Right, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+            instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
+            return;
+        }
+
+        var evaluateRightLabel = AllocateLabel("logical_or_right");
+        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, destination, evaluateRightLabel));
+        instructions.Add(new IrInstruction(IrOpCode.Branch, null, endLabel));
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, evaluateRightLabel));
+        LowerExpressionInto(binary.Right, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
         instructions.Add(new IrInstruction(IrOpCode.Label, null, endLabel));
     }
 

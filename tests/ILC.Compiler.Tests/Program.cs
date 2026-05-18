@@ -1164,7 +1164,7 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 18)
+else if (programType.Methods.Count != 19)
 {
     failures.Add(
         "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +
@@ -2089,6 +2089,54 @@ if (exitProcedureInstructions.Count(instruction => instruction.OpCode == IrOpCod
     returnProcedureInstructions.Count(instruction => instruction.OpCode == IrOpCode.Return) != 1)
 {
     failures.Add("Lowerer should allow bare exit/return in procedures and void methods.");
+}
+
+var logicalOperatorTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function TrueValue: Boolean;
+  begin
+    return true;
+  end;
+
+  public static function LogicalAnd: Boolean;
+  begin
+    return false and TrueValue();
+  end;
+
+  public static function LogicalOr: Boolean;
+  begin
+    return true or TrueValue();
+  end;
+
+  public static function InvalidLogical: Boolean;
+  begin
+    return 1 and true;
+  end;
+end;
+""");
+
+var logicalOperatorBinding = new Binder().Bind(logicalOperatorTree);
+if (!logicalOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2251"))
+{
+    failures.Add("Binder should require Boolean operands for logical infix operators.");
+}
+
+var logicalProgram = logicalOperatorBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+var logicalLowerer = new Lowerer(logicalProgram.Methods, logicalProgram.Fields, logicalOperatorBinding.Compilation.Types, logicalProgram.Properties, logicalProgram.Constants);
+var logicalAndInstructions = logicalLowerer.Lower(logicalProgram.Methods.First(method => method.Name == "LogicalAnd")).Blocks.SelectMany(block => block.Instructions).ToArray();
+var logicalOrInstructions = logicalLowerer.Lower(logicalProgram.Methods.First(method => method.Name == "LogicalOr")).Blocks.SelectMany(block => block.Instructions).ToArray();
+if (!logicalAndInstructions.Any(instruction => instruction.OpCode == IrOpCode.BranchIfFalse && instruction.Operand is string label && label.StartsWith("logical_and_end_", StringComparison.Ordinal)) ||
+    logicalAndInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
+{
+    failures.Add("Lowerer should lower logical 'and' through a short-circuit branch, not arithmetic addition.");
+}
+
+if (!logicalOrInstructions.Any(instruction => instruction.OpCode == IrOpCode.BranchIfFalse && instruction.Operand is string label && label.StartsWith("logical_or_right_", StringComparison.Ordinal)) ||
+    !logicalOrInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("logical_or_end_", StringComparison.Ordinal)) ||
+    logicalOrInstructions.Any(instruction => instruction.OpCode == IrOpCode.Add))
+{
+    failures.Add("Lowerer should lower logical 'or' through a short-circuit branch, not arithmetic addition.");
 }
 
 var routineKeywordTree = SyntaxTree.Parse("""

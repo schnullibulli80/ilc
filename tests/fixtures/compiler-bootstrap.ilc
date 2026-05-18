@@ -302,6 +302,11 @@ begin
     end;
   end;
 
+  public static function FailBoolean: Boolean;
+  begin
+    raise new Exception('logical right-hand side should not have been evaluated');
+  end;
+
   // Trace methods for outputting checkpoints during execution
   public static procedure Trace(name: String; value: Integer);
   begin
@@ -445,6 +450,28 @@ begin
     end;
 
     if castMismatchNil then
+    begin
+      current := current + 1;
+    end;
+    var logicalAndValue := sameText and differentText;
+    var logicalOrValue := sameText or hasMissingText;
+    var shortCircuitAnd := hasMissingText and Program.FailBoolean();
+    var shortCircuitOr := sameText or Program.FailBoolean();
+    Program.Trace('CHECKPOINT logical-and=', logicalAndValue);
+    Program.Trace('CHECKPOINT logical-or=', logicalOrValue);
+    if logicalAndValue then
+    begin
+      current := current + 1;
+    end;
+    if logicalOrValue then
+    begin
+      current := current + 1;
+    end;
+    if not shortCircuitAnd then
+    begin
+      current := current + 1;
+    end;
+    if shortCircuitOr then
     begin
       current := current + 1;
     end;

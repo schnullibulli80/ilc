@@ -2092,6 +2092,28 @@ public sealed partial class Binder
                         }
                     }
                 }
+                else if (binary.OperatorToken.Kind is SyntaxKind.AndKeyword or SyntaxKind.OrKeyword)
+                {
+                    TypeSymbol leftType;
+                    TypeSymbol rightType;
+                    using (Profile(currentValidationProfiler, "ValidateBinary.Infer.Logical"))
+                    {
+                        leftType = InferValidationExpressionType(binary.Left, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                        rightType = InferValidationExpressionType(binary.Right, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+                    }
+
+                    if (SemanticFacts.IsSetType(leftType) || SemanticFacts.IsSetType(rightType))
+                    {
+                        using (Profile(currentValidationProfiler, "ValidateBinary.SetBinary"))
+                        {
+                            ValidateSetBinary(binary, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                        }
+                    }
+                    else
+                    {
+                        ValidateLogicalBinary(binary, leftType, rightType, knownTypes, diagnostics);
+                    }
+                }
                 break;
             case UnaryExpressionSyntax unary:
                 ValidateExpression(unary.Operand, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -3281,6 +3303,37 @@ public sealed partial class Binder
                 $"Set operands for '{binary.OperatorToken.Text}' must have the same element type.",
                 DiagnosticSeverity.Error,
                 GetExpressionDiagnosticSpan(binary, knownTypes));
+        }
+    }
+
+    private static void ValidateLogicalBinary(
+        BinaryExpressionSyntax binary,
+        TypeSymbol leftType,
+        TypeSymbol rightType,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        DiagnosticBag diagnostics)
+    {
+        if (SemanticFacts.IsUnknownType(leftType) || SemanticFacts.IsUnknownType(rightType))
+        {
+            return;
+        }
+
+        if (leftType != TypeSymbol.Boolean)
+        {
+            diagnostics.Report(
+                "ILC2251",
+                $"Left-hand side of logical '{binary.OperatorToken.Text}' must be Boolean, but got '{leftType.Name}'.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(binary.Left, knownTypes));
+        }
+
+        if (rightType != TypeSymbol.Boolean)
+        {
+            diagnostics.Report(
+                "ILC2252",
+                $"Right-hand side of logical '{binary.OperatorToken.Text}' must be Boolean, but got '{rightType.Name}'.",
+                DiagnosticSeverity.Error,
+                GetExpressionDiagnosticSpan(binary.Right, knownTypes));
         }
     }
 

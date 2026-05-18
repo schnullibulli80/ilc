@@ -75,6 +75,13 @@ public static partial class SemanticFacts
             return IsBuiltInIntegerType(leftType) ? leftType : TypeSymbol.Unknown;
         }
 
+        if (binary.OperatorToken.Kind is SyntaxKind.AndKeyword or SyntaxKind.OrKeyword &&
+            leftType == TypeSymbol.Boolean &&
+            rightType == TypeSymbol.Boolean)
+        {
+            return TypeSymbol.Boolean;
+        }
+
         if (IsSetType(leftType) && IsSetType(rightType))
         {
             return leftType;

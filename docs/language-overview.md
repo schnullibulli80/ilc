@@ -172,6 +172,7 @@ Supported assignment operators:
 
 - `+`, `-`, `*`, `/`, `div`, `mod`
 - shifts: `shl`, `shr`
+- logical Boolean operators: `and`, `or` with short-circuit evaluation
 - comparisons: `=`, `<>`, `<`, `<=`, `>`, `>=`
 - membership/operator forms used in patterns and filters: `in`, `not in`
 - type/shape checks: `is`, `as`
@@ -397,8 +398,6 @@ Keep these in mind when evaluating language scope:
   receiver types.
 - `is` / `as` for reference types now use runtime type checks, including
   interface targets.
-- `and`/`or` are not full logical infix operators yet; only their compound
-  assignment forms are part of assignment lowering.
 - The full operator/feature catalog in the product vision is broader than the
   currently compile-able bootstrap subset.
 - Wider integer types (`UInt128`+) are represented in symboling, but end-to-end
