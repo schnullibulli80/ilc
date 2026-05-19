@@ -3866,6 +3866,114 @@ else
     }
 }
 
+var tryFlowAssignmentTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function ResultFromTry: Integer;
+  begin
+    try
+      Result := 1;
+    finally
+    end;
+  end;
+
+  public static function ResultFromFinally: Integer;
+  begin
+    try
+    finally
+      Result := 1;
+    end;
+  end;
+
+  public static function OutFromTry(out value: Integer): Boolean;
+  begin
+    try
+      value := 1;
+    finally
+    end;
+
+    return true;
+  end;
+
+  public static function OutFromTryExcept(out value: Integer): Boolean;
+  begin
+    try
+      value := 1;
+    except
+      value := 2;
+    end;
+
+    return true;
+  end;
+
+  public static function LocalFromTry: Integer;
+  begin
+    var value: Integer;
+    try
+      value := 1;
+    finally
+    end;
+
+    return value;
+  end;
+
+  public static function LocalFromFinally: Integer;
+  begin
+    var value: Integer;
+    try
+    finally
+      value := 1;
+    end;
+
+    return value;
+  end;
+
+  public static function MissingOutInExcept(out value: Integer): Boolean;
+  begin
+    try
+      value := 1;
+    except
+    end;
+
+    return true;
+  end;
+
+  public static function MissingLocalInExcept: Integer;
+  begin
+    var value: Integer;
+    try
+      value := 1;
+    except
+    end;
+
+    return value;
+  end;
+end;
+""");
+
+var tryFlowAssignmentBinding = new Binder().Bind(tryFlowAssignmentTree);
+var tryFlowAssignmentDiagnostics = tryFlowAssignmentBinding.Diagnostics.ToArray();
+if (tryFlowAssignmentDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2256") != 1)
+{
+    failures.Add(
+        "Binder should merge required out assignments through try/except/finally paths. Actual: " +
+        string.Join(" | ", tryFlowAssignmentDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (tryFlowAssignmentDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2257") != 1)
+{
+    failures.Add(
+        "Binder should merge local definite assignments through try/except/finally paths. Actual: " +
+        string.Join(" | ", tryFlowAssignmentDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (tryFlowAssignmentDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2255"))
+{
+    failures.Add(
+        "Binder should accept Result assignments made by continuing try/finally paths. Actual: " +
+        string.Join(" | ", tryFlowAssignmentDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
 var invalidTypedCatchTree = SyntaxTree.Parse("""
 public class Program
 begin

@@ -1662,8 +1662,14 @@ public sealed partial class Binder
                     exceptionFlow = exceptionFlow is null ? exceptStatementsFlow : MergeBranchOutputAssignmentFlows(exceptionFlow, exceptStatementsFlow);
                 }
 
-                var exceptFlow = exceptionFlow ?? new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
-                var merged = MergeBranchOutputAssignmentFlows(tryFlow, exceptFlow);
+                if (tryStatement.ExceptKeyword is not null && exceptionFlow is null)
+                {
+                    exceptionFlow = new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                }
+
+                var merged = exceptionFlow is null
+                    ? tryFlow
+                    : MergeBranchOutputAssignmentFlows(tryFlow, exceptionFlow);
                 if (tryStatement.FinallyStatements.Count == 0)
                 {
                     return merged;
@@ -2106,8 +2112,14 @@ public sealed partial class Binder
                     exceptionFlow = exceptionFlow is null ? exceptStatementsFlow : MergeLocalAssignmentFlows(exceptionFlow, exceptStatementsFlow);
                 }
 
-                var exceptFlow = exceptionFlow ?? new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
-                var merged = MergeLocalAssignmentFlows(tryFlow, exceptFlow);
+                if (tryStatement.ExceptKeyword is not null && exceptionFlow is null)
+                {
+                    exceptionFlow = new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                }
+
+                var merged = exceptionFlow is null
+                    ? tryFlow
+                    : MergeLocalAssignmentFlows(tryFlow, exceptionFlow);
                 if (tryStatement.FinallyStatements.Count == 0)
                 {
                     return merged;

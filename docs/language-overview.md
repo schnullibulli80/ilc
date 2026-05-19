@@ -269,7 +269,10 @@ because the bootstrap language does not yet expose a `default(T)` expression.
 Early routine exits from the protected part of a `try` statement that has a
 `finally` block execute the `finally` statements before the routine returns.
 Nested `try/finally` blocks execute their pending `finally` statements from the
-innermost block outward.
+innermost block outward. Definite-assignment checks treat normal `try` flow and
+handled `except` flow as alternative continuing paths. Assignments in `finally`
+are applied after those continuing paths, so they can satisfy later reads and
+fallthrough output requirements.
 
 `with` is implemented as a compile-time rewrite that scopes member access to the
 active receiver.
