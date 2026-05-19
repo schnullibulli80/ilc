@@ -287,8 +287,10 @@ Typed `except on ex: T do` handlers require `T` to implement
 `with` is implemented as a compile-time rewrite that qualifies otherwise
 unresolved member names with the active receiver. It does not create a runtime
 scope. Existing local variables and otherwise resolvable names keep precedence,
-and the rewritten form still participates in readonly `in` parameter checks and
-readonly `function` / `procedure` self-mutation checks.
+and locals declared inside the `with` body shadow receiver members for following
+statements in that lexical scope. The rewritten form still participates in
+readonly `in` parameter checks and readonly `function` / `procedure`
+self-mutation checks.
 
 `foreach` currently supports:
 

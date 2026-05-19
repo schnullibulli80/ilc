@@ -18,9 +18,7 @@ public sealed partial class Lowerer
         {
             BlockStatementSyntax block => block with
             {
-                Statements = block.Statements
-                    .Select(nested => RewriteWithStatement(nested, receiver, registerByName, localTypes, currentMethod))
-                    .ToArray()
+                Statements = RewriteWithStatements(block.Statements, receiver, registerByName, localTypes, currentMethod)
             },
             ExpressionStatementSyntax expressionStatement => expressionStatement with
             {
@@ -79,12 +77,12 @@ public sealed partial class Lowerer
                 StepExpression = forStatement.StepExpression is null
                     ? null
                     : RewriteWithExpression(forStatement.StepExpression, receiver, registerByName, localTypes, currentMethod),
-                Body = RewriteWithStatement(forStatement.Body, receiver, registerByName, localTypes, currentMethod)
+                Body = RewriteWithStatement(forStatement.Body, receiver, registerByName, CreateWithLocalTypes(localTypes, forStatement.VarKeyword is null ? null : forStatement.Identifier), currentMethod)
             },
             ForeachStatementSyntax foreachStatement => foreachStatement with
             {
                 Collection = RewriteWithExpression(foreachStatement.Collection, receiver, registerByName, localTypes, currentMethod),
-                Body = RewriteWithStatement(foreachStatement.Body, receiver, registerByName, localTypes, currentMethod)
+                Body = RewriteWithStatement(foreachStatement.Body, receiver, registerByName, CreateWithLocalTypes(localTypes, foreachStatement.VarKeyword is null ? null : foreachStatement.Identifier), currentMethod)
             },
             CaseStatementSyntax caseStatement => caseStatement with
             {
@@ -116,8 +114,8 @@ public sealed partial class Lowerer
                             .ToArray(),
                         Guard = arm.Guard is null
                             ? null
-                            : RewriteWithExpression(arm.Guard, receiver, registerByName, localTypes, currentMethod),
-                        Body = RewriteWithStatement(arm.Body, receiver, registerByName, localTypes, currentMethod)
+                            : RewriteWithExpression(arm.Guard, receiver, registerByName, CreateWithLocalTypes(localTypes, arm.Identifier), currentMethod),
+                        Body = RewriteWithStatement(arm.Body, receiver, registerByName, CreateWithLocalTypes(localTypes, arm.Identifier), currentMethod)
                     })
                     .ToArray(),
                 ElseStatements = matchStatement.ElseStatements
@@ -143,7 +141,7 @@ public sealed partial class Lowerer
                 ExceptionClauses = tryStatement.ExceptionClauses
                     .Select(clause => clause with
                     {
-                        Body = RewriteWithStatement(clause.Body, receiver, registerByName, localTypes, currentMethod)
+                        Body = RewriteWithStatement(clause.Body, receiver, registerByName, CreateWithLocalTypes(localTypes, clause.Identifier), currentMethod)
                     })
                     .ToArray(),
                 ExceptStatements = tryStatement.ExceptStatements
@@ -160,6 +158,48 @@ public sealed partial class Lowerer
             },
             _ => statement
         };
+
+    private IReadOnlyList<StatementSyntax> RewriteWithStatements(
+        IReadOnlyList<StatementSyntax> statements,
+        ExpressionSyntax receiver,
+        Dictionary<string, IrValue> registerByName,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod)
+    {
+        var currentLocalTypes = new Dictionary<string, TypeSymbol>(localTypes, SemanticFacts.NameComparer);
+        var rewritten = new List<StatementSyntax>(statements.Count);
+        foreach (var statement in statements)
+        {
+            rewritten.Add(RewriteWithStatement(statement, receiver, registerByName, currentLocalTypes, currentMethod));
+            AddWithLocalDeclarations(currentLocalTypes, statement);
+        }
+
+        return rewritten;
+    }
+
+    private static Dictionary<string, TypeSymbol> CreateWithLocalTypes(IReadOnlyDictionary<string, TypeSymbol> localTypes, SyntaxToken? localIdentifier)
+    {
+        var scopedLocalTypes = new Dictionary<string, TypeSymbol>(localTypes, SemanticFacts.NameComparer);
+        if (localIdentifier is not null)
+        {
+            scopedLocalTypes[localIdentifier.Text] = TypeSymbol.Unknown;
+        }
+
+        return scopedLocalTypes;
+    }
+
+    private static void AddWithLocalDeclarations(Dictionary<string, TypeSymbol> localTypes, StatementSyntax statement)
+    {
+        if (statement is not LocalVariableDeclarationStatementSyntax localVariable)
+        {
+            return;
+        }
+
+        foreach (var declarator in localVariable.Declarators)
+        {
+            localTypes[declarator.Identifier.Text] = TypeSymbol.Unknown;
+        }
+    }
 
     private ExpressionSyntax RewriteWithExpression(
         ExpressionSyntax expression,
@@ -220,8 +260,8 @@ public sealed partial class Lowerer
                         Labels = arm.Labels.Select(label => RewriteWithExpression(label, receiver, registerByName, localTypes, currentMethod)).ToArray(),
                         Guard = arm.Guard is null
                             ? null
-                            : RewriteWithExpression(arm.Guard, receiver, registerByName, localTypes, currentMethod),
-                        Expression = RewriteWithExpression(arm.Expression, receiver, registerByName, localTypes, currentMethod)
+                            : RewriteWithExpression(arm.Guard, receiver, registerByName, CreateWithLocalTypes(localTypes, arm.Identifier), currentMethod),
+                        Expression = RewriteWithExpression(arm.Expression, receiver, registerByName, CreateWithLocalTypes(localTypes, arm.Identifier), currentMethod)
                     })
                     .ToArray()
             },
@@ -235,55 +275,7 @@ public sealed partial class Lowerer
                     })
                     .ToArray()
             },
-            QueryExpressionSyntax query => query with
-            {
-                SourceExpression = RewriteWithExpression(query.SourceExpression, receiver, registerByName, localTypes, currentMethod),
-                JoinSourceExpression = query.JoinSourceExpression is null
-                    ? null
-                    : RewriteWithExpression(query.JoinSourceExpression, receiver, registerByName, localTypes, currentMethod),
-                JoinLeftExpression = query.JoinLeftExpression is null
-                    ? null
-                    : RewriteWithExpression(query.JoinLeftExpression, receiver, registerByName, localTypes, currentMethod),
-                JoinRightExpression = query.JoinRightExpression is null
-                    ? null
-                    : RewriteWithExpression(query.JoinRightExpression, receiver, registerByName, localTypes, currentMethod),
-                JoinIntoKeyword = query.JoinIntoKeyword,
-                JoinIntoIdentifier = query.JoinIntoIdentifier,
-                SecondSourceExpression = query.SecondSourceExpression is null
-                    ? null
-                    : RewriteWithExpression(query.SecondSourceExpression, receiver, registerByName, localTypes, currentMethod),
-                LetExpression = query.LetExpression is null
-                    ? null
-                    : RewriteWithExpression(query.LetExpression, receiver, registerByName, localTypes, currentMethod),
-                PredicateExpression = query.PredicateExpression is null
-                    ? null
-                    : RewriteWithExpression(query.PredicateExpression, receiver, registerByName, localTypes, currentMethod),
-                OrderByExpression = query.OrderByExpression is null
-                    ? null
-                    : RewriteWithExpression(query.OrderByExpression, receiver, registerByName, localTypes, currentMethod),
-                GroupExpression = query.GroupExpression is null
-                    ? null
-                    : RewriteWithExpression(query.GroupExpression, receiver, registerByName, localTypes, currentMethod),
-                GroupByExpression = query.GroupByExpression is null
-                    ? null
-                    : RewriteWithExpression(query.GroupByExpression, receiver, registerByName, localTypes, currentMethod),
-                SelectExpression = RewriteWithExpression(query.SelectExpression, receiver, registerByName, localTypes, currentMethod),
-                ContinuationPredicateExpression = query.ContinuationPredicateExpression is null
-                    ? null
-                    : RewriteWithExpression(query.ContinuationPredicateExpression, receiver, registerByName, localTypes, currentMethod),
-                ContinuationOrderByExpression = query.ContinuationOrderByExpression is null
-                    ? null
-                    : RewriteWithExpression(query.ContinuationOrderByExpression, receiver, registerByName, localTypes, currentMethod),
-                ContinuationSelectExpression = query.ContinuationSelectExpression is null
-                    ? null
-                    : RewriteWithExpression(query.ContinuationSelectExpression, receiver, registerByName, localTypes, currentMethod),
-                TakeExpression = query.TakeExpression is null
-                    ? null
-                    : RewriteWithExpression(query.TakeExpression, receiver, registerByName, localTypes, currentMethod),
-                SkipExpression = query.SkipExpression is null
-                    ? null
-                    : RewriteWithExpression(query.SkipExpression, receiver, registerByName, localTypes, currentMethod)
-            },
+            QueryExpressionSyntax query => RewriteWithQueryExpression(query, receiver, registerByName, localTypes, currentMethod),
             MemberAccessExpressionSyntax memberAccess => memberAccess with
             {
                 Receiver = RewriteWithExpression(memberAccess.Receiver, receiver, registerByName, localTypes, currentMethod)
@@ -324,6 +316,83 @@ public sealed partial class Lowerer
                 LengthExpressions = newArray.LengthExpressions.Select(length => RewriteWithExpression(length, receiver, registerByName, localTypes, currentMethod)).ToArray()
             },
             _ => expression
+        };
+    }
+
+    private QueryExpressionSyntax RewriteWithQueryExpression(
+        QueryExpressionSyntax query,
+        ExpressionSyntax receiver,
+        Dictionary<string, IrValue> registerByName,
+        IReadOnlyDictionary<string, TypeSymbol> localTypes,
+        MethodSymbol? currentMethod)
+    {
+        var queryLocalTypes = CreateWithLocalTypes(localTypes, query.Identifier);
+        var joinLocalTypes = query.JoinIdentifier is null ? queryLocalTypes : CreateWithLocalTypes(queryLocalTypes, query.JoinIdentifier);
+        if (query.JoinIntoIdentifier is not null)
+        {
+            joinLocalTypes = CreateWithLocalTypes(joinLocalTypes, query.JoinIntoIdentifier);
+        }
+
+        var secondLocalTypes = query.SecondIdentifier is null ? joinLocalTypes : CreateWithLocalTypes(joinLocalTypes, query.SecondIdentifier);
+        var letLocalTypes = query.LetIdentifier is null ? secondLocalTypes : CreateWithLocalTypes(secondLocalTypes, query.LetIdentifier);
+        var continuationLocalTypes = query.IntoIdentifier is null ? letLocalTypes : CreateWithLocalTypes(localTypes, query.IntoIdentifier);
+        var continuationLetLocalTypes = query.ContinuationLetIdentifier is null ? continuationLocalTypes : CreateWithLocalTypes(continuationLocalTypes, query.ContinuationLetIdentifier);
+
+        return query with
+        {
+            SourceExpression = RewriteWithExpression(query.SourceExpression, receiver, registerByName, localTypes, currentMethod),
+            JoinSourceExpression = query.JoinSourceExpression is null
+                ? null
+                : RewriteWithExpression(query.JoinSourceExpression, receiver, registerByName, queryLocalTypes, currentMethod),
+            JoinLeftExpression = query.JoinLeftExpression is null
+                ? null
+                : RewriteWithExpression(query.JoinLeftExpression, receiver, registerByName, joinLocalTypes, currentMethod),
+            JoinRightExpression = query.JoinRightExpression is null
+                ? null
+                : RewriteWithExpression(query.JoinRightExpression, receiver, registerByName, joinLocalTypes, currentMethod),
+            SecondSourceExpression = query.SecondSourceExpression is null
+                ? null
+                : RewriteWithExpression(query.SecondSourceExpression, receiver, registerByName, joinLocalTypes, currentMethod),
+            LetExpression = query.LetExpression is null
+                ? null
+                : RewriteWithExpression(query.LetExpression, receiver, registerByName, secondLocalTypes, currentMethod),
+            PredicateExpression = query.PredicateExpression is null
+                ? null
+                : RewriteWithExpression(query.PredicateExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            OrderByExpression = query.OrderByExpression is null
+                ? null
+                : RewriteWithExpression(query.OrderByExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            ThenByExpression = query.ThenByExpression is null
+                ? null
+                : RewriteWithExpression(query.ThenByExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            GroupExpression = query.GroupExpression is null
+                ? null
+                : RewriteWithExpression(query.GroupExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            GroupByExpression = query.GroupByExpression is null
+                ? null
+                : RewriteWithExpression(query.GroupByExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            SelectExpression = RewriteWithExpression(query.SelectExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            ContinuationLetExpression = query.ContinuationLetExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationLetExpression, receiver, registerByName, continuationLocalTypes, currentMethod),
+            ContinuationPredicateExpression = query.ContinuationPredicateExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationPredicateExpression, receiver, registerByName, continuationLetLocalTypes, currentMethod),
+            ContinuationOrderByExpression = query.ContinuationOrderByExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationOrderByExpression, receiver, registerByName, continuationLetLocalTypes, currentMethod),
+            ContinuationThenByExpression = query.ContinuationThenByExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationThenByExpression, receiver, registerByName, continuationLetLocalTypes, currentMethod),
+            ContinuationSelectExpression = query.ContinuationSelectExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationSelectExpression, receiver, registerByName, continuationLetLocalTypes, currentMethod),
+            TakeExpression = query.TakeExpression is null
+                ? null
+                : RewriteWithExpression(query.TakeExpression, receiver, registerByName, letLocalTypes, currentMethod),
+            SkipExpression = query.SkipExpression is null
+                ? null
+                : RewriteWithExpression(query.SkipExpression, receiver, registerByName, letLocalTypes, currentMethod)
         };
     }
 

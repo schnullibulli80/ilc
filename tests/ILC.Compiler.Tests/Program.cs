@@ -2583,6 +2583,49 @@ if (withValidationDiagnostics.Any(diagnostic =>
         string.Join(" | ", withValidationDiagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
 }
 
+var withLocalScopeTree = SyntaxTree.Parse("""
+public class Box
+begin
+  public var Value: Integer;
+end;
+
+public class Program
+begin
+  public static function LocalDeclaredInsideWith(box: Box): Integer;
+  begin
+    with box do
+    begin
+      var Value := 5;
+      Value := Value + 1;
+      return Value + box.Value;
+    end;
+  end;
+end;
+""");
+
+var withLocalScopeBinding = new Binder().Bind(withLocalScopeTree);
+if (withLocalScopeBinding.Diagnostics.Count > 0)
+{
+    failures.Add(
+        "Binder should let locals declared inside with bodies shadow receiver members for following statements. Actual: " +
+        string.Join(" | ", withLocalScopeBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+else
+{
+    var withLocalScopeProgram = withLocalScopeBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+    var withLocalScopeMethod = withLocalScopeProgram.Methods.First(method => method.Name == "LocalDeclaredInsideWith");
+    var withLocalScopeIr = new Lowerer(
+        withLocalScopeProgram.Methods,
+        withLocalScopeProgram.Fields,
+        withLocalScopeBinding.Compilation.Types,
+        withLocalScopeProgram.Properties,
+        withLocalScopeProgram.Constants).Lower(withLocalScopeMethod);
+    if (withLocalScopeIr.Blocks.SelectMany(block => block.Instructions).Any(instruction => instruction.OpCode == IrOpCode.StoreField))
+    {
+        failures.Add("Lowerer should not rewrite locals declared inside with bodies into receiver field stores.");
+    }
+}
+
 var caseInsensitiveTree = SyntaxTree.Parse("""
 PUBLIC CLASS Program
 BEGIN

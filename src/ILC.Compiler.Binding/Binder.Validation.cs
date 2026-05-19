@@ -2650,9 +2650,7 @@ public sealed partial class Binder
         {
             BlockStatementSyntax block => block with
             {
-                Statements = block.Statements
-                    .Select(nested => RewriteWithStatement(nested, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod))
-                    .ToArray()
+                Statements = RewriteWithStatements(block.Statements, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
             },
             ExpressionStatementSyntax expressionStatement => expressionStatement with
             {
@@ -2711,12 +2709,12 @@ public sealed partial class Binder
                 StepExpression = forStatement.StepExpression is null
                     ? null
                     : RewriteWithExpression(forStatement.StepExpression, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
-                Body = RewriteWithStatement(forStatement.Body, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                Body = RewriteWithStatement(forStatement.Body, receiver, CreateWithLocals(locals, forStatement.VarKeyword is null ? null : forStatement.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
             },
             ForeachStatementSyntax foreachStatement => foreachStatement with
             {
                 Collection = RewriteWithExpression(foreachStatement.Collection, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
-                Body = RewriteWithStatement(foreachStatement.Body, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                Body = RewriteWithStatement(foreachStatement.Body, receiver, CreateWithLocals(locals, foreachStatement.VarKeyword is null ? null : foreachStatement.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
             },
             CaseStatementSyntax caseStatement => caseStatement with
             {
@@ -2748,8 +2746,8 @@ public sealed partial class Binder
                             .ToArray(),
                         Guard = arm.Guard is null
                             ? null
-                            : RewriteWithExpression(arm.Guard, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
-                        Body = RewriteWithStatement(arm.Body, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                            : RewriteWithExpression(arm.Guard, receiver, CreateWithLocals(locals, arm.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        Body = RewriteWithStatement(arm.Body, receiver, CreateWithLocals(locals, arm.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
                     })
                     .ToArray(),
                 ElseStatements = matchStatement.ElseStatements
@@ -2775,7 +2773,7 @@ public sealed partial class Binder
                 ExceptionClauses = tryStatement.ExceptionClauses
                     .Select(clause => clause with
                     {
-                        Body = RewriteWithStatement(clause.Body, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                        Body = RewriteWithStatement(clause.Body, receiver, CreateWithLocals(locals, clause.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
                     })
                     .ToArray(),
                 ExceptStatements = tryStatement.ExceptStatements
@@ -2792,6 +2790,52 @@ public sealed partial class Binder
             },
             _ => statement
         };
+
+    private static IReadOnlyList<StatementSyntax> RewriteWithStatements(
+        IReadOnlyList<StatementSyntax> statements,
+        ExpressionSyntax receiver,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var currentLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+        var rewritten = new List<StatementSyntax>(statements.Count);
+        foreach (var statement in statements)
+        {
+            rewritten.Add(RewriteWithStatement(statement, receiver, currentLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod));
+            AddWithLocalDeclarations(currentLocals, statement);
+        }
+
+        return rewritten;
+    }
+
+    private static Dictionary<string, TypeSymbol> CreateWithLocals(IReadOnlyDictionary<string, TypeSymbol> locals, SyntaxToken? localIdentifier)
+    {
+        var scopedLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+        if (localIdentifier is not null)
+        {
+            scopedLocals[localIdentifier.Text] = TypeSymbol.Unknown;
+        }
+
+        return scopedLocals;
+    }
+
+    private static void AddWithLocalDeclarations(Dictionary<string, TypeSymbol> locals, StatementSyntax statement)
+    {
+        if (statement is not LocalVariableDeclarationStatementSyntax localVariable)
+        {
+            return;
+        }
+
+        foreach (var declarator in localVariable.Declarators)
+        {
+            locals[declarator.Identifier.Text] = TypeSymbol.Unknown;
+        }
+    }
 
     private static ExpressionSyntax RewriteWithExpression(
         ExpressionSyntax expression,
@@ -2863,8 +2907,8 @@ public sealed partial class Binder
                             .ToArray(),
                         Guard = arm.Guard is null
                             ? null
-                            : RewriteWithExpression(arm.Guard, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
-                        Expression = RewriteWithExpression(arm.Expression, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
+                            : RewriteWithExpression(arm.Guard, receiver, CreateWithLocals(locals, arm.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+                        Expression = RewriteWithExpression(arm.Expression, receiver, CreateWithLocals(locals, arm.Identifier), knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
                     })
                     .ToArray()
             },
@@ -2913,6 +2957,7 @@ public sealed partial class Binder
                     })
                     .ToArray()
             },
+            QueryExpressionSyntax query => RewriteWithQueryExpression(query, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
             ProjectorExpressionSyntax projector => projector with
             {
                 Members = projector.Members
@@ -2929,6 +2974,87 @@ public sealed partial class Binder
                     .ToArray()
             },
             _ => expression
+        };
+    }
+
+    private static QueryExpressionSyntax RewriteWithQueryExpression(
+        QueryExpressionSyntax query,
+        ExpressionSyntax receiver,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod)
+    {
+        var queryLocals = CreateWithLocals(locals, query.Identifier);
+        var joinLocals = query.JoinIdentifier is null ? queryLocals : CreateWithLocals(queryLocals, query.JoinIdentifier);
+        if (query.JoinIntoIdentifier is not null)
+        {
+            joinLocals = CreateWithLocals(joinLocals, query.JoinIntoIdentifier);
+        }
+
+        var secondLocals = query.SecondIdentifier is null ? joinLocals : CreateWithLocals(joinLocals, query.SecondIdentifier);
+        var letLocals = query.LetIdentifier is null ? secondLocals : CreateWithLocals(secondLocals, query.LetIdentifier);
+        var continuationLocals = query.IntoIdentifier is null ? letLocals : CreateWithLocals(locals, query.IntoIdentifier);
+        var continuationLetLocals = query.ContinuationLetIdentifier is null ? continuationLocals : CreateWithLocals(continuationLocals, query.ContinuationLetIdentifier);
+
+        return query with
+        {
+            SourceExpression = RewriteWithExpression(query.SourceExpression, receiver, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            JoinSourceExpression = query.JoinSourceExpression is null
+                ? null
+                : RewriteWithExpression(query.JoinSourceExpression, receiver, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            JoinLeftExpression = query.JoinLeftExpression is null
+                ? null
+                : RewriteWithExpression(query.JoinLeftExpression, receiver, joinLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            JoinRightExpression = query.JoinRightExpression is null
+                ? null
+                : RewriteWithExpression(query.JoinRightExpression, receiver, joinLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            SecondSourceExpression = query.SecondSourceExpression is null
+                ? null
+                : RewriteWithExpression(query.SecondSourceExpression, receiver, joinLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            LetExpression = query.LetExpression is null
+                ? null
+                : RewriteWithExpression(query.LetExpression, receiver, secondLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            PredicateExpression = query.PredicateExpression is null
+                ? null
+                : RewriteWithExpression(query.PredicateExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            OrderByExpression = query.OrderByExpression is null
+                ? null
+                : RewriteWithExpression(query.OrderByExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            ThenByExpression = query.ThenByExpression is null
+                ? null
+                : RewriteWithExpression(query.ThenByExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            GroupExpression = query.GroupExpression is null
+                ? null
+                : RewriteWithExpression(query.GroupExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            GroupByExpression = query.GroupByExpression is null
+                ? null
+                : RewriteWithExpression(query.GroupByExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            SelectExpression = RewriteWithExpression(query.SelectExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            ContinuationLetExpression = query.ContinuationLetExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationLetExpression, receiver, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            ContinuationPredicateExpression = query.ContinuationPredicateExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationPredicateExpression, receiver, continuationLetLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            ContinuationOrderByExpression = query.ContinuationOrderByExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationOrderByExpression, receiver, continuationLetLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            ContinuationThenByExpression = query.ContinuationThenByExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationThenByExpression, receiver, continuationLetLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            ContinuationSelectExpression = query.ContinuationSelectExpression is null
+                ? null
+                : RewriteWithExpression(query.ContinuationSelectExpression, receiver, continuationLetLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            TakeExpression = query.TakeExpression is null
+                ? null
+                : RewriteWithExpression(query.TakeExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod),
+            SkipExpression = query.SkipExpression is null
+                ? null
+                : RewriteWithExpression(query.SkipExpression, receiver, letLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod)
         };
     }
 
