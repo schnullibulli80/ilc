@@ -2462,6 +2462,92 @@ if (readonlySelfDiagnostics.Any(diagnostic =>
         string.Join(" | ", readonlySelfDiagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
 }
 
+var withValidationTree = SyntaxTree.Parse("""
+public class Box
+begin
+  public var Value: Integer;
+
+  public method Mutate;
+  begin
+    Value := Value + 1;
+  end;
+end;
+
+public class Program
+begin
+  private var _count: Integer;
+  private var _name: String;
+  public property Name: String read _name write _name;
+
+  public method MutatingValue: Integer;
+  begin
+    Result := _count + 1;
+  end;
+
+  public function BadWithSelfField: Integer;
+  begin
+    with (self) do
+      _count := 1;
+
+    return _count;
+  end;
+
+  public procedure BadWithSelfProperty;
+  begin
+    with self do
+      Name := 'Test';
+  end;
+
+  public function BadWithSelfCall: Integer;
+  begin
+    with self do
+      MutatingValue();
+
+    return _count;
+  end;
+
+  public static procedure BadWithIn(in box: Box);
+  begin
+    with box do
+      Value := 1;
+  end;
+
+  public static function LocalPrecedence(box: Box): Integer;
+  begin
+    var Value := 5;
+    with box do
+      Value := Value + 1;
+
+    return Value;
+  end;
+
+  public static procedure BadUnknownMember(box: Box);
+  begin
+    with box do
+      Missing := 1;
+  end;
+end;
+""");
+
+var withValidationBinding = new Binder().Bind(withValidationTree);
+var withValidationDiagnostics = withValidationBinding.Diagnostics.ToArray();
+if (withValidationDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2248") != 2 ||
+    withValidationDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2249") != 1 ||
+    withValidationDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2253") != 1 ||
+    !withValidationDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2101"))
+{
+    failures.Add("Binder should preserve readonly and name-resolution rules through with rewrites. Actual: " +
+        string.Join(" | ", withValidationDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (withValidationDiagnostics.Any(diagnostic =>
+        diagnostic.Severity == DiagnosticSeverity.Error &&
+        diagnostic.Id is not ("ILC2248" or "ILC2249" or "ILC2253" or "ILC2101")))
+{
+    failures.Add("With validation fixture should only report expected rewrite diagnostics. Actual: " +
+        string.Join(" | ", withValidationDiagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
 var caseInsensitiveTree = SyntaxTree.Parse("""
 PUBLIC CLASS Program
 BEGIN

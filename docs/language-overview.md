@@ -279,8 +279,11 @@ active exception. `throw` is reserved but unsupported; use `raise` instead.
 Typed `except on ex: T do` handlers require `T` to implement
 `System.IException` when the system exception contract is available.
 
-`with` is implemented as a compile-time rewrite that scopes member access to the
-active receiver.
+`with` is implemented as a compile-time rewrite that qualifies otherwise
+unresolved member names with the active receiver. It does not create a runtime
+scope. Existing local variables and otherwise resolvable names keep precedence,
+and the rewritten form still participates in readonly `in` parameter checks and
+readonly `function` / `procedure` self-mutation checks.
 
 `foreach` currently supports:
 

@@ -5060,8 +5060,12 @@ public sealed partial class Binder
         SemanticFacts.NameEquals(declaringTypeName, currentMethod.DeclaringTypeName);
 
     private static bool IsExplicitSelfReceiver(ExpressionSyntax receiver) =>
-        receiver is NameExpressionSyntax { Name.Parts.Count: 1 } name &&
-        SemanticFacts.NameEquals(name.Name.Parts[0].Text, "self");
+        receiver switch
+        {
+            NameExpressionSyntax { Name.Parts.Count: 1 } name => SemanticFacts.NameEquals(name.Name.Parts[0].Text, "self"),
+            ParenthesizedExpressionSyntax parenthesized => IsExplicitSelfReceiver(parenthesized.Expression),
+            _ => false
+        };
 
     private static bool IsExplicitSelfQualifiedName(QualifiedNameSyntax name) =>
         name.Parts.Count > 1 &&
