@@ -233,7 +233,7 @@ Supported statement forms in the bootstrap compiler:
 - `return` / `exit`
 - `break`
 - `continue`
-- `raise` / `throw`
+- `raise`
 - `try` with `except` and/or `finally`, including `on`
 - `include(...)` / `exclude(...)`
 
@@ -272,12 +272,12 @@ Nested `try/finally` blocks execute their pending `finally` statements from the
 innermost block outward. Definite-assignment checks treat normal `try` flow and
 handled `except` flow as alternative continuing paths. Assignments in `finally`
 are applied after those continuing paths, so they can satisfy later reads and
-fallthrough output requirements. `raise expr;` and `throw expr;` require an
-exception object implementing `System.IException`; `String` is accepted as a
-convenience message form. Bare `raise;` is only valid inside an `except`
-handler and rethrows the active exception. Typed `except on ex: T do` handlers
-require `T` to implement `System.IException` when the system exception contract
-is available.
+fallthrough output requirements. `raise expr;` requires an exception object
+implementing `System.IException`; `String` is accepted as a convenience message
+form. Bare `raise;` is only valid inside an `except` handler and rethrows the
+active exception. `throw` is reserved but unsupported; use `raise` instead.
+Typed `except on ex: T do` handlers require `T` to implement
+`System.IException` when the system exception contract is available.
 
 `with` is implemented as a compile-time rewrite that scopes member access to the
 active receiver.

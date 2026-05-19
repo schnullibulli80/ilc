@@ -1016,6 +1016,13 @@ public sealed partial class Binder
                 case RaiseStatementSyntax raiseStatement when raiseStatement.Expression is not null:
                     ValidateRaiseStatement(raiseStatement, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
+                case RaiseStatementSyntax raiseStatement when raiseStatement.Expression is null && raiseStatement.Keyword.Kind == SyntaxKind.ThrowKeyword:
+                    diagnostics.Report(
+                        "ILC2259",
+                        "'throw' is not supported. Use 'raise' instead.",
+                        DiagnosticSeverity.Error,
+                        raiseStatement.Keyword.Span);
+                    break;
                 case RaiseStatementSyntax raiseStatement when raiseStatement.Expression is null && !inExceptionHandler:
                     diagnostics.Report(
                         "ILC2133",
@@ -1433,6 +1440,15 @@ public sealed partial class Binder
         if (raiseStatement.Expression is null)
         {
             return;
+        }
+
+        if (raiseStatement.Keyword.Kind == SyntaxKind.ThrowKeyword)
+        {
+            diagnostics.Report(
+                "ILC2259",
+                "'throw' is not supported. Use 'raise' instead.",
+                DiagnosticSeverity.Error,
+                raiseStatement.Keyword.Span);
         }
 
         ValidateExpression(raiseStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);

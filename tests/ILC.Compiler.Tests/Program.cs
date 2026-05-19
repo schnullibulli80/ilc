@@ -4042,6 +4042,34 @@ if (!invalidExceptionTypingDiagnostics.Any(diagnostic => diagnostic.Id == "ILC21
         string.Join(" | ", invalidExceptionTypingDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
 }
 
+var unsupportedThrowTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static method BadThrow;
+  begin
+    throw 'boom';
+  end;
+
+  public static method BadBareThrow;
+  begin
+    try
+      raise 'boom';
+    except
+      throw;
+    end;
+  end;
+end;
+""");
+
+var unsupportedThrowBinding = new Binder().Bind(unsupportedThrowTree);
+var unsupportedThrowDiagnostics = unsupportedThrowBinding.Diagnostics.ToArray();
+if (unsupportedThrowDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2259") != 2)
+{
+    failures.Add(
+        "Binder should reject 'throw' and direct users to 'raise'. Actual: " +
+        string.Join(" | ", unsupportedThrowDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
 var invalidForLoopTree = SyntaxTree.Parse("""
 public class Program
 begin
