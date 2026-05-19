@@ -67,7 +67,9 @@ They may read instance state, but they must not directly assign to instance
 fields or properties on implicit `self` or explicit `self`, must not use compound
 assignment or `inc`/`dec` on those members, and must not call mutating `method`
 members on `self`. Use `method` for stateful operations, including stateful
-operations that also return a value. `this` is not a `self` alias.
+operations that also return a value. `self` is reserved for the current
+instance and cannot be declared or assigned directly. `this` is unsupported; use
+`self` for the current instance.
 
 Top-level members also support:
 
@@ -253,6 +255,8 @@ Procedures do not expose `Result`. Names are
 case-insensitive, so `result`, `RESULT`, and `Result` refer to the same implicit
 function result; functions therefore cannot declare parameters or locals that
 differ from `Result` only by case.
+`self` and `this` are reserved identifiers. `self` is the instance receiver, and
+`this` is rejected with a diagnostic that points users to `self`.
 The compiler reports exact duplicate names as errors in non-overloadable
 case-insensitive scopes, and reports case-only name differences as warnings so
 ambiguous APIs can be cleaned up before they become user-visible.

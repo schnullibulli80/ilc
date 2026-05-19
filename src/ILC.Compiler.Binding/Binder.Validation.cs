@@ -115,6 +115,7 @@ public sealed partial class Binder
                     foreach (var declarator in variableDeclaration.Declarators)
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "top-level variable", diagnostics);
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "top-level variable", diagnostics);
                         ReportNameCollisionIfNeeded(topLevelValueNames, declarator.Identifier, "top-level value declarations", diagnostics, reportExactDuplicate: true);
                     }
                     break;
@@ -122,22 +123,27 @@ public sealed partial class Binder
                     foreach (var declarator in constantDeclaration.Declarators)
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "top-level constant", diagnostics);
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "top-level constant", diagnostics);
                         ReportNameCollisionIfNeeded(topLevelValueNames, declarator.Identifier, "top-level value declarations", diagnostics, reportExactDuplicate: true);
                     }
                     break;
                 case ClassDeclarationSyntax classDeclaration:
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(classDeclaration.Identifier, "type", diagnostics);
                     ReportTypeDeclarationNameCollisionIfNeeded(typeNames, classDeclaration.Identifier, classDeclaration.TypeParameters, diagnostics);
                     ValidateTypeParameterNameCollisions(classDeclaration.Identifier.Text, classDeclaration.TypeParameters, diagnostics);
                     break;
                 case InterfaceDeclarationSyntax interfaceDeclaration:
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(interfaceDeclaration.Identifier, "type", diagnostics);
                     ReportTypeDeclarationNameCollisionIfNeeded(typeNames, interfaceDeclaration.Identifier, interfaceDeclaration.TypeParameters, diagnostics);
                     ValidateTypeParameterNameCollisions(interfaceDeclaration.Identifier.Text, interfaceDeclaration.TypeParameters, diagnostics);
                     break;
                 case DelegateDeclarationSyntax delegateDeclaration:
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(delegateDeclaration.Identifier, "type", diagnostics);
                     ReportTypeDeclarationNameCollisionIfNeeded(typeNames, delegateDeclaration.Identifier, delegateDeclaration.TypeParameters, diagnostics);
                     ValidateTypeParameterNameCollisions(delegateDeclaration.Identifier.Text, delegateDeclaration.TypeParameters, diagnostics);
                     break;
                 case EnumDeclarationSyntax enumDeclaration:
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(enumDeclaration.Identifier, "type", diagnostics);
                     ReportTypeDeclarationNameCollisionIfNeeded(typeNames, enumDeclaration.Identifier, null, diagnostics);
                     ValidateEnumMemberNameCollisions(enumDeclaration, diagnostics);
                     break;
@@ -169,6 +175,7 @@ public sealed partial class Binder
         var names = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
         foreach (var parameter in typeParameters.Parameters)
         {
+            ReportInvalidReservedIdentifierDeclarationIfNeeded(parameter, "type parameter", diagnostics);
             ReportNameCollisionIfNeeded(names, parameter, $"type parameters of '{declarationName}'", diagnostics, reportExactDuplicate: true);
         }
     }
@@ -180,6 +187,7 @@ public sealed partial class Binder
         var names = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
         foreach (var member in enumDeclaration.Members)
         {
+            ReportInvalidReservedIdentifierDeclarationIfNeeded(member.Identifier, "enum member", diagnostics);
             ReportNameCollisionIfNeeded(names, member.Identifier, $"enum '{enumDeclaration.Identifier.Text}'", diagnostics, reportExactDuplicate: true);
         }
     }
@@ -607,7 +615,8 @@ public sealed partial class Binder
         var parameterNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
         foreach (var parameter in method.Parameters)
         {
-            if (ReportInvalidDiscardDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics))
+            if (ReportInvalidDiscardDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics) ||
+                ReportInvalidReservedIdentifierDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics))
             {
                 continue;
             }
@@ -641,6 +650,7 @@ public sealed partial class Binder
                     foreach (var declarator in field.Declarators)
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "field", diagnostics);
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "field", diagnostics);
                         ReportNameCollisionIfNeeded(valueMembers, declarator.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
                     }
                     break;
@@ -648,14 +658,21 @@ public sealed partial class Binder
                     foreach (var declarator in constant.Declarators)
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "constant", diagnostics);
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "constant", diagnostics);
                         ReportNameCollisionIfNeeded(valueMembers, declarator.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
                     }
                     break;
                 case PropertyDeclarationSyntax property:
                     ReportInvalidDiscardDeclarationIfNeeded(property.Identifier, "property", diagnostics);
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(property.Identifier, "property", diagnostics);
                     ReportNameCollisionIfNeeded(valueMembers, property.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
                     break;
                 case MethodDeclarationSyntax method:
+                    if (method.Keyword.Kind != SyntaxKind.ConstructorKeyword)
+                    {
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(method.Identifier, "method", diagnostics);
+                    }
+
                     ReportCaseOnlyMethodCollisionIfNeeded(methodMembersByArity, method, typeName, diagnostics);
                     ReportDuplicateMethodSignatureIfNeeded(methodSignatures, method, typeName, diagnostics);
                     break;
@@ -830,8 +847,55 @@ public sealed partial class Binder
         return true;
     }
 
+    private static bool ReportInvalidReservedIdentifierDeclarationIfNeeded(
+        SyntaxToken identifier,
+        string declarationKind,
+        DiagnosticBag diagnostics)
+    {
+        if (SemanticFacts.NameEquals(identifier.Text, "self"))
+        {
+            diagnostics.Report(
+                "ILC2261",
+                $"Identifier 'self' is reserved for the current instance and cannot be declared as a {declarationKind}.",
+                DiagnosticSeverity.Error,
+                identifier.Span);
+            return true;
+        }
+
+        if (SemanticFacts.NameEquals(identifier.Text, "this"))
+        {
+            diagnostics.Report(
+                "ILC2262",
+                $"'this' is same same, but different. Use 'self' instead. It cannot be declared as a {declarationKind}.",
+                DiagnosticSeverity.Error,
+                identifier.Span);
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool IsDiscardIdentifier(SyntaxToken identifier) =>
         string.Equals(identifier.Text, "_", StringComparison.Ordinal);
+
+    private static bool IsReservedIdentifier(SyntaxToken identifier) =>
+        SemanticFacts.NameEquals(identifier.Text, "self") ||
+        SemanticFacts.NameEquals(identifier.Text, "this");
+
+    private static bool IsThisName(QualifiedNameSyntax name) =>
+        name.Parts.Count >= 1 &&
+        SemanticFacts.NameEquals(name.Parts[0].Text, "this");
+
+    private static bool IsSelfName(QualifiedNameSyntax name) =>
+        name.Parts.Count == 1 &&
+        SemanticFacts.NameEquals(name.Parts[0].Text, "self");
+
+    private static void ReportUnsupportedThisUsage(QualifiedNameSyntax name, DiagnosticBag diagnostics) =>
+        diagnostics.Report(
+            "ILC2262",
+            "'this' is same same, but different. Use 'self' instead.",
+            DiagnosticSeverity.Error,
+            name.Parts[0].Span);
 
     private static bool IsDiscardName(ExpressionSyntax expression) =>
         expression is NameExpressionSyntax { Name.Parts.Count: 1 } name &&
@@ -999,7 +1063,9 @@ public sealed partial class Binder
                 case LocalVariableDeclarationStatementSyntax localVariable:
                     foreach (var declarator in localVariable.Declarators)
                     {
-                        var isInvalidDiscardDeclaration = ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics);
+                        var isInvalidReservedDeclaration =
+                            ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics) |
+                            ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics);
                         if (IsResultAvailable(currentMethod) && SemanticFacts.NameEquals(declarator.Identifier.Text, "Result"))
                         {
                             diagnostics.Report(
@@ -1030,7 +1096,7 @@ public sealed partial class Binder
                                 diagnostics);
                         }
 
-                        if (isInvalidDiscardDeclaration)
+                        if (isInvalidReservedDeclaration)
                         {
                             continue;
                         }
@@ -1110,7 +1176,8 @@ public sealed partial class Binder
                     TypeSymbol? loopType = null;
                     if (forStatement.VarKeyword is not null)
                     {
-                        if (ReportInvalidDiscardDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics))
+                        if (ReportInvalidDiscardDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics) |
+                            ReportInvalidReservedIdentifierDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics))
                         {
                             forLoopLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                             forLoopScopes = CreateNestedLocalScopes(activeLocalScopes);
@@ -1217,7 +1284,8 @@ public sealed partial class Binder
                     if (foreachStatement.VarKeyword is not null)
                     {
                         foreachType = elementType!;
-                        if (ReportInvalidDiscardDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics))
+                        if (ReportInvalidDiscardDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics) |
+                            ReportInvalidReservedIdentifierDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics))
                         {
                             foreachLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                             foreachScopes = CreateNestedLocalScopes(activeLocalScopes);
@@ -1352,7 +1420,8 @@ public sealed partial class Binder
                             }
                             else if (arm.Identifier is not null)
                             {
-                                if (ReportInvalidDiscardDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics))
+                                if (ReportInvalidDiscardDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics) |
+                                    ReportInvalidReservedIdentifierDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics))
                                 {
                                     armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                                     armScopes = CreateNestedLocalScopes(activeLocalScopes);
@@ -1431,12 +1500,14 @@ public sealed partial class Binder
                                 continue;
                             }
 
-                            var invalidDiscardClauseIdentifier = ReportInvalidDiscardDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics);
+                            var invalidClauseIdentifier =
+                                ReportInvalidDiscardDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics) |
+                                ReportInvalidReservedIdentifierDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics);
                             var clauseLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
-                            var clauseScopes = invalidDiscardClauseIdentifier
+                            var clauseScopes = invalidClauseIdentifier
                                 ? CreateNestedLocalScopes(activeLocalScopes)
                                 : CreateNestedLocalScopesWithName(activeLocalScopes, clause.Identifier, diagnostics);
-                            if (!invalidDiscardClauseIdentifier)
+                            if (!invalidClauseIdentifier)
                             {
                                 clauseLocals[clause.Identifier.Text] = clauseType;
                             }
@@ -2087,7 +2158,8 @@ public sealed partial class Binder
                         AnalyzeLocalDefiniteAssignmentExpression(declarator.Initializer, localAssigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
                     }
 
-                    if (IsDiscardIdentifier(declarator.Identifier))
+                    if (IsDiscardIdentifier(declarator.Identifier) ||
+                        IsReservedIdentifier(declarator.Identifier))
                     {
                         continue;
                     }
@@ -2136,7 +2208,9 @@ public sealed partial class Binder
             {
                 var loopAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
                 var loopScopes = PushLocalAssignmentScope(scopes);
-                if (forStatement.VarKeyword is not null && !IsDiscardIdentifier(forStatement.Identifier))
+                if (forStatement.VarKeyword is not null &&
+                    !IsDiscardIdentifier(forStatement.Identifier) &&
+                    !IsReservedIdentifier(forStatement.Identifier))
                 {
                     loopScopes[^1].Declared.Add(forStatement.Identifier.Text);
                     loopAssigned.Add(forStatement.Identifier.Text);
@@ -2161,7 +2235,9 @@ public sealed partial class Binder
                 AnalyzeLocalDefiniteAssignmentExpression(foreachStatement.Collection, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
                 var loopAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
                 var loopScopes = PushLocalAssignmentScope(scopes);
-                if (foreachStatement.VarKeyword is not null && !IsDiscardIdentifier(foreachStatement.Identifier))
+                if (foreachStatement.VarKeyword is not null &&
+                    !IsDiscardIdentifier(foreachStatement.Identifier) &&
+                    !IsReservedIdentifier(foreachStatement.Identifier))
                 {
                     loopScopes[^1].Declared.Add(foreachStatement.Identifier.Text);
                     loopAssigned.Add(foreachStatement.Identifier.Text);
@@ -2221,7 +2297,9 @@ public sealed partial class Binder
 
                     var armScopes = PushLocalAssignmentScope(scopes);
                     var armAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
-                    if (arm.Identifier is not null && !IsDiscardIdentifier(arm.Identifier))
+                    if (arm.Identifier is not null &&
+                        !IsDiscardIdentifier(arm.Identifier) &&
+                        !IsReservedIdentifier(arm.Identifier))
                     {
                         armScopes[^1].Declared.Add(arm.Identifier.Text);
                         armAssigned.Add(arm.Identifier.Text);
@@ -2253,7 +2331,8 @@ public sealed partial class Binder
                 {
                     var clauseScopes = PushLocalAssignmentScope(scopes);
                     var clauseAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
-                    if (!IsDiscardIdentifier(clause.Identifier))
+                    if (!IsDiscardIdentifier(clause.Identifier) &&
+                        !IsReservedIdentifier(clause.Identifier))
                     {
                         clauseScopes[^1].Declared.Add(clause.Identifier.Text);
                         clauseAssigned.Add(clause.Identifier.Text);
@@ -3339,19 +3418,29 @@ public sealed partial class Binder
                         }
                         else if (arm.Identifier is not null)
                         {
-                            if (locals.ContainsKey(arm.Identifier.Text))
+                            var invalidArmIdentifier =
+                                ReportInvalidDiscardDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics) |
+                                ReportInvalidReservedIdentifierDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics);
+                            if (invalidArmIdentifier)
                             {
-                                diagnostics.Report(
-                                    "ILC2244",
-                                    $"Duplicate local name '{arm.Identifier.Text}' in an active scope. ILC names are case-insensitive.",
-                                    DiagnosticSeverity.Error,
-                                    arm.Identifier.Span);
+                                armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                             }
-
-                            armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                            else
                             {
-                                [arm.Identifier.Text] = typedArmType
-                            };
+                                if (locals.ContainsKey(arm.Identifier.Text))
+                                {
+                                    diagnostics.Report(
+                                        "ILC2244",
+                                        $"Duplicate local name '{arm.Identifier.Text}' in an active scope. ILC names are case-insensitive.",
+                                        DiagnosticSeverity.Error,
+                                        arm.Identifier.Span);
+                                }
+
+                                armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                                {
+                                    [arm.Identifier.Text] = typedArmType
+                                };
+                            }
                         }
                     }
                     else
@@ -3612,6 +3701,7 @@ public sealed partial class Binder
                 break;
             case QueryExpressionSyntax query:
                 ReportInvalidDiscardDeclarationIfNeeded(query.Identifier, "query range variable", diagnostics);
+                ReportInvalidReservedIdentifierDeclarationIfNeeded(query.Identifier, "query range variable", diagnostics);
                 ValidateExpression(query.SourceExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 var querySourceType = InferValidationExpressionType(query.SourceExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 var enumerablePattern = SemanticFacts.ResolveEnumerablePattern(querySourceType, knownTypes);
@@ -3633,6 +3723,7 @@ public sealed partial class Binder
                 if (query.JoinSourceExpression is not null && query.JoinIdentifier is not null)
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.JoinIdentifier, "query join variable", diagnostics);
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(query.JoinIdentifier, "query join variable", diagnostics);
                     ValidateExpression(query.JoinSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var joinSourceType = InferValidationExpressionType(query.JoinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var joinEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(joinSourceType, knownTypes);
@@ -3650,6 +3741,7 @@ public sealed partial class Binder
                     if (query.JoinIntoIdentifier is not null)
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(query.JoinIntoIdentifier, "query join-into variable", diagnostics);
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(query.JoinIntoIdentifier, "query join-into variable", diagnostics);
                         queryLocals[query.JoinIntoIdentifier.Text] =
                             SemanticFacts.ResolveTypeReference($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", knownTypes)
                             ?? new TypeSymbol($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", true);
@@ -3690,6 +3782,7 @@ public sealed partial class Binder
                 if (query.SecondSourceExpression is not null && query.SecondIdentifier is not null)
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.SecondIdentifier, "query range variable", diagnostics);
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(query.SecondIdentifier, "query range variable", diagnostics);
                     ValidateExpression(query.SecondSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var secondSourceType = InferValidationExpressionType(query.SecondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var secondEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(secondSourceType, knownTypes);
@@ -3709,6 +3802,7 @@ public sealed partial class Binder
                 if (query.LetExpression is not null && query.LetIdentifier is not null)
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.LetIdentifier, "query let variable", diagnostics);
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(query.LetIdentifier, "query let variable", diagnostics);
                     ValidateExpression(query.LetExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var letType = InferValidationExpressionType(query.LetExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     queryLocals[query.LetIdentifier.Text] = letType;
@@ -3777,6 +3871,7 @@ public sealed partial class Binder
                 if (query.IntoIdentifier is not null && query.ContinuationSelectExpression is not null)
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.IntoIdentifier, "query continuation variable", diagnostics);
+                    ReportInvalidReservedIdentifierDeclarationIfNeeded(query.IntoIdentifier, "query continuation variable", diagnostics);
                     var continuationRangeType =
                         query.GroupExpression is not null && query.GroupByExpression is not null
                             ? SemanticFacts.ResolveTypeReference(
@@ -3794,6 +3889,7 @@ public sealed partial class Binder
                     if (query.ContinuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(query.ContinuationLetIdentifier, "query let variable", diagnostics);
+                        ReportInvalidReservedIdentifierDeclarationIfNeeded(query.ContinuationLetIdentifier, "query let variable", diagnostics);
                         ValidateExpression(query.ContinuationLetExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                         var continuationLetType = InferValidationExpressionType(query.ContinuationLetExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         continuationLocals[query.ContinuationLetIdentifier.Text] = continuationLetType;
@@ -4671,6 +4767,12 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
+        if (IsThisName(name))
+        {
+            ReportUnsupportedThisUsage(name, diagnostics);
+            return;
+        }
+
         if (IsResultName(name) && !IsResultAvailable(currentMethod))
         {
             ReportInvalidResultUsage(name.Parts[0].Span, diagnostics);
@@ -4735,6 +4837,22 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
+        if (target is NameExpressionSyntax simpleTarget && IsThisName(simpleTarget.Name))
+        {
+            ReportUnsupportedThisUsage(simpleTarget.Name, diagnostics);
+            return;
+        }
+
+        if (target is NameExpressionSyntax selfTarget && IsSelfName(selfTarget.Name))
+        {
+            diagnostics.Report(
+                "ILC2263",
+                "'self' is read-only and cannot be used as an assignment target.",
+                DiagnosticSeverity.Error,
+                selfTarget.Name.Parts[0].Span);
+            return;
+        }
+
         if (TryReportReadonlyInParameterAssignment(target, currentMethod, diagnostics))
         {
             return;

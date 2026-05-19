@@ -4559,6 +4559,47 @@ if (!invalidDiscardBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC21
     failures.Add("Binder should not allow '_' as a compound-assignment or out-argument target.");
 }
 
+var reservedIdentifierTree = SyntaxTree.Parse("""
+public class Program
+begin
+  private var self: Integer;
+
+  public function BadSelfParameter(self: Integer): Integer;
+  begin
+    return 0;
+  end;
+
+  public function BadThisParameter(this: Integer): Integer;
+  begin
+    return this;
+  end;
+
+  public method BadLocals;
+  begin
+    var self := 1;
+    var this := 2;
+    self := nil;
+    var value := this;
+  end;
+end;
+""");
+
+var reservedIdentifierBinding = new Binder().Bind(reservedIdentifierTree);
+if (!reservedIdentifierBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2261"))
+{
+    failures.Add("Binder should reject declarations named 'self'.");
+}
+
+if (!reservedIdentifierBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2262"))
+{
+    failures.Add("Binder should reject declarations or references named 'this'.");
+}
+
+if (!reservedIdentifierBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2263"))
+{
+    failures.Add("Binder should reject direct assignment to 'self'.");
+}
+
 var externTree = SyntaxTree.Parse("""
 namespace System;
 uses Sys = System;
