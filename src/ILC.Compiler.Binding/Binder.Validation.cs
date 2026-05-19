@@ -1014,7 +1014,7 @@ public sealed partial class Binder
                     ValidateIncludeExcludeStatement(excludeStatement.Keyword, excludeStatement.Target, excludeStatement.Value, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
                 case RaiseStatementSyntax raiseStatement when raiseStatement.Expression is not null:
-                    ValidateExpression(raiseStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    ValidateRaiseStatement(raiseStatement, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     break;
                 case RaiseStatementSyntax raiseStatement when raiseStatement.Expression is null && !inExceptionHandler:
                     diagnostics.Report(
@@ -1349,6 +1349,16 @@ public sealed partial class Binder
                                 continue;
                             }
 
+                            if (!IsExceptionType(clauseType, knownTypes))
+                            {
+                                diagnostics.Report(
+                                    "ILC2135",
+                                    $"Exception handler type '{clause.TypeName.ToDisplayString()}' must implement System.IException.",
+                                    DiagnosticSeverity.Error,
+                                    GetReferenceDiagnosticSpan(clause.TypeName, knownTypes));
+                                continue;
+                            }
+
                             var clauseLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                             {
                                 [clause.Identifier.Text] = clauseType
@@ -1407,6 +1417,38 @@ public sealed partial class Binder
             knownProperties,
             currentMethod,
             diagnostics);
+    }
+
+    private static void ValidateRaiseStatement(
+        RaiseStatementSyntax raiseStatement,
+        IReadOnlyDictionary<string, TypeSymbol> locals,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        IReadOnlyList<MethodSymbol> knownMethods,
+        IReadOnlyList<FieldSymbol> knownFields,
+        IReadOnlyList<ConstantSymbol> knownConstants,
+        IReadOnlyList<PropertySymbol> knownProperties,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (raiseStatement.Expression is null)
+        {
+            return;
+        }
+
+        ValidateExpression(raiseStatement.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+        var expressionType = InferValidationExpressionType(raiseStatement.Expression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
+        if (expressionType == TypeSymbol.Unknown ||
+            expressionType == TypeSymbol.String ||
+            IsExceptionType(expressionType, knownTypes))
+        {
+            return;
+        }
+
+        diagnostics.Report(
+            "ILC2258",
+            $"Cannot raise expression of type '{expressionType.Name}'. Raise an exception object or a String message.",
+            DiagnosticSeverity.Error,
+            GetExpressionDiagnosticSpan(raiseStatement.Expression, knownTypes));
     }
 
     private static bool ContainsRoutineExit(IReadOnlyList<StatementSyntax> statements)
@@ -3869,6 +3911,17 @@ public sealed partial class Binder
         }
 
         return false;
+    }
+
+    private static bool IsExceptionType(TypeSymbol type, IReadOnlyList<TypeSymbol> knownTypes)
+    {
+        var exceptionInterface = knownTypes.FirstOrDefault(candidate => SemanticFacts.NameEquals(candidate.Name, "IException"));
+        if (exceptionInterface is null)
+        {
+            return type.IsReferenceType;
+        }
+
+        return SemanticFacts.IsCompatibleReferenceType(type, exceptionInterface, knownTypes);
     }
 
     private static bool IsGenericInterfaceAssignment(TypeSymbol sourceType, TypeSymbol targetType, IReadOnlyList<TypeSymbol> knownTypes)

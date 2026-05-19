@@ -1542,9 +1542,9 @@ else
         {
             failures.Add("Lowerer should emit throw IR and structured exception metadata for try/except.");
         }
-        else if (!mainIr.ExceptionHandlers.Any(handler => handler.CatchTypeName == "Program" && handler.TargetRegister != ushort.MaxValue))
+        else if (!mainIr.ExceptionHandlers.Any(handler => handler.CatchTypeName == "Exception" && handler.TargetRegister != ushort.MaxValue))
         {
-            failures.Add("Lowerer should preserve typed exception handler metadata for except on ex: Program do.");
+            failures.Add("Lowerer should preserve typed exception handler metadata for except on ex: Exception do.");
         }
         else if (!mainIr.ExceptionHandlers.Any(handler => handler.CatchTypeName is null))
         {
@@ -3993,6 +3993,53 @@ var invalidTypedCatchBinding = new Binder().Bind(invalidTypedCatchTree);
 if (!invalidTypedCatchBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2135"))
 {
     failures.Add("Binder should report non-reference typed exception handlers.");
+}
+
+var invalidExceptionTypingTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static method BadRaise;
+  begin
+    raise 1;
+  end;
+
+  public static method BadObjectRaise;
+  begin
+    raise new Program();
+  end;
+
+  public static method BadTypedCatch;
+  begin
+    try
+      raise new Exception('boom');
+    except
+      on ex: Program do
+      begin
+      end;
+    end;
+  end;
+
+  public static method GoodStringRaise;
+  begin
+    raise 'boom';
+  end;
+end;
+""");
+
+var invalidExceptionTypingBinding = new Binder().Bind(SyntaxTree.Merge(invalidExceptionTypingTree, [systemTree]));
+var invalidExceptionTypingDiagnostics = invalidExceptionTypingBinding.Diagnostics.ToArray();
+if (invalidExceptionTypingDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2258") != 2)
+{
+    failures.Add(
+        "Binder should reject raising non-exception expressions except String messages. Actual: " +
+        string.Join(" | ", invalidExceptionTypingDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (!invalidExceptionTypingDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2135"))
+{
+    failures.Add(
+        "Binder should reject typed exception handlers that do not implement System.IException. Actual: " +
+        string.Join(" | ", invalidExceptionTypingDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
 }
 
 var invalidForLoopTree = SyntaxTree.Parse("""

@@ -479,17 +479,17 @@ begin
 
     Program.TraceText('SECTION exceptions');
     try
-      raise 7;
+      raise '7';
     except
       current := current + 1;
     end;
     Program.Trace('CHECKPOINT exceptions-basic=', current);
 
     try
-      raise new Program(6);
+      raise new Exception('6');
     except
-      on ex: Program do
-        current := current + ex.Current();
+      on ex: Exception do
+        current := current + Integer.Parse(ex.Message);
       current := current + 2;
     end;
     Program.Trace('CHECKPOINT exceptions-typed=', current);
@@ -502,10 +502,10 @@ begin
     Program.Trace('CHECKPOINT exceptions-finally=', current);
 
     try
-      raise new Program(3);
+      raise new Exception('3');
     except
-      on ex: Program do
-        current := current + ex.Current();
+      on ex: Exception do
+        current := current + Integer.Parse(ex.Message);
     finally
       current := current + 1;
     end;
