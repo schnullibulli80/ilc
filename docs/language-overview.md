@@ -252,9 +252,10 @@ that exit path. Non-generic `out` parameters must also be assigned before every
 simple routine exit. Generic `out` parameters are not yet covered by this check
 because the current bootstrap language has no `default(T)` expression.
 Procedures do not expose `Result`. Names are
-case-insensitive, so `result`, `RESULT`, and `Result` refer to the same implicit
-function result; functions therefore cannot declare parameters or locals that
-differ from `Result` only by case.
+case-insensitive, so `result`, `RESULT`, and `Result` refer to the same reserved
+routine-result name. Routine-scoped declarations such as parameters, locals,
+loop variables, match arm variables, exception variables, and query variables
+therefore cannot use `Result` in any casing.
 `self` and `this` are reserved identifiers. `self` is the instance receiver, and
 `this` is rejected with a diagnostic that points users to `self`.
 The compiler reports exact duplicate names as errors in non-overloadable

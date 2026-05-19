@@ -2178,10 +2178,38 @@ begin
     Result := 1;
   end;
 
+  public static procedure InvalidProcedureParameter(Result: Integer);
+  begin
+    return;
+  end;
+
+  public static procedure InvalidProcedureLocalResult;
+  begin
+    var Result := 1;
+  end;
+
   public static function InvalidLocalResult: Integer;
   begin
     var Result := 1;
     return Result;
+  end;
+
+  public static function InvalidForResult: Integer;
+  begin
+    for var Result := 0 to 1 do
+    begin
+      break;
+    end;
+    return 0;
+  end;
+
+  public static function InvalidForeachResult(values: array of Integer): Integer;
+  begin
+    foreach var Result in values do
+    begin
+      break;
+    end;
+    return 0;
   end;
 
   public static procedure InvalidProcedureReturnValue;
@@ -2217,6 +2245,13 @@ if (!resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2242") ||
     !resultAliasDiagnostics.Any(diagnostic => diagnostic.Id == "ILC2240"))
 {
     failures.Add("Binder should allow implicit Result in functions and reject Result or return values in invalid contexts.");
+}
+
+if (resultAliasDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2241") < 5)
+{
+    failures.Add(
+        "Binder should reject Result declarations in parameters, locals, and loop variables. Actual: " +
+        string.Join(" | ", resultAliasDiagnostics.Where(diagnostic => diagnostic.Id == "ILC2241").Select(diagnostic => diagnostic.Message)));
 }
 
 var resultAliasIr = new Lowerer(
@@ -4443,6 +4478,14 @@ begin
       _ => localValue
     end;
   end;
+
+  public static function BadMatchExpressionResult(source: String): String;
+  begin
+    return match source with
+      String Result => Result
+      _ => 'fallback'
+    end;
+  end;
 end;
 """);
 
@@ -4450,6 +4493,11 @@ var matchExpressionShadowBinding = new Binder().Bind(matchExpressionShadowTree);
 if (!matchExpressionShadowBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
 {
     failures.Add("Binder should reject typed match expression variables that shadow active locals.");
+}
+
+if (!matchExpressionShadowBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2241"))
+{
+    failures.Add("Binder should reject Result declarations in typed match expression arms.");
 }
 
 var interfaceMatchStatementTree = SyntaxTree.Parse("""
@@ -5554,6 +5602,10 @@ begin
       from value in words
       select value
       skip value.Contains('o');
+
+    var badResultRange :=
+      from Result in words
+      select Result;
   end;
 end;
 """);
@@ -5598,6 +5650,11 @@ if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == 
 if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2229"))
 {
     failures.Add("Binder should require Integer query skip counts.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2241"))
+{
+    failures.Add("Binder should reject Result declarations in query variables.");
 }
 
 var queryExpressionMergedTree = SyntaxTree.Merge(queryExpressionTree, [systemTree, collectionsTree]);

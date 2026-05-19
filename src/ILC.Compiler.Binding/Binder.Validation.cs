@@ -327,16 +327,6 @@ public sealed partial class Binder
                     locals["self"] = new TypeSymbol(classDeclaration.Identifier.Text, true);
                 }
 
-                var resultParameter = method.Parameters.FirstOrDefault(parameter => SemanticFacts.NameEquals(parameter.Identifier.Text, "Result"));
-                if (resultParameter is not null && boundMethod is not null && IsResultAvailable(boundMethod))
-                {
-                    diagnostics.Report(
-                        "ILC2241",
-                        "Parameter name 'Result' is reserved for the implicit function result.",
-                        DiagnosticSeverity.Error,
-                        resultParameter.Identifier.Span);
-                }
-
                 if (boundMethod is not null && boundMethod.ReturnType != TypeSymbol.Void)
                 {
                     locals["Result"] = boundMethod.ReturnType;
@@ -616,7 +606,8 @@ public sealed partial class Binder
         foreach (var parameter in method.Parameters)
         {
             if (ReportInvalidDiscardDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics) ||
-                ReportInvalidReservedIdentifierDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics))
+                ReportInvalidReservedIdentifierDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics) ||
+                ReportInvalidResultDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics))
             {
                 continue;
             }
@@ -875,12 +866,33 @@ public sealed partial class Binder
         return false;
     }
 
+    private static bool ReportInvalidResultDeclarationIfNeeded(
+        SyntaxToken identifier,
+        string declarationKind,
+        DiagnosticBag diagnostics)
+    {
+        if (!SemanticFacts.NameEquals(identifier.Text, "Result"))
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2241",
+            $"Identifier 'Result' is reserved for routine result semantics and cannot be declared as a {declarationKind}.",
+            DiagnosticSeverity.Error,
+            identifier.Span);
+        return true;
+    }
+
     private static bool IsDiscardIdentifier(SyntaxToken identifier) =>
         string.Equals(identifier.Text, "_", StringComparison.Ordinal);
 
     private static bool IsReservedIdentifier(SyntaxToken identifier) =>
         SemanticFacts.NameEquals(identifier.Text, "self") ||
         SemanticFacts.NameEquals(identifier.Text, "this");
+
+    private static bool IsResultIdentifier(SyntaxToken identifier) =>
+        SemanticFacts.NameEquals(identifier.Text, "Result");
 
     private static bool IsThisName(QualifiedNameSyntax name) =>
         name.Parts.Count >= 1 &&
@@ -1065,16 +1077,9 @@ public sealed partial class Binder
                     {
                         var isInvalidReservedDeclaration =
                             ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics) |
-                            ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics);
-                        if (IsResultAvailable(currentMethod) && SemanticFacts.NameEquals(declarator.Identifier.Text, "Result"))
-                        {
-                            diagnostics.Report(
-                                "ILC2241",
-                                "Local variable name 'Result' is reserved for the implicit function result.",
-                                DiagnosticSeverity.Error,
-                                declarator.Identifier.Span);
-                        }
-                        else
+                            ReportInvalidReservedIdentifierDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics) |
+                            ReportInvalidResultDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics);
+                        if (!isInvalidReservedDeclaration)
                         {
                             ReportLocalScopeNameCollisionIfNeeded(activeLocalScopes, declarator.Identifier, diagnostics);
                         }
@@ -1177,7 +1182,8 @@ public sealed partial class Binder
                     if (forStatement.VarKeyword is not null)
                     {
                         if (ReportInvalidDiscardDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics) |
-                            ReportInvalidReservedIdentifierDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics))
+                            ReportInvalidReservedIdentifierDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics) |
+                            ReportInvalidResultDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics))
                         {
                             forLoopLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                             forLoopScopes = CreateNestedLocalScopes(activeLocalScopes);
@@ -1285,7 +1291,8 @@ public sealed partial class Binder
                     {
                         foreachType = elementType!;
                         if (ReportInvalidDiscardDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics) |
-                            ReportInvalidReservedIdentifierDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics))
+                            ReportInvalidReservedIdentifierDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics) |
+                            ReportInvalidResultDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics))
                         {
                             foreachLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                             foreachScopes = CreateNestedLocalScopes(activeLocalScopes);
@@ -1421,7 +1428,8 @@ public sealed partial class Binder
                             else if (arm.Identifier is not null)
                             {
                                 if (ReportInvalidDiscardDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics) |
-                                    ReportInvalidReservedIdentifierDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics))
+                                    ReportInvalidReservedIdentifierDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics) |
+                                    ReportInvalidResultDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics))
                                 {
                                     armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                                     armScopes = CreateNestedLocalScopes(activeLocalScopes);
@@ -1502,7 +1510,8 @@ public sealed partial class Binder
 
                             var invalidClauseIdentifier =
                                 ReportInvalidDiscardDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics) |
-                                ReportInvalidReservedIdentifierDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics);
+                                ReportInvalidReservedIdentifierDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics) |
+                                ReportInvalidResultDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics);
                             var clauseLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
                             var clauseScopes = invalidClauseIdentifier
                                 ? CreateNestedLocalScopes(activeLocalScopes)
@@ -2159,7 +2168,8 @@ public sealed partial class Binder
                     }
 
                     if (IsDiscardIdentifier(declarator.Identifier) ||
-                        IsReservedIdentifier(declarator.Identifier))
+                        IsReservedIdentifier(declarator.Identifier) ||
+                        IsResultIdentifier(declarator.Identifier))
                     {
                         continue;
                     }
@@ -2210,7 +2220,8 @@ public sealed partial class Binder
                 var loopScopes = PushLocalAssignmentScope(scopes);
                 if (forStatement.VarKeyword is not null &&
                     !IsDiscardIdentifier(forStatement.Identifier) &&
-                    !IsReservedIdentifier(forStatement.Identifier))
+                    !IsReservedIdentifier(forStatement.Identifier) &&
+                    !IsResultIdentifier(forStatement.Identifier))
                 {
                     loopScopes[^1].Declared.Add(forStatement.Identifier.Text);
                     loopAssigned.Add(forStatement.Identifier.Text);
@@ -2237,7 +2248,8 @@ public sealed partial class Binder
                 var loopScopes = PushLocalAssignmentScope(scopes);
                 if (foreachStatement.VarKeyword is not null &&
                     !IsDiscardIdentifier(foreachStatement.Identifier) &&
-                    !IsReservedIdentifier(foreachStatement.Identifier))
+                    !IsReservedIdentifier(foreachStatement.Identifier) &&
+                    !IsResultIdentifier(foreachStatement.Identifier))
                 {
                     loopScopes[^1].Declared.Add(foreachStatement.Identifier.Text);
                     loopAssigned.Add(foreachStatement.Identifier.Text);
@@ -2299,7 +2311,8 @@ public sealed partial class Binder
                     var armAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
                     if (arm.Identifier is not null &&
                         !IsDiscardIdentifier(arm.Identifier) &&
-                        !IsReservedIdentifier(arm.Identifier))
+                        !IsReservedIdentifier(arm.Identifier) &&
+                        !IsResultIdentifier(arm.Identifier))
                     {
                         armScopes[^1].Declared.Add(arm.Identifier.Text);
                         armAssigned.Add(arm.Identifier.Text);
@@ -2332,7 +2345,8 @@ public sealed partial class Binder
                     var clauseScopes = PushLocalAssignmentScope(scopes);
                     var clauseAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
                     if (!IsDiscardIdentifier(clause.Identifier) &&
-                        !IsReservedIdentifier(clause.Identifier))
+                        !IsReservedIdentifier(clause.Identifier) &&
+                        !IsResultIdentifier(clause.Identifier))
                     {
                         clauseScopes[^1].Declared.Add(clause.Identifier.Text);
                         clauseAssigned.Add(clause.Identifier.Text);
@@ -3420,7 +3434,8 @@ public sealed partial class Binder
                         {
                             var invalidArmIdentifier =
                                 ReportInvalidDiscardDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics) |
-                                ReportInvalidReservedIdentifierDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics);
+                                ReportInvalidReservedIdentifierDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics) |
+                                ReportInvalidResultDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics);
                             if (invalidArmIdentifier)
                             {
                                 armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
@@ -3702,6 +3717,7 @@ public sealed partial class Binder
             case QueryExpressionSyntax query:
                 ReportInvalidDiscardDeclarationIfNeeded(query.Identifier, "query range variable", diagnostics);
                 ReportInvalidReservedIdentifierDeclarationIfNeeded(query.Identifier, "query range variable", diagnostics);
+                ReportInvalidResultDeclarationIfNeeded(query.Identifier, "query range variable", diagnostics);
                 ValidateExpression(query.SourceExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 var querySourceType = InferValidationExpressionType(query.SourceExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 var enumerablePattern = SemanticFacts.ResolveEnumerablePattern(querySourceType, knownTypes);
@@ -3724,6 +3740,7 @@ public sealed partial class Binder
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.JoinIdentifier, "query join variable", diagnostics);
                     ReportInvalidReservedIdentifierDeclarationIfNeeded(query.JoinIdentifier, "query join variable", diagnostics);
+                    ReportInvalidResultDeclarationIfNeeded(query.JoinIdentifier, "query join variable", diagnostics);
                     ValidateExpression(query.JoinSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var joinSourceType = InferValidationExpressionType(query.JoinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var joinEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(joinSourceType, knownTypes);
@@ -3742,6 +3759,7 @@ public sealed partial class Binder
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(query.JoinIntoIdentifier, "query join-into variable", diagnostics);
                         ReportInvalidReservedIdentifierDeclarationIfNeeded(query.JoinIntoIdentifier, "query join-into variable", diagnostics);
+                        ReportInvalidResultDeclarationIfNeeded(query.JoinIntoIdentifier, "query join-into variable", diagnostics);
                         queryLocals[query.JoinIntoIdentifier.Text] =
                             SemanticFacts.ResolveTypeReference($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", knownTypes)
                             ?? new TypeSymbol($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", true);
@@ -3783,6 +3801,7 @@ public sealed partial class Binder
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.SecondIdentifier, "query range variable", diagnostics);
                     ReportInvalidReservedIdentifierDeclarationIfNeeded(query.SecondIdentifier, "query range variable", diagnostics);
+                    ReportInvalidResultDeclarationIfNeeded(query.SecondIdentifier, "query range variable", diagnostics);
                     ValidateExpression(query.SecondSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var secondSourceType = InferValidationExpressionType(query.SecondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var secondEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(secondSourceType, knownTypes);
@@ -3803,6 +3822,7 @@ public sealed partial class Binder
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.LetIdentifier, "query let variable", diagnostics);
                     ReportInvalidReservedIdentifierDeclarationIfNeeded(query.LetIdentifier, "query let variable", diagnostics);
+                    ReportInvalidResultDeclarationIfNeeded(query.LetIdentifier, "query let variable", diagnostics);
                     ValidateExpression(query.LetExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var letType = InferValidationExpressionType(query.LetExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     queryLocals[query.LetIdentifier.Text] = letType;
@@ -3872,6 +3892,7 @@ public sealed partial class Binder
                 {
                     ReportInvalidDiscardDeclarationIfNeeded(query.IntoIdentifier, "query continuation variable", diagnostics);
                     ReportInvalidReservedIdentifierDeclarationIfNeeded(query.IntoIdentifier, "query continuation variable", diagnostics);
+                    ReportInvalidResultDeclarationIfNeeded(query.IntoIdentifier, "query continuation variable", diagnostics);
                     var continuationRangeType =
                         query.GroupExpression is not null && query.GroupByExpression is not null
                             ? SemanticFacts.ResolveTypeReference(
@@ -3890,6 +3911,7 @@ public sealed partial class Binder
                     {
                         ReportInvalidDiscardDeclarationIfNeeded(query.ContinuationLetIdentifier, "query let variable", diagnostics);
                         ReportInvalidReservedIdentifierDeclarationIfNeeded(query.ContinuationLetIdentifier, "query let variable", diagnostics);
+                        ReportInvalidResultDeclarationIfNeeded(query.ContinuationLetIdentifier, "query let variable", diagnostics);
                         ValidateExpression(query.ContinuationLetExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                         var continuationLetType = InferValidationExpressionType(query.ContinuationLetExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         continuationLocals[query.ContinuationLetIdentifier.Text] = continuationLetType;
