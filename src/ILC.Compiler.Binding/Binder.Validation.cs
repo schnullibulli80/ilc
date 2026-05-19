@@ -418,6 +418,8 @@ public sealed partial class Binder
                     diagnostics,
                     profiler,
                     [BuildInitialMethodLocalScope(method)]);
+                ValidateRequiredOutputAssignments(method.Body.Statements, boundMethod, diagnostics);
+                ValidateLocalDefiniteAssignments(method.Body.Statements, typeScope, diagnostics);
             }
         }
     }
@@ -1211,7 +1213,11 @@ public sealed partial class Binder
                     {
                         foreach (var label in clause.Labels)
                         {
-                            ValidateExpression(label, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                            if (label is not RangeExpressionSyntax)
+                            {
+                                ValidateExpression(label, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                            }
+
                             ValidateCaseLabel(label, caseExpressionType, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                         }
 
@@ -1434,6 +1440,939 @@ public sealed partial class Binder
 
         return false;
     }
+
+    private sealed record OutputAssignmentFlow(HashSet<string> Assigned, bool CanContinue);
+
+    private sealed record LocalAssignmentFlow(HashSet<string> Assigned, bool CanContinue);
+
+    private sealed class LocalAssignmentScope(HashSet<string> declared)
+    {
+        public HashSet<string> Declared { get; } = declared;
+    }
+
+    private static void ValidateRequiredOutputAssignments(
+        IReadOnlyList<StatementSyntax> statements,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (currentMethod is null)
+        {
+            return;
+        }
+
+        var methodDeclaration = currentMethod.Declaration;
+        if (methodDeclaration is null)
+        {
+            return;
+        }
+
+        var required = new Dictionary<string, TextSpan>(SemanticFacts.NameComparer);
+        foreach (var parameter in currentMethod.Parameters)
+        {
+            if (parameter.PassingKind == ParameterPassingKind.Out &&
+                parameter.Type is not TypeParameterSymbol)
+            {
+                required[parameter.Name] = methodDeclaration.Parameters
+                    .FirstOrDefault(parameterSyntax => SemanticFacts.NameEquals(parameterSyntax.Identifier.Text, parameter.Name))
+                    ?.Identifier.Span ?? methodDeclaration.Identifier.Span;
+            }
+        }
+
+        if (IsResultAvailable(currentMethod))
+        {
+            required["Result"] = methodDeclaration.Identifier.Span;
+        }
+
+        if (required.Count == 0)
+        {
+            return;
+        }
+
+        using var profile = Profile(currentValidationProfiler, "ValidateRequiredOutputAssignments");
+        var flow = AnalyzeRequiredOutputAssignments(statements, new HashSet<string>(SemanticFacts.NameComparer), required, diagnostics);
+        if (flow.CanContinue)
+        {
+            ReportMissingRequiredOutputAssignments(flow.Assigned, required, methodDeclaration.Identifier.Span, diagnostics);
+        }
+    }
+
+    private static OutputAssignmentFlow AnalyzeRequiredOutputAssignments(
+        IReadOnlyList<StatementSyntax> statements,
+        HashSet<string> assigned,
+        IReadOnlyDictionary<string, TextSpan> required,
+        DiagnosticBag diagnostics)
+    {
+        var current = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+        var canContinue = true;
+        foreach (var statement in statements)
+        {
+            if (!canContinue)
+            {
+                break;
+            }
+
+            var flow = AnalyzeRequiredOutputAssignment(statement, current, required, diagnostics);
+            current = flow.Assigned;
+            canContinue = flow.CanContinue;
+        }
+
+        return new OutputAssignmentFlow(current, canContinue);
+    }
+
+    private static OutputAssignmentFlow AnalyzeRequiredOutputAssignment(
+        StatementSyntax statement,
+        HashSet<string> assigned,
+        IReadOnlyDictionary<string, TextSpan> required,
+        DiagnosticBag diagnostics)
+    {
+        switch (statement)
+        {
+            case BlockStatementSyntax block:
+                return AnalyzeRequiredOutputAssignments(block.Statements, assigned, required, diagnostics);
+            case LocalVariableDeclarationStatementSyntax localDeclaration:
+            {
+                var localAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                foreach (var declarator in localDeclaration.Declarators)
+                {
+                    if (declarator.Initializer is not null)
+                    {
+                        CollectRequiredOutputAssignmentsFromExpression(declarator.Initializer, localAssigned, required);
+                    }
+                }
+
+                return new OutputAssignmentFlow(localAssigned, true);
+            }
+            case ExpressionStatementSyntax expressionStatement:
+            {
+                var expressionAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                CollectRequiredOutputAssignmentsFromExpression(expressionStatement.Expression, expressionAssigned, required);
+                return new OutputAssignmentFlow(expressionAssigned, true);
+            }
+            case ReturnStatementSyntax returnStatement:
+            {
+                var exitAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                if (returnStatement.Expression is not null)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(returnStatement.Expression, exitAssigned, required);
+                    if (required.ContainsKey("Result"))
+                    {
+                        exitAssigned.Add("Result");
+                    }
+                }
+
+                ReportMissingRequiredOutputAssignments(exitAssigned, required, returnStatement.ReturnKeyword.Span, diagnostics);
+                return new OutputAssignmentFlow(exitAssigned, false);
+            }
+            case IfStatementSyntax ifStatement:
+            {
+                CollectRequiredOutputAssignmentsFromExpression(ifStatement.Condition, assigned, required);
+                var thenFlow = AnalyzeRequiredOutputAssignments([ifStatement.ThenStatement], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                var elseFlow = ifStatement.ElseStatement is not null
+                    ? AnalyzeRequiredOutputAssignments([ifStatement.ElseStatement], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics)
+                    : new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return MergeBranchOutputAssignmentFlows(thenFlow, elseFlow);
+            }
+            case WhileStatementSyntax whileStatement:
+                CollectRequiredOutputAssignmentsFromExpression(whileStatement.Condition, assigned, required);
+                _ = AnalyzeRequiredOutputAssignments([whileStatement.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                return new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            case RepeatStatementSyntax repeatStatement:
+                _ = AnalyzeRequiredOutputAssignments(repeatStatement.Statements, new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                CollectRequiredOutputAssignmentsFromExpression(repeatStatement.Condition, assigned, required);
+                return new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            case ForStatementSyntax forStatement:
+                CollectRequiredOutputAssignmentsFromExpression(forStatement.LowerBound, assigned, required);
+                CollectRequiredOutputAssignmentsFromExpression(forStatement.UpperBound, assigned, required);
+                if (forStatement.StepExpression is not null)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(forStatement.StepExpression, assigned, required);
+                }
+                _ = AnalyzeRequiredOutputAssignments([forStatement.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                return new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            case ForeachStatementSyntax foreachStatement:
+                CollectRequiredOutputAssignmentsFromExpression(foreachStatement.Collection, assigned, required);
+                _ = AnalyzeRequiredOutputAssignments([foreachStatement.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                return new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            case WithStatementSyntax withStatement:
+                CollectRequiredOutputAssignmentsFromExpression(withStatement.Receiver, assigned, required);
+                return AnalyzeRequiredOutputAssignments([withStatement.Body], assigned, required, diagnostics);
+            case CaseStatementSyntax caseStatement:
+            {
+                CollectRequiredOutputAssignmentsFromExpression(caseStatement.Expression, assigned, required);
+                OutputAssignmentFlow? mergedFlow = null;
+                foreach (var clause in caseStatement.Clauses)
+                {
+                    foreach (var label in clause.Labels)
+                    {
+                        CollectRequiredOutputAssignmentsFromExpression(label, assigned, required);
+                    }
+
+                    if (clause.Guard is not null)
+                    {
+                        CollectRequiredOutputAssignmentsFromExpression(clause.Guard, assigned, required);
+                    }
+
+                    var clauseFlow = AnalyzeRequiredOutputAssignments([clause.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                    mergedFlow = mergedFlow is null ? clauseFlow : MergeBranchOutputAssignmentFlows(mergedFlow, clauseFlow);
+                }
+
+                var elseFlow = caseStatement.ElseStatements.Count > 0
+                    ? AnalyzeRequiredOutputAssignments(caseStatement.ElseStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics)
+                    : new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return mergedFlow is null ? elseFlow : MergeBranchOutputAssignmentFlows(mergedFlow, elseFlow);
+            }
+            case MatchStatementSyntax matchStatement:
+            {
+                CollectRequiredOutputAssignmentsFromExpression(matchStatement.Expression, assigned, required);
+                OutputAssignmentFlow? mergedFlow = null;
+                foreach (var arm in matchStatement.Arms)
+                {
+                    foreach (var label in arm.Labels)
+                    {
+                        CollectRequiredOutputAssignmentsFromExpression(label, assigned, required);
+                    }
+
+                    if (arm.Guard is not null)
+                    {
+                        CollectRequiredOutputAssignmentsFromExpression(arm.Guard, assigned, required);
+                    }
+
+                    var armFlow = AnalyzeRequiredOutputAssignments([arm.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                    mergedFlow = mergedFlow is null ? armFlow : MergeBranchOutputAssignmentFlows(mergedFlow, armFlow);
+                }
+
+                var elseFlow = matchStatement.ElseStatements.Count > 0
+                    ? AnalyzeRequiredOutputAssignments(matchStatement.ElseStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics)
+                    : new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return mergedFlow is null ? elseFlow : MergeBranchOutputAssignmentFlows(mergedFlow, elseFlow);
+            }
+            case TryStatementSyntax tryStatement:
+            {
+                var tryFlow = AnalyzeRequiredOutputAssignments(tryStatement.TryStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                OutputAssignmentFlow? exceptionFlow = null;
+                foreach (var clause in tryStatement.ExceptionClauses)
+                {
+                    var clauseFlow = AnalyzeRequiredOutputAssignments([clause.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                    exceptionFlow = exceptionFlow is null ? clauseFlow : MergeBranchOutputAssignmentFlows(exceptionFlow, clauseFlow);
+                }
+
+                if (tryStatement.ExceptStatements.Count > 0)
+                {
+                    var exceptStatementsFlow = AnalyzeRequiredOutputAssignments(tryStatement.ExceptStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics);
+                    exceptionFlow = exceptionFlow is null ? exceptStatementsFlow : MergeBranchOutputAssignmentFlows(exceptionFlow, exceptStatementsFlow);
+                }
+
+                var exceptFlow = exceptionFlow ?? new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                var merged = MergeBranchOutputAssignmentFlows(tryFlow, exceptFlow);
+                if (tryStatement.FinallyStatements.Count == 0)
+                {
+                    return merged;
+                }
+
+                var finallyFlow = AnalyzeRequiredOutputAssignments(tryStatement.FinallyStatements, new HashSet<string>(merged.Assigned, SemanticFacts.NameComparer), required, diagnostics);
+                return new OutputAssignmentFlow(finallyFlow.Assigned, merged.CanContinue && finallyFlow.CanContinue);
+            }
+            case RaiseStatementSyntax raiseStatement:
+                if (raiseStatement.Expression is not null)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(raiseStatement.Expression, assigned, required);
+                }
+
+                return new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), false);
+            default:
+                return new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+        }
+    }
+
+    private static OutputAssignmentFlow MergeBranchOutputAssignmentFlows(OutputAssignmentFlow left, OutputAssignmentFlow right)
+    {
+        if (!left.CanContinue && !right.CanContinue)
+        {
+            return new OutputAssignmentFlow(new HashSet<string>(left.Assigned, SemanticFacts.NameComparer), false);
+        }
+
+        if (!left.CanContinue)
+        {
+            return new OutputAssignmentFlow(new HashSet<string>(right.Assigned, SemanticFacts.NameComparer), true);
+        }
+
+        if (!right.CanContinue)
+        {
+            return new OutputAssignmentFlow(new HashSet<string>(left.Assigned, SemanticFacts.NameComparer), true);
+        }
+
+        var assigned = new HashSet<string>(left.Assigned, SemanticFacts.NameComparer);
+        assigned.IntersectWith(right.Assigned);
+        return new OutputAssignmentFlow(assigned, true);
+    }
+
+    private static void CollectRequiredOutputAssignmentsFromExpression(
+        ExpressionSyntax expression,
+        HashSet<string> assigned,
+        IReadOnlyDictionary<string, TextSpan> required)
+    {
+        switch (expression)
+        {
+            case AssignmentExpressionSyntax assignment:
+                if (TryGetRequiredOutputAssignmentTarget(assignment.Target, required) is { } assignedName)
+                {
+                    assigned.Add(assignedName);
+                }
+
+                CollectRequiredOutputAssignmentsFromExpression(assignment.Expression, assigned, required);
+                break;
+            case CompoundAssignmentExpressionSyntax assignment:
+                CollectRequiredOutputAssignmentsFromExpression(assignment.Target, assigned, required);
+                CollectRequiredOutputAssignmentsFromExpression(assignment.Expression, assigned, required);
+                break;
+            case ParenthesizedExpressionSyntax parenthesized:
+                CollectRequiredOutputAssignmentsFromExpression(parenthesized.Expression, assigned, required);
+                break;
+            case BinaryExpressionSyntax binary:
+                CollectRequiredOutputAssignmentsFromExpression(binary.Left, assigned, required);
+                CollectRequiredOutputAssignmentsFromExpression(binary.Right, assigned, required);
+                break;
+            case CallExpressionSyntax call:
+                CollectRequiredOutputAssignmentsFromExpression(call.Target, assigned, required);
+                foreach (var argument in call.Arguments)
+                {
+                    if (TryGetRequiredOutputAssignmentTarget(argument.Expression, required) is { } argumentName &&
+                        argument.ModifierKeyword?.Kind is SyntaxKind.OutKeyword or null)
+                    {
+                        assigned.Add(argumentName);
+                    }
+
+                    CollectRequiredOutputAssignmentsFromExpression(argument.Expression, assigned, required);
+                }
+                break;
+            case ElementAccessExpressionSyntax elementAccess:
+                foreach (var indexExpression in elementAccess.IndexExpressions)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(indexExpression, assigned, required);
+                }
+                break;
+            case PostfixElementAccessExpressionSyntax elementAccess:
+                CollectRequiredOutputAssignmentsFromExpression(elementAccess.Target, assigned, required);
+                foreach (var indexExpression in elementAccess.IndexExpressions)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(indexExpression, assigned, required);
+                }
+                break;
+            case MemberAccessExpressionSyntax memberAccess:
+                CollectRequiredOutputAssignmentsFromExpression(memberAccess.Receiver, assigned, required);
+                break;
+            case ArrayLengthExpressionSyntax:
+                break;
+            case RangeExpressionSyntax range:
+                CollectRequiredOutputAssignmentsFromExpression(range.Start, assigned, required);
+                CollectRequiredOutputAssignmentsFromExpression(range.End, assigned, required);
+                break;
+            case NewExpressionSyntax newExpression:
+                foreach (var argument in newExpression.Arguments)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(argument.Expression, assigned, required);
+                }
+                break;
+            case NewArrayExpressionSyntax newArray:
+                foreach (var lengthExpression in newArray.LengthExpressions)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(lengthExpression, assigned, required);
+                }
+                break;
+            case ProjectorExpressionSyntax projector:
+                foreach (var member in projector.Members)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(member.Expression, assigned, required);
+                }
+                break;
+            case MatchNotPatternSyntax notPattern:
+                CollectRequiredOutputAssignmentsFromExpression(notPattern.Pattern, assigned, required);
+                break;
+            case MatchOrPatternSyntax orPattern:
+                foreach (var pattern in orPattern.Patterns)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(pattern, assigned, required);
+                }
+                break;
+            case MatchAndPatternSyntax andPattern:
+                foreach (var pattern in andPattern.Patterns)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(pattern.Operand, assigned, required);
+                }
+                break;
+            case MatchRelationalPatternSyntax relational:
+                CollectRequiredOutputAssignmentsFromExpression(relational.Operand, assigned, required);
+                break;
+            case TypeTestExpressionSyntax typeTest:
+                CollectRequiredOutputAssignmentsFromExpression(typeTest.Expression, assigned, required);
+                break;
+            case AsExpressionSyntax asExpression:
+                CollectRequiredOutputAssignmentsFromExpression(asExpression.Expression, assigned, required);
+                break;
+            case SetLiteralExpressionSyntax setLiteral:
+                foreach (var element in setLiteral.Elements)
+                {
+                    CollectRequiredOutputAssignmentsFromExpression(element, assigned, required);
+                }
+                break;
+            case QueryExpressionSyntax query:
+                CollectRequiredOutputAssignmentsFromExpression(query.SourceExpression, assigned, required);
+                CollectRequiredOutputAssignmentsFromExpression(query.SelectExpression, assigned, required);
+                foreach (var optionalExpression in new[]
+                         {
+                             query.JoinSourceExpression,
+                             query.JoinLeftExpression,
+                             query.JoinRightExpression,
+                             query.SecondSourceExpression,
+                             query.LetExpression,
+                             query.PredicateExpression,
+                             query.OrderByExpression,
+                             query.ThenByExpression,
+                             query.GroupExpression,
+                             query.GroupByExpression,
+                             query.ContinuationLetExpression,
+                             query.ContinuationPredicateExpression,
+                             query.ContinuationOrderByExpression,
+                             query.ContinuationThenByExpression,
+                             query.ContinuationSelectExpression,
+                             query.TakeExpression,
+                             query.SkipExpression
+                         })
+                {
+                    if (optionalExpression is not null)
+                    {
+                        CollectRequiredOutputAssignmentsFromExpression(optionalExpression, assigned, required);
+                    }
+                }
+                break;
+        }
+    }
+
+    private static string? TryGetRequiredOutputAssignmentTarget(
+        ExpressionSyntax target,
+        IReadOnlyDictionary<string, TextSpan> required)
+    {
+        if (target is NameExpressionSyntax { Name.Parts.Count: 1 } name &&
+            required.ContainsKey(name.Name.Parts[0].Text))
+        {
+            return name.Name.Parts[0].Text;
+        }
+
+        return null;
+    }
+
+    private static void ReportMissingRequiredOutputAssignments(
+        HashSet<string> assigned,
+        IReadOnlyDictionary<string, TextSpan> required,
+        TextSpan span,
+        DiagnosticBag diagnostics)
+    {
+        foreach (var requiredOutput in required)
+        {
+            if (assigned.Contains(requiredOutput.Key))
+            {
+                continue;
+            }
+
+            var isResult = SemanticFacts.NameEquals(requiredOutput.Key, "Result");
+            diagnostics.Report(
+                isResult ? "ILC2255" : "ILC2256",
+                isResult
+                    ? "Function result must be assigned before the routine exits."
+                    : $"Out parameter '{requiredOutput.Key}' must be assigned before the routine exits.",
+                DiagnosticSeverity.Error,
+                span);
+        }
+    }
+
+    private static void ValidateLocalDefiniteAssignments(
+        IReadOnlyList<StatementSyntax> statements,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        DiagnosticBag diagnostics)
+    {
+        using var profile = Profile(currentValidationProfiler, "ValidateLocalDefiniteAssignments");
+        var scopes = new List<LocalAssignmentScope>
+        {
+            new(new HashSet<string>(SemanticFacts.NameComparer))
+        };
+        _ = AnalyzeLocalDefiniteAssignments(statements, new HashSet<string>(SemanticFacts.NameComparer), scopes, knownTypes, diagnostics);
+    }
+
+    private static LocalAssignmentFlow AnalyzeLocalDefiniteAssignments(
+        IReadOnlyList<StatementSyntax> statements,
+        HashSet<string> assigned,
+        List<LocalAssignmentScope> scopes,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        DiagnosticBag diagnostics)
+    {
+        var current = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+        var canContinue = true;
+        foreach (var statement in statements)
+        {
+            if (!canContinue)
+            {
+                break;
+            }
+
+            var flow = AnalyzeLocalDefiniteAssignment(statement, current, scopes, knownTypes, diagnostics);
+            current = flow.Assigned;
+            canContinue = flow.CanContinue;
+        }
+
+        return new LocalAssignmentFlow(current, canContinue);
+    }
+
+    private static LocalAssignmentFlow AnalyzeLocalDefiniteAssignment(
+        StatementSyntax statement,
+        HashSet<string> assigned,
+        List<LocalAssignmentScope> scopes,
+        IReadOnlyList<TypeSymbol> knownTypes,
+        DiagnosticBag diagnostics)
+    {
+        switch (statement)
+        {
+            case BlockStatementSyntax block:
+                return AnalyzeLocalDefiniteAssignments(block.Statements, assigned, PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+            case LocalVariableDeclarationStatementSyntax localDeclaration:
+            {
+                var localAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                foreach (var declarator in localDeclaration.Declarators)
+                {
+                    if (declarator.Initializer is not null)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(declarator.Initializer, localAssigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+
+                    scopes[^1].Declared.Add(declarator.Identifier.Text);
+                    if (declarator.Initializer is not null ||
+                        IsGenericDefaultLocal(declarator, knownTypes))
+                    {
+                        localAssigned.Add(declarator.Identifier.Text);
+                    }
+                }
+
+                return new LocalAssignmentFlow(localAssigned, true);
+            }
+            case ExpressionStatementSyntax expressionStatement:
+            {
+                var expressionAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                AnalyzeLocalDefiniteAssignmentExpression(expressionStatement.Expression, expressionAssigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                return new LocalAssignmentFlow(expressionAssigned, true);
+            }
+            case ReturnStatementSyntax returnStatement:
+                if (returnStatement.Expression is not null)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(returnStatement.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), false);
+            case IfStatementSyntax ifStatement:
+            {
+                AnalyzeLocalDefiniteAssignmentExpression(ifStatement.Condition, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                var thenFlow = AnalyzeLocalDefiniteAssignments([ifStatement.ThenStatement], new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                var elseFlow = ifStatement.ElseStatement is not null
+                    ? AnalyzeLocalDefiniteAssignments([ifStatement.ElseStatement], new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics)
+                    : new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return MergeLocalAssignmentFlows(thenFlow, elseFlow);
+            }
+            case WhileStatementSyntax whileStatement:
+                AnalyzeLocalDefiniteAssignmentExpression(whileStatement.Condition, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                _ = AnalyzeLocalDefiniteAssignments([whileStatement.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            case RepeatStatementSyntax repeatStatement:
+                _ = AnalyzeLocalDefiniteAssignments(repeatStatement.Statements, new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                AnalyzeLocalDefiniteAssignmentExpression(repeatStatement.Condition, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            case ForStatementSyntax forStatement:
+            {
+                var loopAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                var loopScopes = PushLocalAssignmentScope(scopes);
+                if (forStatement.VarKeyword is not null)
+                {
+                    loopScopes[^1].Declared.Add(forStatement.Identifier.Text);
+                    loopAssigned.Add(forStatement.Identifier.Text);
+                }
+                else if (IsVisibleLocal(forStatement.Identifier.Text, scopes))
+                {
+                    loopAssigned.Add(forStatement.Identifier.Text);
+                }
+
+                AnalyzeLocalDefiniteAssignmentExpression(forStatement.LowerBound, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(forStatement.UpperBound, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                if (forStatement.StepExpression is not null)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(forStatement.StepExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+
+                _ = AnalyzeLocalDefiniteAssignments([forStatement.Body], loopAssigned, loopScopes, knownTypes, diagnostics);
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            }
+            case ForeachStatementSyntax foreachStatement:
+            {
+                AnalyzeLocalDefiniteAssignmentExpression(foreachStatement.Collection, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                var loopAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                var loopScopes = PushLocalAssignmentScope(scopes);
+                if (foreachStatement.VarKeyword is not null)
+                {
+                    loopScopes[^1].Declared.Add(foreachStatement.Identifier.Text);
+                    loopAssigned.Add(foreachStatement.Identifier.Text);
+                }
+                else if (IsVisibleLocal(foreachStatement.Identifier.Text, scopes))
+                {
+                    loopAssigned.Add(foreachStatement.Identifier.Text);
+                }
+
+                _ = AnalyzeLocalDefiniteAssignments([foreachStatement.Body], loopAssigned, loopScopes, knownTypes, diagnostics);
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+            }
+            case WithStatementSyntax withStatement:
+                AnalyzeLocalDefiniteAssignmentExpression(withStatement.Receiver, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                return AnalyzeLocalDefiniteAssignments([withStatement.Body], assigned, PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+            case CaseStatementSyntax caseStatement:
+            {
+                AnalyzeLocalDefiniteAssignmentExpression(caseStatement.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                LocalAssignmentFlow? mergedFlow = null;
+                foreach (var clause in caseStatement.Clauses)
+                {
+                    foreach (var label in clause.Labels)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(label, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+
+                    if (clause.Guard is not null)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(clause.Guard, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+
+                    var clauseFlow = AnalyzeLocalDefiniteAssignments([clause.Body], new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                    mergedFlow = mergedFlow is null ? clauseFlow : MergeLocalAssignmentFlows(mergedFlow, clauseFlow);
+                }
+
+                var elseFlow = caseStatement.ElseStatements.Count > 0
+                    ? AnalyzeLocalDefiniteAssignments(caseStatement.ElseStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics)
+                    : new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return mergedFlow is null ? elseFlow : MergeLocalAssignmentFlows(mergedFlow, elseFlow);
+            }
+            case MatchStatementSyntax matchStatement:
+            {
+                AnalyzeLocalDefiniteAssignmentExpression(matchStatement.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                LocalAssignmentFlow? mergedFlow = null;
+                foreach (var arm in matchStatement.Arms)
+                {
+                    foreach (var label in arm.Labels)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(label, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+
+                    var armScopes = PushLocalAssignmentScope(scopes);
+                    var armAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                    if (arm.Identifier is not null)
+                    {
+                        armScopes[^1].Declared.Add(arm.Identifier.Text);
+                        armAssigned.Add(arm.Identifier.Text);
+                    }
+
+                    if (arm.Guard is not null)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(arm.Guard, armAssigned, armScopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+
+                    var armFlow = AnalyzeLocalDefiniteAssignments([arm.Body], armAssigned, armScopes, knownTypes, diagnostics);
+                    mergedFlow = mergedFlow is null ? armFlow : MergeLocalAssignmentFlows(mergedFlow, armFlow);
+                }
+
+                var elseFlow = matchStatement.ElseStatements.Count > 0
+                    ? AnalyzeLocalDefiniteAssignments(matchStatement.ElseStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics)
+                    : new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return mergedFlow is null ? elseFlow : MergeLocalAssignmentFlows(mergedFlow, elseFlow);
+            }
+            case TryStatementSyntax tryStatement:
+            {
+                var tryFlow = AnalyzeLocalDefiniteAssignments(tryStatement.TryStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                LocalAssignmentFlow? exceptionFlow = null;
+                foreach (var clause in tryStatement.ExceptionClauses)
+                {
+                    var clauseScopes = PushLocalAssignmentScope(scopes);
+                    var clauseAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
+                    clauseScopes[^1].Declared.Add(clause.Identifier.Text);
+                    clauseAssigned.Add(clause.Identifier.Text);
+                    var clauseFlow = AnalyzeLocalDefiniteAssignments([clause.Body], clauseAssigned, clauseScopes, knownTypes, diagnostics);
+                    exceptionFlow = exceptionFlow is null ? clauseFlow : MergeLocalAssignmentFlows(exceptionFlow, clauseFlow);
+                }
+
+                if (tryStatement.ExceptStatements.Count > 0)
+                {
+                    var exceptStatementsFlow = AnalyzeLocalDefiniteAssignments(tryStatement.ExceptStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                    exceptionFlow = exceptionFlow is null ? exceptStatementsFlow : MergeLocalAssignmentFlows(exceptionFlow, exceptStatementsFlow);
+                }
+
+                var exceptFlow = exceptionFlow ?? new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                var merged = MergeLocalAssignmentFlows(tryFlow, exceptFlow);
+                if (tryStatement.FinallyStatements.Count == 0)
+                {
+                    return merged;
+                }
+
+                var finallyFlow = AnalyzeLocalDefiniteAssignments(tryStatement.FinallyStatements, new HashSet<string>(merged.Assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics);
+                return new LocalAssignmentFlow(finallyFlow.Assigned, merged.CanContinue && finallyFlow.CanContinue);
+            }
+            case RaiseStatementSyntax raiseStatement:
+                if (raiseStatement.Expression is not null)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(raiseStatement.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), false);
+            default:
+                return new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+        }
+    }
+
+    private static LocalAssignmentFlow MergeLocalAssignmentFlows(LocalAssignmentFlow left, LocalAssignmentFlow right)
+    {
+        if (!left.CanContinue && !right.CanContinue)
+        {
+            return new LocalAssignmentFlow(new HashSet<string>(left.Assigned, SemanticFacts.NameComparer), false);
+        }
+
+        if (!left.CanContinue)
+        {
+            return new LocalAssignmentFlow(new HashSet<string>(right.Assigned, SemanticFacts.NameComparer), true);
+        }
+
+        if (!right.CanContinue)
+        {
+            return new LocalAssignmentFlow(new HashSet<string>(left.Assigned, SemanticFacts.NameComparer), true);
+        }
+
+        var assigned = new HashSet<string>(left.Assigned, SemanticFacts.NameComparer);
+        assigned.IntersectWith(right.Assigned);
+        return new LocalAssignmentFlow(assigned, true);
+    }
+
+    private static void AnalyzeLocalDefiniteAssignmentExpression(
+        ExpressionSyntax expression,
+        HashSet<string> assigned,
+        List<LocalAssignmentScope> scopes,
+        DiagnosticBag diagnostics,
+        bool treatAssignmentTargetAsWrite)
+    {
+        switch (expression)
+        {
+            case NameExpressionSyntax name:
+                AnalyzeLocalDefiniteAssignmentName(name.Name, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite);
+                break;
+            case AssignmentExpressionSyntax assignment:
+                AnalyzeLocalDefiniteAssignmentExpression(assignment.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(assignment.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: true);
+                break;
+            case CompoundAssignmentExpressionSyntax assignment:
+                AnalyzeLocalDefiniteAssignmentExpression(assignment.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(assignment.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(assignment.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: true);
+                break;
+            case ParenthesizedExpressionSyntax parenthesized:
+                AnalyzeLocalDefiniteAssignmentExpression(parenthesized.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite);
+                break;
+            case BinaryExpressionSyntax binary:
+                AnalyzeLocalDefiniteAssignmentExpression(binary.Left, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(binary.Right, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case UnaryExpressionSyntax unary:
+                AnalyzeLocalDefiniteAssignmentExpression(unary.Operand, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case CallExpressionSyntax call:
+                AnalyzeLocalDefiniteAssignmentExpression(call.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                foreach (var argument in call.Arguments)
+                {
+                    var isOutArgument = argument.ModifierKeyword?.Kind == SyntaxKind.OutKeyword;
+                    if (!isOutArgument)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(argument.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+
+                    if (argument.ModifierKeyword?.Kind is SyntaxKind.OutKeyword or SyntaxKind.RefKeyword)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(argument.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: argument.ModifierKeyword.Kind == SyntaxKind.OutKeyword);
+                    }
+                }
+                break;
+            case ElementAccessExpressionSyntax elementAccess:
+                AnalyzeLocalDefiniteAssignmentName(elementAccess.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                foreach (var indexExpression in elementAccess.IndexExpressions)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(indexExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                if (treatAssignmentTargetAsWrite)
+                {
+                    AnalyzeLocalDefiniteAssignmentName(elementAccess.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: true);
+                }
+                break;
+            case PostfixElementAccessExpressionSyntax elementAccess:
+                AnalyzeLocalDefiniteAssignmentExpression(elementAccess.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                foreach (var indexExpression in elementAccess.IndexExpressions)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(indexExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case MemberAccessExpressionSyntax memberAccess:
+                AnalyzeLocalDefiniteAssignmentExpression(memberAccess.Receiver, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case ArrayLengthExpressionSyntax arrayLength:
+                AnalyzeLocalDefiniteAssignmentName(arrayLength.Target, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case RangeExpressionSyntax range:
+                AnalyzeLocalDefiniteAssignmentExpression(range.Start, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(range.End, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case NewExpressionSyntax newExpression:
+                foreach (var argument in newExpression.Arguments)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(argument.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case NewArrayExpressionSyntax newArray:
+                foreach (var lengthExpression in newArray.LengthExpressions)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(lengthExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case ProjectorExpressionSyntax projector:
+                foreach (var member in projector.Members)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(member.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case MatchExpressionSyntax matchExpression:
+                AnalyzeLocalDefiniteAssignmentExpression(matchExpression.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                foreach (var arm in matchExpression.Arms)
+                {
+                    if (arm.Guard is not null)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(arm.Guard, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+                    AnalyzeLocalDefiniteAssignmentExpression(arm.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case MatchNotPatternSyntax notPattern:
+                AnalyzeLocalDefiniteAssignmentExpression(notPattern.Pattern, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case MatchOrPatternSyntax orPattern:
+                foreach (var pattern in orPattern.Patterns)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(pattern, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case MatchAndPatternSyntax andPattern:
+                foreach (var pattern in andPattern.Patterns)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(pattern.Operand, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case MatchRelationalPatternSyntax relational:
+                AnalyzeLocalDefiniteAssignmentExpression(relational.Operand, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case TypeTestExpressionSyntax typeTest:
+                AnalyzeLocalDefiniteAssignmentExpression(typeTest.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case AsExpressionSyntax asExpression:
+                AnalyzeLocalDefiniteAssignmentExpression(asExpression.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                break;
+            case SetLiteralExpressionSyntax setLiteral:
+                foreach (var element in setLiteral.Elements)
+                {
+                    AnalyzeLocalDefiniteAssignmentExpression(element, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                }
+                break;
+            case QueryExpressionSyntax query:
+                AnalyzeLocalDefiniteAssignmentExpression(query.SourceExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                AnalyzeLocalDefiniteAssignmentExpression(query.SelectExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                foreach (var optionalExpression in new[]
+                         {
+                             query.JoinSourceExpression,
+                             query.JoinLeftExpression,
+                             query.JoinRightExpression,
+                             query.SecondSourceExpression,
+                             query.LetExpression,
+                             query.PredicateExpression,
+                             query.OrderByExpression,
+                             query.ThenByExpression,
+                             query.GroupExpression,
+                             query.GroupByExpression,
+                             query.ContinuationLetExpression,
+                             query.ContinuationPredicateExpression,
+                             query.ContinuationOrderByExpression,
+                             query.ContinuationThenByExpression,
+                             query.ContinuationSelectExpression,
+                             query.TakeExpression,
+                             query.SkipExpression
+                         })
+                {
+                    if (optionalExpression is not null)
+                    {
+                        AnalyzeLocalDefiniteAssignmentExpression(optionalExpression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
+                    }
+                }
+                break;
+        }
+    }
+
+    private static void AnalyzeLocalDefiniteAssignmentName(
+        QualifiedNameSyntax name,
+        HashSet<string> assigned,
+        List<LocalAssignmentScope> scopes,
+        DiagnosticBag diagnostics,
+        bool treatAssignmentTargetAsWrite)
+    {
+        if (name.Parts.Count != 1 ||
+            !IsVisibleLocal(name.Parts[0].Text, scopes))
+        {
+            return;
+        }
+
+        var localName = name.Parts[0].Text;
+        if (treatAssignmentTargetAsWrite)
+        {
+            assigned.Add(localName);
+            return;
+        }
+
+        if (!assigned.Contains(localName))
+        {
+            diagnostics.Report(
+                "ILC2257",
+                $"Local variable '{localName}' must be assigned before it is read.",
+                DiagnosticSeverity.Error,
+                name.Parts[0].Span);
+        }
+    }
+
+    private static List<LocalAssignmentScope> PushLocalAssignmentScope(List<LocalAssignmentScope> scopes)
+    {
+        var nested = new List<LocalAssignmentScope>(scopes)
+        {
+            new(new HashSet<string>(SemanticFacts.NameComparer))
+        };
+        return nested;
+    }
+
+    private static bool IsVisibleLocal(string name, List<LocalAssignmentScope> scopes)
+    {
+        for (var index = scopes.Count - 1; index >= 0; index--)
+        {
+            if (scopes[index].Declared.Contains(name))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsGenericDefaultLocal(VariableDeclaratorSyntax declarator, IReadOnlyList<TypeSymbol> knownTypes) =>
+        declarator.Initializer is null &&
+        declarator.TypeName is not null &&
+        BindType(declarator.TypeName, knownTypes) is TypeParameterSymbol;
 
     private static StatementSyntax RewriteWithStatement(
         StatementSyntax statement,
@@ -2285,6 +3224,11 @@ public sealed partial class Binder
             case RangeExpressionSyntax range:
                 ValidateExpression(range.Start, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 ValidateExpression(range.End, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                diagnostics.Report(
+                    "ILC2254",
+                    "Range expressions are only valid in slice accesses, set literals, and case labels.",
+                    DiagnosticSeverity.Error,
+                    range.RangeToken.Span);
                 break;
             case AsExpressionSyntax asExpression:
                 ValidateExpression(asExpression.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -2319,6 +3263,12 @@ public sealed partial class Binder
                 break;
             case ElementAccessExpressionSyntax elementAccess:
                 ValidateNameReference(elementAccess.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                if (elementAccess.IndexExpressions.Any(expression => expression is RangeExpressionSyntax))
+                {
+                    ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    break;
+                }
+
                 foreach (var indexExpression in elementAccess.IndexExpressions)
                 {
                     ValidateExpression(indexExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -2328,6 +3278,12 @@ public sealed partial class Binder
                 break;
             case PostfixElementAccessExpressionSyntax elementAccess:
                 ValidateExpression(elementAccess.Target, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                if (elementAccess.IndexExpressions.Any(expression => expression is RangeExpressionSyntax))
+                {
+                    ValidateArrayAccess(elementAccess.Target, elementAccess.IndexExpressions, elementAccess.OpenBracketToken.Span, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    break;
+                }
+
                 foreach (var indexExpression in elementAccess.IndexExpressions)
                 {
                     ValidateExpression(indexExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -3577,6 +4533,11 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
+        if (TryReportReadonlyInParameterAssignment(target, currentMethod, diagnostics))
+        {
+            return;
+        }
+
         if (target is ElementAccessExpressionSyntax elementAccess)
         {
             ValidateNameReference(elementAccess.Target, locals, knownTypes, [], knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
@@ -3836,6 +4797,44 @@ public sealed partial class Binder
             GetReferenceDiagnosticSpan(targetName, knownTypes));
     }
 
+    private static bool TryReportReadonlyInParameterAssignment(
+        ExpressionSyntax target,
+        MethodSymbol? currentMethod,
+        DiagnosticBag diagnostics)
+    {
+        if (currentMethod is null ||
+            TryGetWritableRootName(target) is not { } rootName)
+        {
+            return false;
+        }
+
+        var parameter = currentMethod.Parameters.FirstOrDefault(parameter =>
+            parameter.PassingKind == ParameterPassingKind.In &&
+            SemanticFacts.NameEquals(parameter.Name, rootName));
+        if (parameter is null)
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2253",
+            $"In parameter '{parameter.Name}' is read-only and cannot be used as an assignment target.",
+            DiagnosticSeverity.Error,
+            GetExpressionDiagnosticSpan(target, []));
+        return true;
+    }
+
+    private static string? TryGetWritableRootName(ExpressionSyntax target) =>
+        target switch
+        {
+            NameExpressionSyntax name when name.Name.Parts.Count > 0 => name.Name.Parts[0].Text,
+            ElementAccessExpressionSyntax elementAccess when elementAccess.Target.Parts.Count > 0 => elementAccess.Target.Parts[0].Text,
+            PostfixElementAccessExpressionSyntax elementAccess => TryGetWritableRootName(elementAccess.Target),
+            MemberAccessExpressionSyntax memberAccess => TryGetWritableRootName(memberAccess.Receiver),
+            ParenthesizedExpressionSyntax parenthesized => TryGetWritableRootName(parenthesized.Expression),
+            _ => null
+        };
+
     private static void ValidateArrayAccess(
         ExpressionSyntax target,
         IReadOnlyList<ExpressionSyntax> indexExpressions,
@@ -3849,6 +4848,17 @@ public sealed partial class Binder
         MethodSymbol? currentMethod,
         DiagnosticBag diagnostics)
     {
+        if (indexExpressions.Any(expression => expression is RangeExpressionSyntax) &&
+            !SemanticFacts.IsSliceAccess(indexExpressions))
+        {
+            diagnostics.Report(
+                "ILC2161",
+                "Slice access must use a single range index.",
+                DiagnosticSeverity.Error,
+                indexSpan);
+            return;
+        }
+
         if (SemanticFacts.IsSliceAccess(indexExpressions))
         {
             ValidateSliceAccess(target, indexExpressions[0], locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);

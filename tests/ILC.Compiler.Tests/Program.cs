@@ -1917,6 +1917,219 @@ else
     }
 }
 
+var readonlyInParameterTree = SyntaxTree.Parse("""
+public class Box
+begin
+  public var Value: Integer;
+end;
+
+public class Program
+begin
+  public static procedure TakeOut(out value: Integer);
+  begin
+    value := 1;
+  end;
+
+  public static procedure TakeRef(ref value: Integer);
+  begin
+    value := value + 1;
+  end;
+
+  public static function ReadOnlyUse(in value: Integer): Integer;
+  begin
+    return value + 1;
+  end;
+
+  public static procedure BadAssign(in value: Integer);
+  begin
+    value := 1;
+  end;
+
+  public static procedure BadCompound(in value: Integer);
+  begin
+    value += 1;
+  end;
+
+  public static procedure BadInc(in value: Integer);
+  begin
+    inc(value);
+  end;
+
+  public static procedure BadForward(in value: Integer);
+  begin
+    Program.TakeOut(out value);
+    Program.TakeRef(ref value);
+  end;
+
+  public static procedure BadIndex(in values: array of Integer);
+  begin
+    values[0] := 1;
+  end;
+
+  public static procedure BadMember(in box: Box);
+  begin
+    box.Value := 1;
+  end;
+end;
+""");
+
+var readonlyInParameterBinding = new Binder().Bind(readonlyInParameterTree);
+var readonlyInParameterDiagnostics = readonlyInParameterBinding.Diagnostics.ToArray();
+if (readonlyInParameterDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2253") != 7)
+{
+    failures.Add(
+        "Binder should report direct writes and ref/out forwarding of readonly in parameters. Actual: " +
+        string.Join(" | ", readonlyInParameterDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+var requiredOutputAssignmentTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function GoodResult(value: Integer): Integer;
+  begin
+    if value > 0 then
+    begin
+      Result := value;
+    end
+    else
+    begin
+      return 0;
+    end;
+  end;
+
+  public static function GoodOut(text: String; out value: Integer): Boolean;
+  begin
+    value := Integer.Parse(text);
+    return true;
+  end;
+
+  public static function BadBareReturn(value: Integer): Integer;
+  begin
+    if value > 0 then
+    begin
+      return;
+    end;
+
+    return value;
+  end;
+
+  public static function BadFallthrough(value: Integer): Integer;
+  begin
+    if value > 0 then
+    begin
+      Result := value;
+    end;
+  end;
+
+  public static function BadOutReturn(out value: Integer): Boolean;
+  begin
+    return false;
+  end;
+
+  public static function BadOutBranch(flag: Boolean; out value: Integer): Boolean;
+  begin
+    if flag then
+    begin
+      value := 1;
+    end;
+
+    return true;
+  end;
+end;
+""");
+
+var requiredOutputAssignmentBinding = new Binder().Bind(requiredOutputAssignmentTree);
+var requiredOutputAssignmentDiagnostics = requiredOutputAssignmentBinding.Diagnostics.ToArray();
+if (requiredOutputAssignmentDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2255") != 2)
+{
+    failures.Add(
+        "Binder should report function result exits that can occur before Result is assigned. Actual: " +
+        string.Join(" | ", requiredOutputAssignmentDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (requiredOutputAssignmentDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2256") != 2)
+{
+    failures.Add(
+        "Binder should report out parameter exits that can occur before assignment. Actual: " +
+        string.Join(" | ", requiredOutputAssignmentDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+var localDefiniteAssignmentTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function GoodBranch(flag: Boolean): Integer;
+  begin
+    var value: Integer;
+    if flag then
+    begin
+      value := 1;
+    end
+    else
+    begin
+      value := 2;
+    end;
+
+    return value;
+  end;
+
+  public static function GoodNestedReuse(flag: Boolean): Integer;
+  begin
+    if flag then
+    begin
+      var value := 1;
+      return value;
+    end;
+
+    var value := 2;
+    return value;
+  end;
+
+  public static function BadDirectRead: Integer;
+  begin
+    var value: Integer;
+    return value;
+  end;
+
+  public static function BadBranch(flag: Boolean): Integer;
+  begin
+    var value: Integer;
+    if flag then
+    begin
+      value := 1;
+    end;
+
+    return value;
+  end;
+
+  public static function BadLoop: Integer;
+  begin
+    var value: Integer;
+    while 1 = 2 do
+    begin
+      value := 1;
+    end;
+
+    return value;
+  end;
+
+  public static function BadCompound: Integer;
+  begin
+    var value: Integer;
+    value += 1;
+    return value;
+  end;
+end;
+""");
+
+var localDefiniteAssignmentBinding = new Binder().Bind(localDefiniteAssignmentTree);
+var localDefiniteAssignmentDiagnostics = localDefiniteAssignmentBinding.Diagnostics.ToArray();
+if (localDefiniteAssignmentDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2257") != 4)
+{
+    failures.Add(
+        "Binder should report local variables that can be read before assignment. Actual: " +
+        string.Join(" | ", localDefiniteAssignmentDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
 var resultAliasTree = SyntaxTree.Parse("""
 public class Program
 begin
@@ -4780,6 +4993,103 @@ if (queryProjectionTree.Root.Members.OfType<ClassDeclarationSyntax>().FirstOrDef
     failures.Add("Parser should capture anonymous query projections using select new { ... } expressions.");
 }
 
+var invalidQueryOperatorTree = SyntaxTree.Parse("""
+uses System.Collections;
+
+public class InvalidQueryHost
+begin
+  public static method Test;
+  begin
+    var words := new List<String>();
+    words.Add('one');
+    var numbers := new List<Integer>();
+    numbers.Add(1);
+
+    var badSource :=
+      from value in 1
+      select value;
+
+    var badWhere :=
+      from value in words
+      where value.Length
+      select value;
+
+    var badOrder :=
+      from value in words
+      orderby value
+      select value;
+
+    var badJoinMismatch :=
+      from value in words
+      join number in numbers on value equals number
+      select number;
+
+    var badJoinKey :=
+      from value in words
+      join other in words on value.Contains('o') equals other.Contains('o')
+      select other;
+
+    var badGroupKey :=
+      from value in words
+      group value by value.Contains('o')
+      into grouping
+      select grouping.Key;
+
+    var badTake :=
+      from value in words
+      select value
+      take 'one';
+
+    var badSkip :=
+      from value in words
+      select value
+      skip value.Contains('o');
+  end;
+end;
+""");
+
+var invalidQueryOperatorMergedTree = SyntaxTree.Merge(invalidQueryOperatorTree, [systemTree, collectionsTree]);
+var invalidQueryOperatorBinding = new Binder().Bind(invalidQueryOperatorMergedTree);
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2141"))
+{
+    failures.Add("Binder should reject query sources that are not enumerable.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2227"))
+{
+    failures.Add("Binder should require Boolean query where clauses.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2230"))
+{
+    failures.Add("Binder should restrict query orderby keys to supported key types.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2231"))
+{
+    failures.Add("Binder should reject query join keys with mismatched types.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2232"))
+{
+    failures.Add("Binder should reject unsupported query join key types.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2233"))
+{
+    failures.Add("Binder should reject unsupported query group-by key types.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2228"))
+{
+    failures.Add("Binder should require Integer query take counts.");
+}
+
+if (!invalidQueryOperatorBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2229"))
+{
+    failures.Add("Binder should require Integer query skip counts.");
+}
+
 var queryExpressionMergedTree = SyntaxTree.Merge(queryExpressionTree, [systemTree, collectionsTree]);
 var queryExpressionBinding = new Binder().Bind(queryExpressionMergedTree);
 if (queryExpressionBinding.Diagnostics.Count > 0)
@@ -5899,6 +6209,9 @@ begin
     var scalar := 1;
     var slice := scalar[0..1];
     scalar[0..1] := 1;
+    var numbers := new Integer[2, 2];
+    var mixed := numbers[0..1, 0];
+    var standalone := 0..1;
   end;
 end;
 """);
@@ -5912,6 +6225,11 @@ if (!invalidSliceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2161
 if (!invalidSliceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2162"))
 {
     failures.Add("Binder should report unsupported slice assignment.");
+}
+
+if (!invalidSliceBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2254"))
+{
+    failures.Add("Binder should reject standalone range expressions outside slice, set and case contexts.");
 }
 
 var invalidNullCoalescingAssignmentTree = SyntaxTree.Parse("""

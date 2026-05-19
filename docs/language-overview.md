@@ -111,7 +111,8 @@ Current call behavior for passing modes:
 - `out` and `ref` are supported for normal declared methods
 - `out` arguments must be writable targets
 - `ref` arguments use the current runtime call frame with copy-in / copy-out behavior
-- `in` is accepted by the front-end and currently behaves like a normal value argument at runtime
+- `in` behaves like a normal value argument at runtime, but is read-only inside the callee
+- `in` parameters cannot be assigned, mutated through direct member/index targets, or forwarded as `ref`/`out`
 - `params` is lowered into a synthetic packed array argument
 
 ## 3) Type system (bootstrap)
@@ -182,7 +183,7 @@ Supported assignment operators:
 - element access: `expr[... ]`
 - call expressions: `f(...)`
 - member access: `obj.Member`
-- slice expressions: `start..end`
+- slice/range syntax: `start..end` inside `expr[start..end]`, set literals, and case labels
 - constructor/object creation: `new Type(...)` and `new Type[...]`
 - anonymous projectors: `new { Name := expr, Other := expr }`
 - `match` expressions
@@ -205,6 +206,13 @@ Current behavior:
 - projector members are readable with normal member syntax;
 - enumerable/query pipelines can carry these shapes through `Select(...)` and
   enumeration;
+- query sources must be enumerable;
+- `where` clauses must be `Boolean`;
+- `orderby` / `thenby` keys are currently restricted to `Integer`;
+- `join` keys must have matching types and are currently restricted to `Integer`
+  or `String`;
+- `group by` keys are currently restricted to `Integer` or `String`;
+- `take` and `skip` counts must be `Integer`;
 - this is implemented and verified end-to-end, but the internal compiler model
   is still bootstrap-oriented rather than a finalized public structural type
   design.
@@ -235,7 +243,13 @@ is the Delphi-style early routine exit; `exit <expression>` also assigns the
 function result before terminating. `return` is currently accepted as a
 compatibility alias for `exit` with the same behavior and is not diagnosed as
 deprecated today. If a deprecation warning is added later, it should be gated by
-a compiler directive or option. Procedures do not expose `Result`. Names are
+a compiler directive or option. The binder requires value-returning routines to
+assign `Result` on every simple fallthrough or bare `exit` / `return` path.
+`exit <expression>` and `return <expression>` count as assigning `Result` for
+that exit path. Non-generic `out` parameters must also be assigned before every
+simple routine exit. Generic `out` parameters are not yet covered by this check
+because the current bootstrap language has no `default(T)` expression.
+Procedures do not expose `Result`. Names are
 case-insensitive, so `result`, `RESULT`, and `Result` refer to the same implicit
 function result; functions therefore cannot declare parameters or locals that
 differ from `Result` only by case.
@@ -246,7 +260,11 @@ Methods and constructors may be overloaded, but duplicate signatures are errors.
 Local variables use C#-like active block scopes: a local, loop variable,
 typed-match variable, exception-handler variable, or lambda parameter cannot
 reuse a name from its active scope chain, but a name can be reused after the
-earlier block scope has ended.
+earlier block scope has ended. Local variables declared without an initializer
+must be definitely assigned before they are read on simple control-flow paths.
+Assignments made only inside loops are not treated as guaranteed. Generic
+type-parameter locals are currently treated like implicit `default(T)` locals
+because the bootstrap language does not yet expose a `default(T)` expression.
 
 Early routine exits from the protected part of a `try` statement that has a
 `finally` block execute the `finally` statements before the routine returns.
