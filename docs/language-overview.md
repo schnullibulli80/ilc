@@ -303,7 +303,16 @@ Pattern support in this stage includes:
 - range patterns `start..end`
 - `case` supports label lists and optional `when` guards
 
-`match` is available both as a statement and as an expression.
+`match` is available both as a statement and as an expression. Guards must be
+`Boolean`. Match expressions must include a wildcard arm `_` in this bootstrap
+stage and all result arms must have the same type. Match statements do not
+perform exhaustiveness checking; if no arm matches, execution continues after
+the statement.
+
+Outside patterns, `_` is reserved as an assignment discard. `_ := expression;`
+evaluates the expression and drops the result. `_` is not a declarable variable
+name and is not a writable target for compound assignments, `out` arguments, or
+increment/decrement statements.
 
 ## 7) Object model and call semantics
 

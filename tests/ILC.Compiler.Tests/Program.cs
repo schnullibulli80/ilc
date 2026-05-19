@@ -4359,6 +4359,206 @@ if (!invalidMatchBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2181
     failures.Add("Binder should report non-Integer operands in relational match patterns.");
 }
 
+var matchFlowTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function AssignedByMatch(value: Integer): Integer;
+  begin
+    var assignedValue: Integer;
+    match value with
+      1 => assignedValue := 1;
+      _ => assignedValue := 2;
+    end match;
+
+    return assignedValue;
+  end;
+
+  public static function MissingMatchAssignment(value: Integer): Integer;
+  begin
+    var assignedValue: Integer;
+    match value with
+      1 => assignedValue := 1;
+    end match;
+
+    return assignedValue;
+  end;
+end;
+""");
+
+var matchFlowBinding = new Binder().Bind(matchFlowTree);
+var matchFlowDiagnostics = matchFlowBinding.Diagnostics.ToArray();
+if (matchFlowDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2257") != 1)
+{
+    failures.Add(
+        "Binder should merge local definite assignment across match statement arms. Actual: " +
+        string.Join(" | ", matchFlowDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+if (matchFlowDiagnostics.Any(diagnostic =>
+        diagnostic.Severity == DiagnosticSeverity.Error &&
+        diagnostic.Id is not "ILC2257"))
+{
+    failures.Add(
+        "Match definite-assignment fixture should only report the expected missing assignment. Actual: " +
+        string.Join(" | ", matchFlowDiagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+var matchGuardTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static method BadStatementGuard(value: Integer);
+  begin
+    match value with
+      1 when 1 => return;
+    end match;
+  end;
+
+  public static function BadExpressionGuard(value: Integer): Integer;
+  begin
+    return match value with
+      1 when 1 => 1
+      _ => 0
+    end;
+  end;
+end;
+""");
+
+var matchGuardBinding = new Binder().Bind(matchGuardTree);
+var matchGuardDiagnostics = matchGuardBinding.Diagnostics.ToArray();
+if (matchGuardDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2179") != 2)
+{
+    failures.Add(
+        "Binder should require Boolean match guards for statements and expressions. Actual: " +
+        string.Join(" | ", matchGuardDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+var matchExpressionShadowTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function BadMatchExpressionShadow(source: String): String;
+  begin
+    var localValue := 'outer';
+    return match source with
+      String localValue => localValue
+      _ => localValue
+    end;
+  end;
+end;
+""");
+
+var matchExpressionShadowBinding = new Binder().Bind(matchExpressionShadowTree);
+if (!matchExpressionShadowBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2244"))
+{
+    failures.Add("Binder should reject typed match expression variables that shadow active locals.");
+}
+
+var interfaceMatchStatementTree = SyntaxTree.Parse("""
+public interface IWorker
+begin
+  public function Run(value: Integer): Integer;
+end;
+
+public class Worker: IWorker
+begin
+  public function Run(value: Integer): Integer;
+  begin
+    return value;
+  end;
+end;
+
+public class Program
+begin
+  public static function MatchWorkerStatement(worker: Worker): Integer;
+  begin
+    var assignedValue := 0;
+    match worker with
+      IWorker w => assignedValue := w.Run(5);
+      _ => assignedValue := 1;
+    end match;
+
+    return assignedValue;
+  end;
+end;
+""");
+
+var interfaceMatchStatementBinding = new Binder().Bind(interfaceMatchStatementTree);
+if (interfaceMatchStatementBinding.HasErrors)
+{
+    failures.Add(
+        "Binder should treat implementing classes as compatible with interface-typed match statement arms. Actual: " +
+        string.Join(" | ", interfaceMatchStatementBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
+var discardAssignmentTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function Test(): Integer;
+  begin
+    _ := 1;
+    _ := 2 + 3;
+    return 4;
+  end;
+end;
+""");
+
+var discardAssignmentBinding = new Binder().Bind(discardAssignmentTree);
+if (discardAssignmentBinding.HasErrors)
+{
+    failures.Add(
+        "Binder should allow '_' as an assignment discard. Actual: " +
+        string.Join(" | ", discardAssignmentBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+else
+{
+    var discardProgram = discardAssignmentBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+    var discardMethod = discardProgram.Methods.First(method => method.Name == "Test");
+    _ = new Lowerer(
+        discardProgram.Methods,
+        discardProgram.Fields,
+        discardAssignmentBinding.Compilation.Types,
+        discardProgram.Properties,
+        discardProgram.Constants).Lower(discardMethod);
+}
+
+var invalidDiscardTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static function BadParameter(_: Integer): Integer;
+  begin
+    return 0;
+  end;
+
+  public static function BadLocal(): Integer;
+  begin
+    var _ := 1;
+    _ += 1;
+    return _;
+  end;
+
+  public static function BadOutArgument(): Integer;
+  begin
+    Fill(out _);
+    return 0;
+  end;
+
+  public static method Fill(out value: Integer);
+  begin
+    value := 1;
+  end;
+end;
+""");
+
+var invalidDiscardBinding = new Binder().Bind(invalidDiscardTree);
+if (!invalidDiscardBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2260"))
+{
+    failures.Add("Binder should reject declarations named '_'.");
+}
+
+if (!invalidDiscardBinding.Diagnostics.Any(diagnostic => diagnostic.Id == "ILC2100"))
+{
+    failures.Add("Binder should not allow '_' as a compound-assignment or out-argument target.");
+}
+
 var externTree = SyntaxTree.Parse("""
 namespace System;
 uses Sys = System;

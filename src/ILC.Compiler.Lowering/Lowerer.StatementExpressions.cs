@@ -23,6 +23,10 @@ public sealed partial class Lowerer
         LowerExpressionInto(expression, tempRegister, registerByName, arrayShapesByName, registers, instructions, currentMethod);
     }
 
+    private static bool IsDiscardAssignmentTarget(ExpressionSyntax expression) =>
+        expression is NameExpressionSyntax { Name.Parts.Count: 1 } name &&
+        name.Name.Parts[0].Text == "_";
+
     private void LowerIncDecStatement(
         ExpressionSyntax target,
         SyntaxKind operatorKind,

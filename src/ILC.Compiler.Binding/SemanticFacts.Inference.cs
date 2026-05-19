@@ -68,6 +68,9 @@ public static partial class SemanticFacts
             NameExpressionSyntax name when localTypes.TryGetValue(name.Name.ToDisplayString(), out var localType) => localType,
             NameExpressionSyntax name => ResolveName(name.Name, localTypes, knownTypes ?? [], knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod).Type
                 ?? TypeSymbol.Unknown,
+            AssignmentExpressionSyntax { Target: NameExpressionSyntax { Name.Parts.Count: 1 } discardTarget } assignment
+                when discardTarget.Name.Parts[0].Text == "_" =>
+                InferExpressionType(assignment.Expression, localTypes, knownMethods, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes),
             AssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes, out var assignmentType) => assignmentType,
             AssignmentExpressionSyntax => TypeSymbol.Unknown,
             CompoundAssignmentExpressionSyntax assignment when TryGetAssignmentTargetType(assignment.Target, localTypes, knownFields ?? [], knownConstants ?? [], knownProperties ?? [], currentMethod, knownTypes, out var compoundAssignmentType) => compoundAssignmentType,

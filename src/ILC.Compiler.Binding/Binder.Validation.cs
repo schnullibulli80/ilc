@@ -114,12 +114,14 @@ public sealed partial class Binder
                 case TopLevelVariableDeclarationSyntax variableDeclaration:
                     foreach (var declarator in variableDeclaration.Declarators)
                     {
+                        ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "top-level variable", diagnostics);
                         ReportNameCollisionIfNeeded(topLevelValueNames, declarator.Identifier, "top-level value declarations", diagnostics, reportExactDuplicate: true);
                     }
                     break;
                 case TopLevelConstantDeclarationSyntax constantDeclaration:
                     foreach (var declarator in constantDeclaration.Declarators)
                     {
+                        ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "top-level constant", diagnostics);
                         ReportNameCollisionIfNeeded(topLevelValueNames, declarator.Identifier, "top-level value declarations", diagnostics, reportExactDuplicate: true);
                     }
                     break;
@@ -605,6 +607,11 @@ public sealed partial class Binder
         var parameterNames = new Dictionary<string, SyntaxToken>(SemanticFacts.NameComparer);
         foreach (var parameter in method.Parameters)
         {
+            if (ReportInvalidDiscardDeclarationIfNeeded(parameter.Identifier, "parameter", diagnostics))
+            {
+                continue;
+            }
+
             ReportCaseOnlyNameCollisionIfNeeded(
                 parameterNames,
                 parameter.Identifier,
@@ -633,16 +640,19 @@ public sealed partial class Binder
                 case FieldDeclarationSyntax field:
                     foreach (var declarator in field.Declarators)
                     {
+                        ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "field", diagnostics);
                         ReportNameCollisionIfNeeded(valueMembers, declarator.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
                     }
                     break;
                 case ConstantDeclarationSyntax constant:
                     foreach (var declarator in constant.Declarators)
                     {
+                        ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "constant", diagnostics);
                         ReportNameCollisionIfNeeded(valueMembers, declarator.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
                     }
                     break;
                 case PropertyDeclarationSyntax property:
+                    ReportInvalidDiscardDeclarationIfNeeded(property.Identifier, "property", diagnostics);
                     ReportNameCollisionIfNeeded(valueMembers, property.Identifier, $"type '{typeName}'", diagnostics, reportExactDuplicate: true);
                     break;
                 case MethodDeclarationSyntax method:
@@ -801,6 +811,31 @@ public sealed partial class Binder
             return;
         }
     }
+
+    private static bool ReportInvalidDiscardDeclarationIfNeeded(
+        SyntaxToken identifier,
+        string declarationKind,
+        DiagnosticBag diagnostics)
+    {
+        if (!IsDiscardIdentifier(identifier))
+        {
+            return false;
+        }
+
+        diagnostics.Report(
+            "ILC2260",
+            $"Discard '_' cannot be declared as a {declarationKind}. Use '_' only as a match wildcard or assignment discard.",
+            DiagnosticSeverity.Error,
+            identifier.Span);
+        return true;
+    }
+
+    private static bool IsDiscardIdentifier(SyntaxToken identifier) =>
+        string.Equals(identifier.Text, "_", StringComparison.Ordinal);
+
+    private static bool IsDiscardName(ExpressionSyntax expression) =>
+        expression is NameExpressionSyntax { Name.Parts.Count: 1 } name &&
+        IsDiscardIdentifier(name.Name.Parts[0]);
 
     private static void ValidateConstantDeclarators(
         IReadOnlyList<ConstantDeclaratorSyntax> declarators,
@@ -964,6 +999,7 @@ public sealed partial class Binder
                 case LocalVariableDeclarationStatementSyntax localVariable:
                     foreach (var declarator in localVariable.Declarators)
                     {
+                        var isInvalidDiscardDeclaration = ReportInvalidDiscardDeclarationIfNeeded(declarator.Identifier, "local variable", diagnostics);
                         if (IsResultAvailable(currentMethod) && SemanticFacts.NameEquals(declarator.Identifier.Text, "Result"))
                         {
                             diagnostics.Report(
@@ -992,6 +1028,11 @@ public sealed partial class Binder
                                 knownProperties,
                                 currentMethod,
                                 diagnostics);
+                        }
+
+                        if (isInvalidDiscardDeclaration)
+                        {
+                            continue;
                         }
 
                         locals[declarator.Identifier.Text] = declaredType ?? initializerType ?? TypeSymbol.Unknown;
@@ -1069,11 +1110,19 @@ public sealed partial class Binder
                     TypeSymbol? loopType = null;
                     if (forStatement.VarKeyword is not null)
                     {
-                        forLoopLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                        if (ReportInvalidDiscardDeclarationIfNeeded(forStatement.Identifier, "for-loop variable", diagnostics))
                         {
-                            [forStatement.Identifier.Text] = TypeSymbol.Integer
-                        };
-                        forLoopScopes = CreateNestedLocalScopesWithName(activeLocalScopes, forStatement.Identifier, diagnostics);
+                            forLoopLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+                            forLoopScopes = CreateNestedLocalScopes(activeLocalScopes);
+                        }
+                        else
+                        {
+                            forLoopLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                            {
+                                [forStatement.Identifier.Text] = TypeSymbol.Integer
+                            };
+                            forLoopScopes = CreateNestedLocalScopesWithName(activeLocalScopes, forStatement.Identifier, diagnostics);
+                        }
                     }
                     else if (!locals.TryGetValue(forStatement.Identifier.Text, out loopType))
                     {
@@ -1168,11 +1217,19 @@ public sealed partial class Binder
                     if (foreachStatement.VarKeyword is not null)
                     {
                         foreachType = elementType!;
-                        foreachLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                        if (ReportInvalidDiscardDeclarationIfNeeded(foreachStatement.Identifier, "foreach variable", diagnostics))
                         {
-                            [foreachStatement.Identifier.Text] = foreachType
-                        };
-                        foreachScopes = CreateNestedLocalScopesWithName(activeLocalScopes, foreachStatement.Identifier, diagnostics);
+                            foreachLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+                            foreachScopes = CreateNestedLocalScopes(activeLocalScopes);
+                        }
+                        else
+                        {
+                            foreachLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                            {
+                                [foreachStatement.Identifier.Text] = foreachType
+                            };
+                            foreachScopes = CreateNestedLocalScopesWithName(activeLocalScopes, foreachStatement.Identifier, diagnostics);
+                        }
                     }
                     else if (!locals.TryGetValue(foreachStatement.Identifier.Text, out var resolvedForeachType))
                     {
@@ -1295,11 +1352,19 @@ public sealed partial class Binder
                             }
                             else if (arm.Identifier is not null)
                             {
-                                armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                                if (ReportInvalidDiscardDeclarationIfNeeded(arm.Identifier, "match arm variable", diagnostics))
                                 {
-                                    [arm.Identifier.Text] = armType
-                                };
-                                armScopes = CreateNestedLocalScopesWithName(activeLocalScopes, arm.Identifier, diagnostics);
+                                    armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+                                    armScopes = CreateNestedLocalScopes(activeLocalScopes);
+                                }
+                                else
+                                {
+                                    armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                                    {
+                                        [arm.Identifier.Text] = armType
+                                    };
+                                    armScopes = CreateNestedLocalScopesWithName(activeLocalScopes, arm.Identifier, diagnostics);
+                                }
                             }
                         }
                         else if (!arm.IsWildcard)
@@ -1366,11 +1431,16 @@ public sealed partial class Binder
                                 continue;
                             }
 
-                            var clauseLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
+                            var invalidDiscardClauseIdentifier = ReportInvalidDiscardDeclarationIfNeeded(clause.Identifier, "exception variable", diagnostics);
+                            var clauseLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer);
+                            var clauseScopes = invalidDiscardClauseIdentifier
+                                ? CreateNestedLocalScopes(activeLocalScopes)
+                                : CreateNestedLocalScopesWithName(activeLocalScopes, clause.Identifier, diagnostics);
+                            if (!invalidDiscardClauseIdentifier)
                             {
-                                [clause.Identifier.Text] = clauseType
-                            };
-                            var clauseScopes = CreateNestedLocalScopesWithName(activeLocalScopes, clause.Identifier, diagnostics);
+                                clauseLocals[clause.Identifier.Text] = clauseType;
+                            }
+
                             ValidateStatements([clause.Body], clauseLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, true, inLoop, diagnostics, profiler, clauseScopes);
                         }
 
@@ -1683,8 +1753,14 @@ public sealed partial class Binder
             {
                 CollectRequiredOutputAssignmentsFromExpression(matchStatement.Expression, assigned, required);
                 OutputAssignmentFlow? mergedFlow = null;
+                var hasUnguardedWildcardArm = false;
                 foreach (var arm in matchStatement.Arms)
                 {
+                    if (arm.IsWildcard && arm.Guard is null)
+                    {
+                        hasUnguardedWildcardArm = true;
+                    }
+
                     foreach (var label in arm.Labels)
                     {
                         CollectRequiredOutputAssignmentsFromExpression(label, assigned, required);
@@ -1699,10 +1775,14 @@ public sealed partial class Binder
                     mergedFlow = mergedFlow is null ? armFlow : MergeBranchOutputAssignmentFlows(mergedFlow, armFlow);
                 }
 
-                var elseFlow = matchStatement.ElseStatements.Count > 0
+                OutputAssignmentFlow? elseFlow = matchStatement.ElseStatements.Count > 0
                     ? AnalyzeRequiredOutputAssignments(matchStatement.ElseStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), required, diagnostics)
-                    : new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
-                return mergedFlow is null ? elseFlow : MergeBranchOutputAssignmentFlows(mergedFlow, elseFlow);
+                    : hasUnguardedWildcardArm
+                        ? null
+                        : new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return elseFlow is null
+                    ? mergedFlow ?? new OutputAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true)
+                    : mergedFlow is null ? elseFlow : MergeBranchOutputAssignmentFlows(mergedFlow, elseFlow);
             }
             case TryStatementSyntax tryStatement:
             {
@@ -2007,6 +2087,11 @@ public sealed partial class Binder
                         AnalyzeLocalDefiniteAssignmentExpression(declarator.Initializer, localAssigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
                     }
 
+                    if (IsDiscardIdentifier(declarator.Identifier))
+                    {
+                        continue;
+                    }
+
                     scopes[^1].Declared.Add(declarator.Identifier.Text);
                     if (declarator.Initializer is not null ||
                         IsGenericDefaultLocal(declarator, knownTypes))
@@ -2051,7 +2136,7 @@ public sealed partial class Binder
             {
                 var loopAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
                 var loopScopes = PushLocalAssignmentScope(scopes);
-                if (forStatement.VarKeyword is not null)
+                if (forStatement.VarKeyword is not null && !IsDiscardIdentifier(forStatement.Identifier))
                 {
                     loopScopes[^1].Declared.Add(forStatement.Identifier.Text);
                     loopAssigned.Add(forStatement.Identifier.Text);
@@ -2076,7 +2161,7 @@ public sealed partial class Binder
                 AnalyzeLocalDefiniteAssignmentExpression(foreachStatement.Collection, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
                 var loopAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
                 var loopScopes = PushLocalAssignmentScope(scopes);
-                if (foreachStatement.VarKeyword is not null)
+                if (foreachStatement.VarKeyword is not null && !IsDiscardIdentifier(foreachStatement.Identifier))
                 {
                     loopScopes[^1].Declared.Add(foreachStatement.Identifier.Text);
                     loopAssigned.Add(foreachStatement.Identifier.Text);
@@ -2121,8 +2206,14 @@ public sealed partial class Binder
             {
                 AnalyzeLocalDefiniteAssignmentExpression(matchStatement.Expression, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
                 LocalAssignmentFlow? mergedFlow = null;
+                var hasUnguardedWildcardArm = false;
                 foreach (var arm in matchStatement.Arms)
                 {
+                    if (arm.IsWildcard && arm.Guard is null)
+                    {
+                        hasUnguardedWildcardArm = true;
+                    }
+
                     foreach (var label in arm.Labels)
                     {
                         AnalyzeLocalDefiniteAssignmentExpression(label, assigned, scopes, diagnostics, treatAssignmentTargetAsWrite: false);
@@ -2130,7 +2221,7 @@ public sealed partial class Binder
 
                     var armScopes = PushLocalAssignmentScope(scopes);
                     var armAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
-                    if (arm.Identifier is not null)
+                    if (arm.Identifier is not null && !IsDiscardIdentifier(arm.Identifier))
                     {
                         armScopes[^1].Declared.Add(arm.Identifier.Text);
                         armAssigned.Add(arm.Identifier.Text);
@@ -2145,10 +2236,14 @@ public sealed partial class Binder
                     mergedFlow = mergedFlow is null ? armFlow : MergeLocalAssignmentFlows(mergedFlow, armFlow);
                 }
 
-                var elseFlow = matchStatement.ElseStatements.Count > 0
+                LocalAssignmentFlow? elseFlow = matchStatement.ElseStatements.Count > 0
                     ? AnalyzeLocalDefiniteAssignments(matchStatement.ElseStatements, new HashSet<string>(assigned, SemanticFacts.NameComparer), PushLocalAssignmentScope(scopes), knownTypes, diagnostics)
-                    : new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
-                return mergedFlow is null ? elseFlow : MergeLocalAssignmentFlows(mergedFlow, elseFlow);
+                    : hasUnguardedWildcardArm
+                        ? null
+                        : new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true);
+                return elseFlow is null
+                    ? mergedFlow ?? new LocalAssignmentFlow(new HashSet<string>(assigned, SemanticFacts.NameComparer), true)
+                    : mergedFlow is null ? elseFlow : MergeLocalAssignmentFlows(mergedFlow, elseFlow);
             }
             case TryStatementSyntax tryStatement:
             {
@@ -2158,8 +2253,12 @@ public sealed partial class Binder
                 {
                     var clauseScopes = PushLocalAssignmentScope(scopes);
                     var clauseAssigned = new HashSet<string>(assigned, SemanticFacts.NameComparer);
-                    clauseScopes[^1].Declared.Add(clause.Identifier.Text);
-                    clauseAssigned.Add(clause.Identifier.Text);
+                    if (!IsDiscardIdentifier(clause.Identifier))
+                    {
+                        clauseScopes[^1].Declared.Add(clause.Identifier.Text);
+                        clauseAssigned.Add(clause.Identifier.Text);
+                    }
+
                     var clauseFlow = AnalyzeLocalDefiniteAssignments([clause.Body], clauseAssigned, clauseScopes, knownTypes, diagnostics);
                     exceptionFlow = exceptionFlow is null ? clauseFlow : MergeLocalAssignmentFlows(exceptionFlow, clauseFlow);
                 }
@@ -2846,6 +2945,12 @@ public sealed partial class Binder
                 ValidateExpression(parenthesized.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 break;
             case AssignmentExpressionSyntax assignment:
+                if (IsDiscardName(assignment.Target))
+                {
+                    ValidateExpression(assignment.Expression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
+                    break;
+                }
+
                 ValidateAssignmentTarget(assignment.Target, locals, knownTypes, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 ValidateExpressionForExpectedType(
                     assignment.Expression,
@@ -3234,6 +3339,15 @@ public sealed partial class Binder
                         }
                         else if (arm.Identifier is not null)
                         {
+                            if (locals.ContainsKey(arm.Identifier.Text))
+                            {
+                                diagnostics.Report(
+                                    "ILC2244",
+                                    $"Duplicate local name '{arm.Identifier.Text}' in an active scope. ILC names are case-insensitive.",
+                                    DiagnosticSeverity.Error,
+                                    arm.Identifier.Span);
+                            }
+
                             armLocals = new Dictionary<string, TypeSymbol>(locals, SemanticFacts.NameComparer)
                             {
                                 [arm.Identifier.Text] = typedArmType
@@ -3497,6 +3611,7 @@ public sealed partial class Binder
                 }
                 break;
             case QueryExpressionSyntax query:
+                ReportInvalidDiscardDeclarationIfNeeded(query.Identifier, "query range variable", diagnostics);
                 ValidateExpression(query.SourceExpression, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                 var querySourceType = InferValidationExpressionType(query.SourceExpression, locals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                 var enumerablePattern = SemanticFacts.ResolveEnumerablePattern(querySourceType, knownTypes);
@@ -3517,6 +3632,7 @@ public sealed partial class Binder
 
                 if (query.JoinSourceExpression is not null && query.JoinIdentifier is not null)
                 {
+                    ReportInvalidDiscardDeclarationIfNeeded(query.JoinIdentifier, "query join variable", diagnostics);
                     ValidateExpression(query.JoinSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var joinSourceType = InferValidationExpressionType(query.JoinSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var joinEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(joinSourceType, knownTypes);
@@ -3533,6 +3649,7 @@ public sealed partial class Binder
                     queryLocals[query.JoinIdentifier.Text] = joinEnumerablePattern.ElementType;
                     if (query.JoinIntoIdentifier is not null)
                     {
+                        ReportInvalidDiscardDeclarationIfNeeded(query.JoinIntoIdentifier, "query join-into variable", diagnostics);
                         queryLocals[query.JoinIntoIdentifier.Text] =
                             SemanticFacts.ResolveTypeReference($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", knownTypes)
                             ?? new TypeSymbol($"IEnumerable<{joinEnumerablePattern.ElementType.Name}>", true);
@@ -3572,6 +3689,7 @@ public sealed partial class Binder
 
                 if (query.SecondSourceExpression is not null && query.SecondIdentifier is not null)
                 {
+                    ReportInvalidDiscardDeclarationIfNeeded(query.SecondIdentifier, "query range variable", diagnostics);
                     ValidateExpression(query.SecondSourceExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var secondSourceType = InferValidationExpressionType(query.SecondSourceExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     var secondEnumerablePattern = SemanticFacts.ResolveEnumerablePattern(secondSourceType, knownTypes);
@@ -3590,6 +3708,7 @@ public sealed partial class Binder
 
                 if (query.LetExpression is not null && query.LetIdentifier is not null)
                 {
+                    ReportInvalidDiscardDeclarationIfNeeded(query.LetIdentifier, "query let variable", diagnostics);
                     ValidateExpression(query.LetExpression, queryLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                     var letType = InferValidationExpressionType(query.LetExpression, queryLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                     queryLocals[query.LetIdentifier.Text] = letType;
@@ -3657,6 +3776,7 @@ public sealed partial class Binder
                 }
                 if (query.IntoIdentifier is not null && query.ContinuationSelectExpression is not null)
                 {
+                    ReportInvalidDiscardDeclarationIfNeeded(query.IntoIdentifier, "query continuation variable", diagnostics);
                     var continuationRangeType =
                         query.GroupExpression is not null && query.GroupByExpression is not null
                             ? SemanticFacts.ResolveTypeReference(
@@ -3673,6 +3793,7 @@ public sealed partial class Binder
 
                     if (query.ContinuationLetExpression is not null && query.ContinuationLetIdentifier is not null)
                     {
+                        ReportInvalidDiscardDeclarationIfNeeded(query.ContinuationLetIdentifier, "query let variable", diagnostics);
                         ValidateExpression(query.ContinuationLetExpression, continuationLocals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, diagnostics);
                         var continuationLetType = InferValidationExpressionType(query.ContinuationLetExpression, continuationLocals, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, knownTypes);
                         continuationLocals[query.ContinuationLetIdentifier.Text] = continuationLetType;

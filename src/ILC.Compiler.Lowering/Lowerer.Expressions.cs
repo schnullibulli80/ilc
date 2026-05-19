@@ -314,6 +314,9 @@ public sealed partial class Lowerer
                     $"Cannot lower unknown name '{name.Name.ToDisplayString()}' " +
                     $"in method '{currentMethod?.DeclaringTypeName ?? "<global>"}.{currentMethod?.Name ?? "<unknown>"}' " +
                     $"at span {name.Name.Parts[0].Span.Start}+{name.Name.Parts[^1].Span.End - name.Name.Parts[0].Span.Start}.");
+            case AssignmentExpressionSyntax assignment when IsDiscardAssignmentTarget(assignment.Target):
+                LowerExpressionInto(assignment.Expression, destination, registerByName, arrayShapesByName, registers, instructions, currentMethod);
+                return;
             case AssignmentExpressionSyntax assignment when assignment.Target is NameExpressionSyntax assignmentName && registerByName.TryGetValue(assignmentName.Name.ToDisplayString(), out var targetRegister):
                 if (assignment.Expression is NewArrayExpressionSyntax assignedArray && assignedArray.LengthExpressions.Count > 1)
                 {
