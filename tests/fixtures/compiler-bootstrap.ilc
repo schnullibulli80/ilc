@@ -621,6 +621,56 @@ begin
     end;
     Program.Trace('CHECKPOINT exceptions-typed=', current);
 
+    var baseExceptionHandlerValue := 0;
+    try
+      raise new NotSupportedException('base-handler');
+    except
+      on ex: Exception do
+        if ex.Message = 'base-handler' then
+        begin
+          baseExceptionHandlerValue := 1;
+        end;
+    end;
+    Program.Trace('CHECKPOINT exceptions-base-handler=', baseExceptionHandlerValue);
+
+    var specificExceptionHandlerValue := 0;
+    try
+      raise new NotSupportedException('specific-handler');
+    except
+      on ex: NotSupportedException do
+        specificExceptionHandlerValue := 10;
+      on ex: Exception do
+        specificExceptionHandlerValue := 1;
+    end;
+    Program.Trace('CHECKPOINT exceptions-specific-handler=', specificExceptionHandlerValue);
+
+    var rethrowExceptionHandlerValue := 0;
+    try
+      try
+        raise new NotSupportedException('rethrow-handler');
+      except
+        on ex: NotSupportedException do
+          raise;
+      end;
+    except
+      on ex: Exception do
+        if ex.Message = 'rethrow-handler' then
+        begin
+          rethrowExceptionHandlerValue := 1;
+        end;
+    end;
+    Program.Trace('CHECKPOINT exceptions-rethrow-handler=', rethrowExceptionHandlerValue);
+
+    var catchAllFallbackValue := 0;
+    try
+      raise new Exception('catch-all-handler');
+    except
+      on ex: NotSupportedException do
+        catchAllFallbackValue := 1;
+      catchAllFallbackValue := 7;
+    end;
+    Program.Trace('CHECKPOINT exceptions-catch-all-fallback=', catchAllFallbackValue);
+
     try
       current := current + 1;
     finally
@@ -637,6 +687,7 @@ begin
       current := current + 1;
     end;
     Program.Trace('CHECKPOINT exceptions=', current);
+    current := current + baseExceptionHandlerValue + specificExceptionHandlerValue + rethrowExceptionHandlerValue + catchAllFallbackValue;
 
     var returnFinallyValue := Program.TryFinallyReturnValue();
     var exitFinallyValue := Program.TryFinallyExitValue();

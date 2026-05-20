@@ -4373,7 +4373,7 @@ std::int32_t VirtualMachine::execute(
                 const auto handler = std::find_if(
                     function.exception_handlers.begin(),
                     function.exception_handlers.end(),
-                    [ip, &ex, &get_runtime_type_id](const Function::ExceptionHandler& candidate)
+                    [ip, &ex, &runtime_type_matches](const Function::ExceptionHandler& candidate)
                     {
                         if (ip < candidate.try_start || ip >= candidate.try_end)
                         {
@@ -4381,7 +4381,7 @@ std::int32_t VirtualMachine::execute(
                         }
 
                         return candidate.catch_type_id == 0 ||
-                            get_runtime_type_id(ex.value) == candidate.catch_type_id;
+                            runtime_type_matches(ex.value, candidate.catch_type_id);
                     });
                 if (handler == function.exception_handlers.end())
                 {

@@ -284,7 +284,9 @@ implementing `System.IException`; `String` is accepted as a convenience message
 form. Bare `raise;` is only valid inside an `except` handler and rethrows the
 active exception. `throw` is reserved but unsupported; use `raise` instead.
 Typed `except on ex: T do` handlers require `T` to implement
-`System.IException` when the system exception contract is available.
+`System.IException` when the system exception contract is available. Handler
+matching follows normal runtime type compatibility, so a handler for a base
+exception type also catches derived exception instances.
 
 `with` is implemented as a compile-time rewrite that qualifies otherwise
 unresolved member names with the active receiver. It does not create a runtime
