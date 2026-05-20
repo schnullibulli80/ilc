@@ -6,12 +6,15 @@ internal sealed partial class Parser
 {
     private readonly IReadOnlyList<SyntaxToken> _tokens;
     private readonly DiagnosticBag _diagnostics;
+    private readonly string _sourceText;
     private int _position;
+    private bool _stopExpressionAtMatchArmBoundary;
 
-    public Parser(IReadOnlyList<SyntaxToken> tokens, DiagnosticBag diagnostics)
+    public Parser(IReadOnlyList<SyntaxToken> tokens, DiagnosticBag diagnostics, string sourceText)
     {
         _tokens = tokens;
         _diagnostics = diagnostics;
+        _sourceText = sourceText;
     }
 
     private SyntaxToken Match(SyntaxKind kind)
@@ -122,4 +125,83 @@ internal sealed partial class Parser
 
     private SyntaxToken PeekAbsolute(int index) =>
         index < 0 || index >= _tokens.Count ? _tokens[^1] : _tokens[index];
+
+    private bool IsAtMatchArmBoundary()
+    {
+        if (!_stopExpressionAtMatchArmBoundary || !HasLineBreakBeforeCurrent())
+        {
+            return false;
+        }
+
+        var offset = 0;
+        if (Peek(offset).Kind == SyntaxKind.NotKeyword)
+        {
+            offset++;
+        }
+
+        if (!TryScanRelationalMatchPattern(ref offset))
+        {
+            return false;
+        }
+
+        while (Peek(offset).Kind == SyntaxKind.AndKeyword)
+        {
+            offset++;
+            if (!TryScanRelationalMatchPattern(ref offset))
+            {
+                return false;
+            }
+        }
+
+        return Peek(offset).Kind == SyntaxKind.ArrowToken;
+    }
+
+    private bool TryScanRelationalMatchPattern(ref int offset)
+    {
+        if (Peek(offset).Kind is not (SyntaxKind.LessToken or SyntaxKind.LessOrEqualsToken or SyntaxKind.GreaterToken or SyntaxKind.GreaterOrEqualsToken))
+        {
+            return false;
+        }
+
+        offset++;
+        if (Peek(offset).Kind is SyntaxKind.EndOfFileToken or SyntaxKind.ArrowToken)
+        {
+            return false;
+        }
+
+        while (Peek(offset).Kind is not (SyntaxKind.AndKeyword or SyntaxKind.OrKeyword or SyntaxKind.CommaToken or SyntaxKind.WhenKeyword or SyntaxKind.ArrowToken or SyntaxKind.EndKeyword or SyntaxKind.EndOfFileToken))
+        {
+            offset++;
+        }
+
+        return true;
+    }
+
+    private bool HasLineBreakBeforeCurrent()
+    {
+        if (_position <= 0 || _position >= _tokens.Count)
+        {
+            return false;
+        }
+
+        var previous = PeekAbsolute(_position - 1);
+        var current = Current;
+        var start = previous.Span.Start + previous.Span.Length;
+        var length = current.Span.Start - start;
+        if (length <= 0 || start < 0 || start >= _sourceText.Length)
+        {
+            return false;
+        }
+
+        var end = Math.Min(start + length, _sourceText.Length);
+        for (var index = start; index < end; index++)
+        {
+            if (_sourceText[index] is '\n' or '\r')
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

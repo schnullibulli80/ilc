@@ -49,6 +49,11 @@ internal sealed partial class Parser
         var left = ParseComparisonExpression();
         while (Current.Kind is SyntaxKind.AndKeyword or SyntaxKind.OrKeyword or SyntaxKind.XorKeyword)
         {
+            if (IsAtMatchArmBoundary())
+            {
+                break;
+            }
+
             var operatorToken = NextToken();
             var right = ParseComparisonExpression();
             left = new BinaryExpressionSyntax(left, operatorToken, right);
@@ -71,6 +76,11 @@ internal sealed partial class Parser
             or SyntaxKind.AsKeyword
             or SyntaxKind.IsKeyword)
         {
+            if (IsAtMatchArmBoundary())
+            {
+                break;
+            }
+
             if (Current.Kind == SyntaxKind.AsKeyword)
             {
                 var asKeyword = NextToken();
@@ -774,7 +784,10 @@ internal sealed partial class Parser
         {
             var (labels, isWildcard, typeName, identifier, whenKeyword, guard) = ParseMatchPattern();
             var arrowToken = Match(SyntaxKind.ArrowToken);
+            var stopAtMatchArmBoundary = _stopExpressionAtMatchArmBoundary;
+            _stopExpressionAtMatchArmBoundary = true;
             var armExpression = ParseExpression();
+            _stopExpressionAtMatchArmBoundary = stopAtMatchArmBoundary;
             arms.Add(new MatchExpressionArmSyntax(labels, isWildcard, typeName, identifier, whenKeyword, guard, arrowToken, armExpression));
         }
 

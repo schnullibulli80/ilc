@@ -19,7 +19,7 @@ public sealed partial class SyntaxTree
         var diagnostics = new DiagnosticBag();
         var lexer = new Lexer(sourceText, diagnostics);
         var tokens = lexer.Lex();
-        var parser = new Parser(tokens, diagnostics);
+        var parser = new Parser(tokens, diagnostics, sourceText);
         var root = NormalizeUsesAliases(parser.ParseCompilationUnit(sourceText));
         return new SyntaxTree(root, diagnostics);
     }

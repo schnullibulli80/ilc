@@ -1164,7 +1164,7 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 27)
+else if (programType.Methods.Count != 28)
 {
     failures.Add(
         "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +
@@ -1179,8 +1179,9 @@ else
             string.Join(",", programType.Methods.Select(method => method.Name)));
     }
 
-    if (programType.Fields.Count != 10 ||
+    if (programType.Fields.Count != 11 ||
         !programType.Fields.Any(field => field.Name == "Accumulator" && field.IsStatic) ||
+        !programType.Fields.Any(field => field.Name == "MatchProbe" && field.IsStatic) ||
         !programType.Fields.Any(field => field.Name == "Counter" && !field.IsStatic) ||
         !programType.Fields.Any(field => field.Name == "Items" && !field.IsStatic) ||
         !programType.Fields.Any(field => field.Name == "Children" && !field.IsStatic && field.Type.Name == "Program[]") ||
@@ -3133,12 +3134,28 @@ begin
   end;
 end;
 
+public class BaseWorker
+begin
+end;
+
+public class DerivedWorker: BaseWorker
+begin
+end;
+
 public class Program
 begin
   public static function MatchWorker(worker: Worker): Integer;
   begin
     return match worker with
       IWorker w => 1
+      _ => 0
+    end;
+  end;
+
+  public static function MatchBase(worker: DerivedWorker): Integer;
+  begin
+    return match worker with
+      BaseWorker value => 1
       _ => 0
     end;
   end;
@@ -3178,9 +3195,24 @@ else
         interfaceFields,
         interfaceCompatibilityBinding.Compilation.Types,
         null);
-if (!interfaceIlbImage.Sections.Any(section => section.Kind == IlbSectionKind.InterfaceDispatchTable))
+    if (!interfaceIlbImage.Sections.Any(section => section.Kind == IlbSectionKind.InterfaceDispatchTable))
     {
         failures.Add("ILB serialization should include an interface dispatch table section when interface implementations are present.");
+    }
+
+    var typedMatchMethods = interfaceCompatibilityBinding.Compilation.GetAllMethods().ToArray();
+    var typedMatchLowerer = new Lowerer(
+        typedMatchMethods,
+        interfaceCompatibilityBinding.Compilation.GetAllFields(),
+        interfaceCompatibilityBinding.Compilation.Types,
+        interfaceCompatibilityBinding.Compilation.GetAllProperties(),
+        interfaceCompatibilityBinding.Compilation.GetAllConstants());
+    var matchWorkerIr = typedMatchLowerer.Lower(typedMatchMethods.First(method => method.Name == "MatchWorker"));
+    var matchBaseIr = typedMatchLowerer.Lower(typedMatchMethods.First(method => method.Name == "MatchBase"));
+    if (!matchWorkerIr.Blocks.SelectMany(block => block.Instructions).Any(instruction => instruction.OpCode == IrOpCode.TypeIsReference) ||
+        !matchBaseIr.Blocks.SelectMany(block => block.Instructions).Any(instruction => instruction.OpCode == IrOpCode.TypeIsReference))
+    {
+        failures.Add("Lowerer should use runtime type checks for interface and base-class typed match arms.");
     }
 }
 

@@ -1062,20 +1062,45 @@ public sealed partial class Lowerer
         List<IrInstruction> instructions,
         MethodSymbol? currentMethod)
     {
+        var failLabel = AllocateLabel("case_next_label");
+        LowerCaseLabelPattern(label, expressionType, caseRegister, clauseLabel, failLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+        instructions.Add(new IrInstruction(IrOpCode.Label, null, failLabel));
+    }
+
+    private void LowerCaseLabelPattern(
+        ExpressionSyntax label,
+        TypeSymbol expressionType,
+        IrValue caseRegister,
+        string successLabel,
+        string failLabel,
+        Dictionary<string, IrValue> registerByName,
+        Dictionary<string, TypeSymbol> localTypes,
+        Dictionary<string, IReadOnlyList<IrValue>> arrayShapesByName,
+        List<IrValue> registers,
+        List<IrInstruction> instructions,
+        MethodSymbol? currentMethod)
+    {
         if (label is MatchNotPatternSyntax notPattern)
         {
-            var innerMatchLabel = AllocateLabel("case_not_match");
-            LowerCaseLabelMatch(notPattern.Pattern, expressionType, caseRegister, innerMatchLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
-            instructions.Add(new IrInstruction(IrOpCode.Branch, null, clauseLabel));
-            instructions.Add(new IrInstruction(IrOpCode.Label, null, innerMatchLabel));
+            var innerMatchedLabel = AllocateLabel("case_not_inner_match");
+            LowerCaseLabelPattern(notPattern.Pattern, expressionType, caseRegister, innerMatchedLabel, successLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+            instructions.Add(new IrInstruction(IrOpCode.Label, null, innerMatchedLabel));
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, failLabel));
             return;
         }
 
         if (label is MatchOrPatternSyntax orPattern)
         {
-            foreach (var pattern in orPattern.Patterns)
+            for (var patternIndex = 0; patternIndex < orPattern.Patterns.Count; patternIndex++)
             {
-                LowerCaseLabelMatch(pattern, expressionType, caseRegister, clauseLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+                var alternativeFailLabel = patternIndex == orPattern.Patterns.Count - 1
+                    ? failLabel
+                    : AllocateLabel("case_or_next");
+                LowerCaseLabelPattern(orPattern.Patterns[patternIndex], expressionType, caseRegister, successLabel, alternativeFailLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+                if (alternativeFailLabel != failLabel)
+                {
+                    instructions.Add(new IrInstruction(IrOpCode.Label, null, alternativeFailLabel));
+                }
             }
 
             return;
@@ -1083,23 +1108,25 @@ public sealed partial class Lowerer
 
         if (label is MatchAndPatternSyntax andPattern)
         {
-            var failLabel = AllocateLabel("case_next_label");
-            foreach (var pattern in andPattern.Patterns)
+            for (var patternIndex = 0; patternIndex < andPattern.Patterns.Count; patternIndex++)
             {
-                LowerRelationalMatchPatternCheck(pattern, caseRegister, failLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+                var nextPatternLabel = patternIndex == andPattern.Patterns.Count - 1
+                    ? successLabel
+                    : AllocateLabel("case_and_next");
+                LowerCaseLabelPattern(andPattern.Patterns[patternIndex], expressionType, caseRegister, nextPatternLabel, failLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
+                if (nextPatternLabel != successLabel)
+                {
+                    instructions.Add(new IrInstruction(IrOpCode.Label, null, nextPatternLabel));
+                }
             }
 
-            instructions.Add(new IrInstruction(IrOpCode.Branch, null, clauseLabel));
-            instructions.Add(new IrInstruction(IrOpCode.Label, null, failLabel));
             return;
         }
 
         if (label is MatchRelationalPatternSyntax relational)
         {
-            var failLabel = AllocateLabel("case_next_label");
             LowerRelationalMatchPatternCheck(relational, caseRegister, failLabel, registerByName, localTypes, arrayShapesByName, registers, instructions, currentMethod);
-            instructions.Add(new IrInstruction(IrOpCode.Branch, null, clauseLabel));
-            instructions.Add(new IrInstruction(IrOpCode.Label, null, failLabel));
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, successLabel));
             return;
         }
 
@@ -1114,14 +1141,10 @@ public sealed partial class Lowerer
             var lowerBoundRegister = AllocateTemp(TypeSymbol.Boolean, registers);
             var upperBoundRegister = AllocateTemp(TypeSymbol.Boolean, registers);
             instructions.Add(new IrInstruction(IrOpCode.CompareGreaterOrEqual, lowerBoundRegister, (caseRegister, startRegister)));
-            instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, lowerBoundRegister, AllocateLabel("case_next_label")));
-            var lowerFailLabel = (string)instructions[^1].Operand!;
+            instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, lowerBoundRegister, failLabel));
             instructions.Add(new IrInstruction(IrOpCode.CompareLessOrEqual, upperBoundRegister, (caseRegister, endRegister)));
-            instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, upperBoundRegister, AllocateLabel("case_next_label")));
-            var upperFailLabel = (string)instructions[^1].Operand!;
-            instructions.Add(new IrInstruction(IrOpCode.Branch, null, clauseLabel));
-            instructions.Add(new IrInstruction(IrOpCode.Label, null, lowerFailLabel));
-            instructions.Add(new IrInstruction(IrOpCode.Label, null, upperFailLabel));
+            instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, upperBoundRegister, failLabel));
+            instructions.Add(new IrInstruction(IrOpCode.Branch, null, successLabel));
             return;
         }
 
@@ -1133,10 +1156,8 @@ public sealed partial class Lowerer
             expressionType == TypeSymbol.String ? IrOpCode.CompareEqualString : IrOpCode.CompareEqual,
             comparisonRegister,
             (caseRegister, labelRegister)));
-        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, comparisonRegister, AllocateLabel("case_next_label")));
-        var matchLabel = (string)instructions[^1].Operand!;
-        instructions.Add(new IrInstruction(IrOpCode.Branch, null, clauseLabel));
-        instructions.Add(new IrInstruction(IrOpCode.Label, null, matchLabel));
+        instructions.Add(new IrInstruction(IrOpCode.BranchIfFalse, comparisonRegister, failLabel));
+        instructions.Add(new IrInstruction(IrOpCode.Branch, null, successLabel));
     }
 
     private void LowerRelationalMatchPatternCheck(

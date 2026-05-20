@@ -177,6 +177,7 @@ begin
   public static const DefaultSeed: Integer = 1;
   public static const CaseHit: Integer = 90;
   public static var Accumulator: Integer;
+  public static var MatchProbe: Integer;
 
   // Testing instance variables
   public var Counter: Integer;
@@ -432,6 +433,12 @@ begin
   public static function FailBoolean: Boolean;
   begin
     raise new Exception('logical right-hand side should not have been evaluated');
+  end;
+
+  public static function MatchGuard(delta: Integer): Boolean;
+  begin
+    Program.MatchProbe := Program.MatchProbe + delta;
+    return delta > 0;
   end;
 
   // Trace methods for outputting checkpoints during execution
@@ -1124,6 +1131,28 @@ begin
     end;
     current := current + objectText.Length;
 
+    var matchException := new NotSupportedException('match-base');
+    var baseExceptionMatchText := match matchException with
+      Exception ex => ex.Message
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-base-type=', baseExceptionMatchText = 'match-base');
+
+    var specificExceptionMatchText := match matchException with
+      NotSupportedException ex => 'specific'
+      Exception ex => 'base'
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-specific-first=', specificExceptionMatchText = 'specific');
+
+    var baseFirstExceptionMatchText := match matchException with
+      Exception ex => 'base'
+      NotSupportedException ex => 'specific'
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-base-first=', baseFirstExceptionMatchText = 'base');
+    current := current + (baseExceptionMatchText = 'match-base') + (specificExceptionMatchText = 'specific') + (baseFirstExceptionMatchText = 'base');
+
     match 5 with
       < 0 => current := current + 1000;
       >= 5 => current := current + 2;
@@ -1190,6 +1219,38 @@ begin
       _ => 'ok'
     end;
     current := current + notText.Length;
+
+    var firstOrText := match 2 with
+      1 or 2 => 'first'
+      2 => 'second'
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-or-first=', firstOrText = 'first');
+
+    var negatedFallthroughText := match 1 with
+      not < 0 => 'bad'
+      1 => 'fallthrough'
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-not-fallthrough=', negatedFallthroughText = 'fallthrough');
+
+    var andText := match 5 with
+      >= 0 and < 3 => 'bad'
+      >= 0 and <= 5 => 'and'
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-and-second=', andText = 'and');
+
+    Program.MatchProbe := 0;
+    var guardText := match 2 with
+      1 when Program.MatchGuard(100) => 'bad'
+      2 when Program.MatchGuard(0) => 'bad'
+      2 when Program.MatchGuard(7) => 'guard'
+      _ => 'bad'
+    end;
+    Program.Trace('CHECKPOINT match-guard-order=', Program.MatchProbe);
+    Program.Trace('CHECKPOINT match-guard-result=', guardText = 'guard');
+    current := current + (firstOrText = 'first') + (negatedFallthroughText = 'fallthrough') + (andText = 'and') + (guardText = 'guard') + Program.MatchProbe;
     Program.Trace('CHECKPOINT match-patterns=', current);
 
     if Mode.Busy in activeModes then
