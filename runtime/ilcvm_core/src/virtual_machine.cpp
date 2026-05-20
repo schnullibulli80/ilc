@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <array>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -2919,7 +2920,7 @@ std::int32_t VirtualMachine::execute(
                                 std::vector<std::int32_t> worker_arguments { target_handle };
                                 if (formatter_snapshot != nullptr)
                                 {
-                                    execute(
+                                    std::ignore = execute(
                                         *module_snapshot,
                                         execution_state,
                                         nullptr,
@@ -2931,7 +2932,7 @@ std::int32_t VirtualMachine::execute(
                                 }
                                 else
                                 {
-                                    execute(
+                                    std::ignore = execute(
                                         *module_snapshot,
                                         execution_state,
                                         nullptr,
