@@ -1164,7 +1164,7 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 22)
+else if (programType.Methods.Count != 27)
 {
     failures.Add(
         "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +
@@ -4082,6 +4082,83 @@ begin
       end;
     end;
   end;
+
+  public static function BreakFromExceptThroughFinally: Integer;
+  begin
+    Result := 0;
+    while true do
+    begin
+      try
+        raise 'boom';
+      except
+        break;
+      finally
+        Result := Result + 10;
+      end;
+    end;
+  end;
+
+  public static function RepeatContinueThroughFinally: Integer;
+  begin
+    Result := 0;
+    var iteration := 0;
+    repeat
+      iteration := iteration + 1;
+      try
+        if iteration = 1 then
+        begin
+          continue;
+        end;
+
+        Result := Result + 1;
+      finally
+        Result := Result + 10;
+      end;
+    until iteration >= 2;
+  end;
+
+  public static function ForBreakThroughFinally: Integer;
+  begin
+    Result := 0;
+    for var index := 0 to 2 do
+    begin
+      try
+        break;
+      finally
+        Result := Result + 10;
+      end;
+    end;
+  end;
+
+  public static function ForeachContinueThroughFinally: Integer;
+  begin
+    Result := 0;
+    var values: array of Integer := new Integer[2];
+    values[0] := 1;
+    values[1] := 2;
+    for each var value in values do
+    begin
+      try
+        if value = 1 then
+        begin
+          continue;
+        end;
+
+        Result := Result + value;
+      finally
+        Result := Result + 10;
+      end;
+    end;
+  end;
+
+  public static function RaiseInFinallyOverridesReturn: Integer;
+  begin
+    try
+      return 1;
+    finally
+      raise 'finally override';
+    end;
+  end;
 end;
 """);
 
@@ -4099,13 +4176,28 @@ else
     var breakIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "BreakThroughFinally"));
     var continueIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "ContinueThroughFinally"));
     var nestedBreakIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "NestedBreakThroughFinally"));
+    var exceptBreakIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "BreakFromExceptThroughFinally"));
+    var repeatContinueIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "RepeatContinueThroughFinally"));
+    var forBreakIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "ForBreakThroughFinally"));
+    var foreachContinueIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "ForeachContinueThroughFinally"));
+    var raiseOverrideIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "RaiseInFinallyOverridesReturn"));
     var breakInstructions = breakIr.Blocks.SelectMany(block => block.Instructions).ToArray();
     var continueInstructions = continueIr.Blocks.SelectMany(block => block.Instructions).ToArray();
     var nestedBreakInstructions = nestedBreakIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var exceptBreakInstructions = exceptBreakIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var repeatContinueInstructions = repeatContinueIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var forBreakInstructions = forBreakIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var foreachContinueInstructions = foreachContinueIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var raiseOverrideInstructions = raiseOverrideIr.Blocks.SelectMany(block => block.Instructions).ToArray();
 
     if (!breakIr.ExceptionHandlers.Any() ||
         !continueIr.ExceptionHandlers.Any() ||
-        !nestedBreakIr.ExceptionHandlers.Any())
+        !nestedBreakIr.ExceptionHandlers.Any() ||
+        !exceptBreakIr.ExceptionHandlers.Any() ||
+        !repeatContinueIr.ExceptionHandlers.Any() ||
+        !forBreakIr.ExceptionHandlers.Any() ||
+        !foreachContinueIr.ExceptionHandlers.Any() ||
+        !raiseOverrideIr.ExceptionHandlers.Any())
     {
         failures.Add("Lowerer should preserve exception handler metadata for loop-control try/finally exits.");
     }
@@ -4126,6 +4218,36 @@ else
         !nestedBreakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("endwhile_", StringComparison.Ordinal)))
     {
         failures.Add("Lowerer should chain nested try/finally break paths from inner to outer finally blocks.");
+    }
+
+    if (!exceptBreakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !exceptBreakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("endwhile_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should route break from except through the enclosing finally before the loop break label.");
+    }
+
+    if (!repeatContinueInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !repeatContinueInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("repeat_continue_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should route repeat-loop continue through finally before the repeat condition label.");
+    }
+
+    if (!forBreakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !forBreakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("endfor_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should route for-loop break through finally before the for break label.");
+    }
+
+    if (!foreachContinueInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !foreachContinueInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("foreach_continue_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should route foreach continue through finally before the foreach continue label.");
+    }
+
+    if (!raiseOverrideInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !raiseOverrideInstructions.Any(instruction => instruction.OpCode == IrOpCode.Throw))
+    {
+        failures.Add("Lowerer should allow raise in finally to override a pending return path.");
     }
 }
 

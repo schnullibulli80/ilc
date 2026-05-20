@@ -26,8 +26,8 @@ ui_qtquick_fixture="$repo_root/libs/shipped/ui-backends-qtquick.ilc"
 demo_core_fixture="$repo_root/tests/fixtures/demo-core.ilc"
 qtbridge_build_dir="$repo_root/build/runtime/ilcvm_qtbridge"
 runtime_smoke_env=()
-expected_smoke_checks=192
-expected_smoke_signature=612669
+expected_smoke_checks=197
+expected_smoke_signature=280790
 
 cd "$repo_root"
 

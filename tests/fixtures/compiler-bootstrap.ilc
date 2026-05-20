@@ -352,6 +352,83 @@ begin
     end;
   end;
 
+  public static function TryFinallyExceptBreakValue: Integer;
+  begin
+    Result := 0;
+    while true do
+    begin
+      try
+        raise 'break-through-except';
+      except
+        break;
+      finally
+        Result := Result + 50;
+      end;
+    end;
+  end;
+
+  public static function TryFinallyRepeatContinueValue: Integer;
+  begin
+    Result := 0;
+    var iteration := 0;
+    repeat
+      iteration := iteration + 1;
+      try
+        if iteration = 1 then
+        begin
+          continue;
+        end;
+
+        Result := Result + 1;
+      finally
+        Result := Result + 60;
+      end;
+    until iteration >= 2;
+  end;
+
+  public static function TryFinallyForBreakValue: Integer;
+  begin
+    Result := 0;
+    for var index := 0 to 2 do
+    begin
+      try
+        break;
+      finally
+        Result := Result + 70;
+      end;
+    end;
+  end;
+
+  public static function TryFinallyForeachContinueValue: Integer;
+  begin
+    Result := 0;
+    var values: array of Integer := new Integer[2];
+    values[0] := 1;
+    values[1] := 2;
+    for each var value in values do
+    begin
+      try
+        if value = 1 then
+        begin
+          continue;
+        end;
+
+        Result := Result + value;
+      finally
+        Result := Result + 80;
+      end;
+    end;
+  end;
+
+  public static function TryFinallyRaiseOverridesReturnValue: Integer;
+  begin
+    try
+      return 1;
+    finally
+      raise new Exception('finally override');
+    end;
+  end;
+
   public static function FailBoolean: Boolean;
   begin
     raise new Exception('logical right-hand side should not have been evaluated');
@@ -567,12 +644,31 @@ begin
     var breakFinallyValue := Program.TryFinallyBreakValue();
     var continueFinallyValue := Program.TryFinallyContinueValue();
     var nestedBreakFinallyValue := Program.TryFinallyNestedBreakValue();
+    var exceptBreakFinallyValue := Program.TryFinallyExceptBreakValue();
+    var repeatContinueFinallyValue := Program.TryFinallyRepeatContinueValue();
+    var forBreakFinallyValue := Program.TryFinallyForBreakValue();
+    var foreachContinueFinallyValue := Program.TryFinallyForeachContinueValue();
+    var raiseFinallyOverrideSeen := 0;
+    try
+      var ignoredFinallyRaise := Program.TryFinallyRaiseOverridesReturnValue();
+    except
+      on ex: Exception do
+        if ex.Message = 'finally override' then
+        begin
+          raiseFinallyOverrideSeen := 1;
+        end;
+    end;
     Program.Trace('CHECKPOINT exceptions-finally-return=', returnFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-exit=', exitFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-nested=', nestedFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-break=', breakFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-continue=', continueFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-nested-break=', nestedBreakFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-except-break=', exceptBreakFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-repeat-continue=', repeatContinueFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-for-break=', forBreakFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-foreach-continue=', foreachContinueFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-raise-override=', raiseFinallyOverrideSeen);
     if returnFinallyValue <> 11 then
     begin
       raise new Exception('try-finally return result mismatch');
@@ -597,7 +693,27 @@ begin
     begin
       raise new Exception('nested try-finally break result mismatch');
     end;
-    current := current + returnFinallyValue + exitFinallyValue + nestedFinallyValue + breakFinallyValue + continueFinallyValue + nestedBreakFinallyValue;
+    if exceptBreakFinallyValue <> 50 then
+    begin
+      raise new Exception('try-finally except break result mismatch');
+    end;
+    if repeatContinueFinallyValue <> 121 then
+    begin
+      raise new Exception('try-finally repeat continue result mismatch');
+    end;
+    if forBreakFinallyValue <> 70 then
+    begin
+      raise new Exception('try-finally for break result mismatch');
+    end;
+    if foreachContinueFinallyValue <> 162 then
+    begin
+      raise new Exception('try-finally foreach continue result mismatch');
+    end;
+    if raiseFinallyOverrideSeen <> 1 then
+    begin
+      raise new Exception('try-finally raise override mismatch');
+    end;
+    current := current + returnFinallyValue + exitFinallyValue + nestedFinallyValue + breakFinallyValue + continueFinallyValue + nestedBreakFinallyValue + exceptBreakFinallyValue + repeatContinueFinallyValue + forBreakFinallyValue + foreachContinueFinallyValue + raiseFinallyOverrideSeen;
 
     Program.TraceText('SECTION loops-and-slices');
     var index := 0;
