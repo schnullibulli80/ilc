@@ -4030,6 +4030,55 @@ else
     }
 }
 
+var invalidFinallyLoopControlTree = SyntaxTree.Parse("""
+public class Program
+begin
+  public static method BadBreak;
+  begin
+    while true do
+    begin
+      try
+        break;
+      finally
+      end;
+    end;
+  end;
+
+  public static method BadContinue;
+  begin
+    while true do
+    begin
+      try
+        continue;
+      finally
+      end;
+    end;
+  end;
+
+  public static method BadExceptBreak;
+  begin
+    while true do
+    begin
+      try
+        raise 'boom';
+      except
+        break;
+      finally
+      end;
+    end;
+  end;
+end;
+""");
+
+var invalidFinallyLoopControlBinding = new Binder().Bind(invalidFinallyLoopControlTree);
+var invalidFinallyLoopControlDiagnostics = invalidFinallyLoopControlBinding.Diagnostics.ToArray();
+if (invalidFinallyLoopControlDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2264") != 3)
+{
+    failures.Add(
+        "Binder should reject break/continue that would bypass a pending finally block. Actual: " +
+        string.Join(" | ", invalidFinallyLoopControlDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+
 var tryFlowAssignmentTree = SyntaxTree.Parse("""
 public class Program
 begin
