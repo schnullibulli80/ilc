@@ -275,8 +275,8 @@ Early routine exits from the protected part of a `try` statement that has a
 `finally` block execute the `finally` statements before the routine returns.
 Nested `try/finally` blocks execute their pending `finally` statements from the
 innermost block outward. `break` and `continue` from the protected part of a
-`try/finally` are rejected until the lowering path can route loop-control exits
-through pending `finally` blocks. Definite-assignment checks treat normal `try` flow and
+`try/finally` also execute pending `finally` blocks before reaching their loop
+target. Definite-assignment checks treat normal `try` flow and
 handled `except` flow as alternative continuing paths. Assignments in `finally`
 are applied after those continuing paths, so they can satisfy later reads and
 fallthrough output requirements. `raise expr;` requires an exception object

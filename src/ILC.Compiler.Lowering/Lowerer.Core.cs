@@ -21,11 +21,32 @@ public sealed partial class Lowerer
             new(Name, Type, RegisterIndex, VmIpStart, VmIpEnd ?? defaultVmIpEnd, Kind);
     }
 
-    private sealed class FinallyExitContext(string exitLabel)
+    private sealed class FinallyExitContext(Func<string> allocateLabel)
     {
-        public string ExitLabel { get; } = exitLabel;
-        public bool IsUsed { get; set; }
+        private readonly Func<string> _allocateLabel = allocateLabel;
+        private readonly Dictionary<string, FinallyExitPath> _pathsByKey = new(StringComparer.Ordinal);
+        private readonly List<FinallyExitPath> _paths = [];
+
+        public IReadOnlyList<FinallyExitPath> Paths => _paths;
+
+        public bool IsUsed => _paths.Count > 0;
+
+        public FinallyExitPath GetOrCreatePath(string? targetLabel)
+        {
+            var key = targetLabel ?? string.Empty;
+            if (_pathsByKey.TryGetValue(key, out var path))
+            {
+                return path;
+            }
+
+            path = new FinallyExitPath(_allocateLabel(), targetLabel);
+            _pathsByKey[key] = path;
+            _paths.Add(path);
+            return path;
+        }
     }
+
+    private sealed record FinallyExitPath(string ExitLabel, string? TargetLabel);
 
     private readonly IReadOnlyList<MethodSymbol> _knownMethods;
     private readonly IReadOnlyList<FieldSymbol> _knownFields;

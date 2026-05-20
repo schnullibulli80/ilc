@@ -1164,7 +1164,7 @@ if (programType is null)
 {
     failures.Add("Binder should surface declared classes as named types.");
 }
-else if (programType.Methods.Count != 19)
+else if (programType.Methods.Count != 22)
 {
     failures.Add(
         "Binder should surface declared methods and synthesized property accessors for classes. Actual methods: " +
@@ -4030,53 +4030,103 @@ else
     }
 }
 
-var invalidFinallyLoopControlTree = SyntaxTree.Parse("""
+var finallyLoopControlTree = SyntaxTree.Parse("""
 public class Program
 begin
-  public static method BadBreak;
+  public static function BreakThroughFinally: Integer;
   begin
+    Result := 0;
     while true do
     begin
       try
         break;
       finally
+        Result := Result + 10;
       end;
     end;
   end;
 
-  public static method BadContinue;
+  public static function ContinueThroughFinally: Integer;
   begin
-    while true do
+    Result := 0;
+    var iteration := 0;
+    while iteration < 2 do
     begin
+      iteration := iteration + 1;
       try
-        continue;
+        if iteration = 1 then
+        begin
+          continue;
+        end;
+
+        Result := Result + 1;
       finally
+        Result := Result + 10;
       end;
     end;
   end;
 
-  public static method BadExceptBreak;
+  public static function NestedBreakThroughFinally: Integer;
   begin
+    Result := 0;
     while true do
     begin
       try
-        raise 'boom';
-      except
-        break;
+        try
+          break;
+        finally
+          Result := Result + 10;
+        end;
       finally
+        Result := Result + 100;
       end;
     end;
   end;
 end;
 """);
 
-var invalidFinallyLoopControlBinding = new Binder().Bind(invalidFinallyLoopControlTree);
-var invalidFinallyLoopControlDiagnostics = invalidFinallyLoopControlBinding.Diagnostics.ToArray();
-if (invalidFinallyLoopControlDiagnostics.Count(diagnostic => diagnostic.Id == "ILC2264") != 3)
+var finallyLoopControlBinding = new Binder().Bind(finallyLoopControlTree);
+if (finallyLoopControlBinding.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
 {
     failures.Add(
-        "Binder should reject break/continue that would bypass a pending finally block. Actual: " +
-        string.Join(" | ", invalidFinallyLoopControlDiagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+        "Binder should allow break/continue inside try/finally now that lowering routes them through pending finally blocks. Actual: " +
+        string.Join(" | ", finallyLoopControlBinding.Diagnostics.Select(diagnostic => $"{diagnostic.Id}:{diagnostic.Message}")));
+}
+else
+{
+    var finallyLoopControlProgram = finallyLoopControlBinding.Compilation.Types.OfType<NamedTypeSymbol>().First(type => type.Name == "Program");
+    var finallyLoopControlLowerer = new Lowerer(finallyLoopControlProgram.Methods, finallyLoopControlProgram.Fields, finallyLoopControlBinding.Compilation.Types, finallyLoopControlProgram.Properties, finallyLoopControlProgram.Constants);
+    var breakIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "BreakThroughFinally"));
+    var continueIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "ContinueThroughFinally"));
+    var nestedBreakIr = finallyLoopControlLowerer.Lower(finallyLoopControlProgram.Methods.First(method => method.Name == "NestedBreakThroughFinally"));
+    var breakInstructions = breakIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var continueInstructions = continueIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+    var nestedBreakInstructions = nestedBreakIr.Blocks.SelectMany(block => block.Instructions).ToArray();
+
+    if (!breakIr.ExceptionHandlers.Any() ||
+        !continueIr.ExceptionHandlers.Any() ||
+        !nestedBreakIr.ExceptionHandlers.Any())
+    {
+        failures.Add("Lowerer should preserve exception handler metadata for loop-control try/finally exits.");
+    }
+
+    if (!breakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !breakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("endwhile_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should route break inside try/finally through a finally exit path before the loop break label.");
+    }
+
+    if (!continueInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) ||
+        !continueInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("while_continue_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should route continue inside try/finally through a finally exit path before the loop continue label.");
+    }
+
+    if (nestedBreakInstructions.Count(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("finally_exit_", StringComparison.Ordinal)) < 2 ||
+        !nestedBreakInstructions.Any(instruction => instruction.OpCode == IrOpCode.Branch && instruction.Operand is string label && label.StartsWith("endwhile_", StringComparison.Ordinal)))
+    {
+        failures.Add("Lowerer should chain nested try/finally break paths from inner to outer finally blocks.");
+    }
 }
 
 var tryFlowAssignmentTree = SyntaxTree.Parse("""

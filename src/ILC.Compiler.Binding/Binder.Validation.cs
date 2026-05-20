@@ -1472,7 +1472,6 @@ public sealed partial class Binder
                     ValidateStatements(matchStatement.ElseStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     break;
                 case TryStatementSyntax tryStatement:
-                    ReportUnsupportedLoopControlThroughFinally(tryStatement, diagnostics);
                     ValidateStatements(tryStatement.TryStatements, locals, knownTypes, knownMethods, knownFields, knownConstants, knownProperties, currentMethod, inExceptionHandler, inLoop, diagnostics, profiler, activeLocalScopes);
                     if (tryStatement.ExceptKeyword is not null)
                     {
@@ -1648,95 +1647,6 @@ public sealed partial class Binder
         }
 
         return false;
-    }
-
-    private static void ReportUnsupportedLoopControlThroughFinally(TryStatementSyntax tryStatement, DiagnosticBag diagnostics)
-    {
-        if (tryStatement.FinallyKeyword is null)
-        {
-            return;
-        }
-
-        ReportLoopControlThroughFinally(tryStatement.TryStatements, diagnostics);
-        foreach (var clause in tryStatement.ExceptionClauses)
-        {
-            ReportLoopControlThroughFinally([clause.Body], diagnostics);
-        }
-
-        ReportLoopControlThroughFinally(tryStatement.ExceptStatements, diagnostics);
-    }
-
-    private static void ReportLoopControlThroughFinally(IReadOnlyList<StatementSyntax> statements, DiagnosticBag diagnostics)
-    {
-        foreach (var statement in statements)
-        {
-            switch (statement)
-            {
-                case BreakStatementSyntax breakStatement:
-                    ReportLoopControlThroughFinally(breakStatement.BreakKeyword.Span, "break", diagnostics);
-                    break;
-                case ContinueStatementSyntax continueStatement:
-                    ReportLoopControlThroughFinally(continueStatement.ContinueKeyword.Span, "continue", diagnostics);
-                    break;
-                case BlockStatementSyntax block:
-                    ReportLoopControlThroughFinally(block.Statements, diagnostics);
-                    break;
-                case IfStatementSyntax ifStatement:
-                    ReportLoopControlThroughFinally([ifStatement.ThenStatement], diagnostics);
-                    if (ifStatement.ElseStatement is not null)
-                    {
-                        ReportLoopControlThroughFinally([ifStatement.ElseStatement], diagnostics);
-                    }
-
-                    break;
-                case WhileStatementSyntax whileStatement:
-                    ReportLoopControlThroughFinally([whileStatement.Body], diagnostics);
-                    break;
-                case RepeatStatementSyntax repeatStatement:
-                    ReportLoopControlThroughFinally(repeatStatement.Statements, diagnostics);
-                    break;
-                case ForStatementSyntax forStatement:
-                    ReportLoopControlThroughFinally([forStatement.Body], diagnostics);
-                    break;
-                case ForeachStatementSyntax foreachStatement:
-                    ReportLoopControlThroughFinally([foreachStatement.Body], diagnostics);
-                    break;
-                case CaseStatementSyntax caseStatement:
-                    foreach (var clause in caseStatement.Clauses)
-                    {
-                        ReportLoopControlThroughFinally([clause.Body], diagnostics);
-                    }
-
-                    ReportLoopControlThroughFinally(caseStatement.ElseStatements, diagnostics);
-                    break;
-                case MatchStatementSyntax matchStatement:
-                    foreach (var arm in matchStatement.Arms)
-                    {
-                        ReportLoopControlThroughFinally([arm.Body], diagnostics);
-                    }
-
-                    ReportLoopControlThroughFinally(matchStatement.ElseStatements, diagnostics);
-                    break;
-                case TryStatementSyntax nestedTry when nestedTry.FinallyKeyword is null:
-                    ReportLoopControlThroughFinally(nestedTry.TryStatements, diagnostics);
-                    foreach (var clause in nestedTry.ExceptionClauses)
-                    {
-                        ReportLoopControlThroughFinally([clause.Body], diagnostics);
-                    }
-
-                    ReportLoopControlThroughFinally(nestedTry.ExceptStatements, diagnostics);
-                    break;
-            }
-        }
-    }
-
-    private static void ReportLoopControlThroughFinally(TextSpan span, string keyword, DiagnosticBag diagnostics)
-    {
-        diagnostics.Report(
-            "ILC2264",
-            $"'{keyword}' inside the protected part of a try/finally is not supported yet because it would bypass the finally block.",
-            DiagnosticSeverity.Error,
-            span);
     }
 
     private sealed record OutputAssignmentFlow(HashSet<string> Assigned, bool CanContinue);

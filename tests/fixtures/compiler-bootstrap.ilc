@@ -302,6 +302,56 @@ begin
     end;
   end;
 
+  public static function TryFinallyBreakValue: Integer;
+  begin
+    Result := 0;
+    while true do
+    begin
+      try
+        break;
+      finally
+        Result := Result + 30;
+      end;
+    end;
+  end;
+
+  public static function TryFinallyContinueValue: Integer;
+  begin
+    Result := 0;
+    var iteration := 0;
+    while iteration < 2 do
+    begin
+      iteration := iteration + 1;
+      try
+        if iteration = 1 then
+        begin
+          continue;
+        end;
+
+        Result := Result + 1;
+      finally
+        Result := Result + 40;
+      end;
+    end;
+  end;
+
+  public static function TryFinallyNestedBreakValue: Integer;
+  begin
+    Result := 0;
+    while true do
+    begin
+      try
+        try
+          break;
+        finally
+          Result := Result + 30;
+        end;
+      finally
+        Result := Result + 300;
+      end;
+    end;
+  end;
+
   public static function FailBoolean: Boolean;
   begin
     raise new Exception('logical right-hand side should not have been evaluated');
@@ -514,9 +564,15 @@ begin
     var returnFinallyValue := Program.TryFinallyReturnValue();
     var exitFinallyValue := Program.TryFinallyExitValue();
     var nestedFinallyValue := Program.TryFinallyNestedExitValue();
+    var breakFinallyValue := Program.TryFinallyBreakValue();
+    var continueFinallyValue := Program.TryFinallyContinueValue();
+    var nestedBreakFinallyValue := Program.TryFinallyNestedBreakValue();
     Program.Trace('CHECKPOINT exceptions-finally-return=', returnFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-exit=', exitFinallyValue);
     Program.Trace('CHECKPOINT exceptions-finally-nested=', nestedFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-break=', breakFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-continue=', continueFinallyValue);
+    Program.Trace('CHECKPOINT exceptions-finally-nested-break=', nestedBreakFinallyValue);
     if returnFinallyValue <> 11 then
     begin
       raise new Exception('try-finally return result mismatch');
@@ -529,7 +585,19 @@ begin
     begin
       raise new Exception('nested try-finally exit result mismatch');
     end;
-    current := current + returnFinallyValue + exitFinallyValue + nestedFinallyValue;
+    if breakFinallyValue <> 30 then
+    begin
+      raise new Exception('try-finally break result mismatch');
+    end;
+    if continueFinallyValue <> 81 then
+    begin
+      raise new Exception('try-finally continue result mismatch');
+    end;
+    if nestedBreakFinallyValue <> 330 then
+    begin
+      raise new Exception('nested try-finally break result mismatch');
+    end;
+    current := current + returnFinallyValue + exitFinallyValue + nestedFinallyValue + breakFinallyValue + continueFinallyValue + nestedBreakFinallyValue;
 
     Program.TraceText('SECTION loops-and-slices');
     var index := 0;
